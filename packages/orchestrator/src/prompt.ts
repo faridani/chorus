@@ -80,6 +80,11 @@ export function buildOrchestratorPrompt(args: {
   lines.push("- close: close the ticket without merging (e.g. nothing to do, duplicate, or obsolete).");
   lines.push("- needs_human: you cannot proceed (e.g. you need an agent that doesn't exist, or repeated attempts failed). Explain via `suggestions`.");
   lines.push("You may also create follow-up tickets (`newTickets`) and raise `suggestions` for the human. Never assign to an agent that isn't listed above.");
+  lines.push("");
+  lines.push("## Avoid loops (IMPORTANT)");
+  lines.push(
+    "If the trail shows you have already assigned the same or similar work before and the worker keeps reporting success WITHOUT delivering the missing piece (or made no new commits), do NOT assign it again. That usually means the remaining work is impossible in this repository (e.g. the required surface/stack doesn't exist here). In that case either `merge` what's committed (if it's a coherent improvement), `close` the ticket, or `needs_human` with a `suggestion` describing what's needed (e.g. an agent/stack that can do it). When you `assign`, your `message` MUST describe the SPECIFIC remaining change — it is passed verbatim to the worker as its instruction.",
+  );
 
   return lines.join("\n");
 }
@@ -94,8 +99,10 @@ export function buildAgentPrompt(args: {
   ticket: Ticket;
   specExcerpt: string | null;
   resume: boolean;
+  /** The ticket's activity trail, so the worker sees the orchestrator's direction. */
+  trail?: TicketEvent[];
 }): string {
-  const { project, role, ticket, specExcerpt, resume } = args;
+  const { project, role, ticket, specExcerpt, resume, trail = [] } = args;
   const lines: string[] = [];
 
   lines.push("# Chorus agent task");
@@ -145,19 +152,37 @@ export function buildAgentPrompt(args: {
   lines.push("");
   lines.push(ticket.body);
 
+  // The most recent orchestrator direction tells the worker what to do THIS round.
+  const lastDirection = [...trail].reverse().find((e) => e.kind === "triage");
+  const priorWork = trail.filter((e) => e.kind === "work");
+  if (lastDirection) {
+    lines.push("");
+    lines.push("## What the orchestrator wants from you now (READ THIS)");
+    lines.push(lastDirection.message);
+    lines.push(
+      "Do exactly this remaining work — not work that is already done. If this specific change is impossible in this repository (e.g. the required surface/stack does not exist here), do NOT re-implement what already exists; instead return `status: blocked` and explain why in `summary`.",
+    );
+  }
+  if (priorWork.length) {
+    lines.push("");
+    lines.push("## Already done on this ticket (do not redo)");
+    for (const w of priorWork.slice(-6)) lines.push(`- ${w.message}`);
+  }
+
   if (resume) {
     lines.push("");
     lines.push("## Resuming");
     lines.push(
-      "This task was interrupted earlier. Inspect the current git state (committed and uncommitted) and continue from where it left off. Do not redo completed work.",
+      "Prior work is committed on this branch. Inspect the git state, then make ONLY the remaining change described above. If nothing remains for you to do, return `status: no_changes` (do not re-commit existing work).",
     );
   }
 
   lines.push("");
   lines.push("## When you finish");
   lines.push(
-    "Commit your work, then return your final result as JSON matching the provided output schema: " +
-      "`status` (success | no_changes | blocked), a one-paragraph `summary` for the changelog, and `filesChanged`.",
+    "Commit any NEW work, then return your final result as JSON matching the provided output schema: " +
+      "`status` (success | no_changes | blocked), a one-paragraph `summary` for the changelog, and `filesChanged`. " +
+      "Use `no_changes` if you made no new commits, and `blocked` if the requested change can't be done here.",
   );
 
   return lines.join("\n");
