@@ -11,16 +11,22 @@ export interface ShellResult extends RunResult {
 
 /**
  * Run a shell command line (e.g. `npm install`, `npm run build`) to completion
- * via a login shell, so PATH/nvm/etc. resolve the way the user's terminal does.
+ * via the user's shell, so PATH/nvm/etc. resolve the way their terminal does.
  * Never throws on non-zero exit — the caller inspects `ok`/`code`. Used for
  * per-project setup and verify commands, which must be captured, not fatal.
+ *
+ * Shell choice is portable: `-l` (login) is only passed to bash/zsh. On hosts
+ * where `/bin/sh` is dash/ash, `-l` is rejected outright, so we fall back to a
+ * plain `-c` there rather than making every command look broken.
  */
 export async function runShell(
   command: string,
   cwd: string,
   opts: { timeoutMs?: number; tailBytes?: number } = {},
 ): Promise<ShellResult> {
-  const r = await run("/bin/sh", ["-lc", command], {
+  const shell = process.env.SHELL || "/bin/sh";
+  const useLogin = shell.includes("bash") || shell.includes("zsh");
+  const r = await run(shell, [useLogin ? "-lc" : "-c", command], {
     cwd,
     timeoutMs: opts.timeoutMs,
     throwOnError: false,

@@ -517,6 +517,7 @@ export class Orchestrator {
 
     // 2) evaluator agent (must be able to run commands → needs the worktree)
     let evaluator: EvaluatorVerdict | null = null;
+    let evaluatorError: string | null = null;
     if (wt) {
       try {
         evaluator = await runEvaluator({
@@ -537,12 +538,16 @@ export class Orchestrator {
           this.deps.db.updateTicket(ticket.id, { status: "open", roleName: ORCHESTRATOR_ROLE });
           return;
         }
-        this.trail(project.id, ticket.id, "evaluator", "note", `Evaluator failed: ${String(err)}`);
+        // A non-quota crash must NOT be treated as approval — record it as a
+        // failure so the gate doesn't silently pass.
+        evaluatorError = String(err);
+        this.trail(project.id, ticket.id, "evaluator", "note", `Evaluator failed: ${evaluatorError}`);
       }
     }
 
     // 3) reviewer agent (read-only; can run in the worktree or the main clone)
     let reviewer: ReviewerVerdict | null = null;
+    let reviewerError: string | null = null;
     try {
       reviewer = await runReviewer({
         cwd: wt ?? project.localPath,
@@ -562,22 +567,28 @@ export class Orchestrator {
         this.deps.db.updateTicket(ticket.id, { status: "open", roleName: ORCHESTRATOR_ROLE });
         return;
       }
-      this.trail(project.id, ticket.id, "reviewer", "note", `Reviewer failed: ${String(err)}`);
+      reviewerError = String(err);
+      this.trail(project.id, ticket.id, "reviewer", "note", `Reviewer failed: ${reviewerError}`);
     }
 
     const diff = await this.deps.git.diff(project.localPath, this.baseRef(project), ticket.branch).catch(() => "");
     const diffHash = diff ? createHash("sha256").update(diff).digest("hex").slice(0, 16) : null;
 
+    // The gate is "all three must pass". A stage that errored out (other than
+    // quota, already handled) counts as a failure, never as silent approval.
     const verifyFailed = verify.ran && !verify.passed;
-    const evalFailed = evaluator !== null && !evaluator.passed;
-    const reviewFailed = reviewer !== null && !reviewer.approved;
+    const evalFailed = evaluatorError !== null || (evaluator !== null && !evaluator.passed);
+    const reviewFailed = reviewerError !== null || (reviewer !== null && !reviewer.approved);
     const accepted = !verifyFailed && !evalFailed && !reviewFailed;
 
     const diagnosisParts: string[] = [];
     if (verifyFailed) diagnosisParts.push(`Verify commands failed:\n${verify.output.slice(-1500)}`);
-    if (evalFailed) diagnosisParts.push(evaluator?.diagnosis || (evaluator?.failures ?? []).join("; "));
-    if (reviewFailed)
-      diagnosisParts.push(`Reviewer did not approve. Risks: ${(reviewer?.risks ?? []).join("; ") || "—"}`);
+    if (evaluatorError) diagnosisParts.push(`Evaluator agent failed to run: ${evaluatorError}`);
+    else if (evaluator !== null && !evaluator.passed)
+      diagnosisParts.push(evaluator.diagnosis || (evaluator.failures ?? []).join("; "));
+    if (reviewerError) diagnosisParts.push(`Reviewer agent failed to run: ${reviewerError}`);
+    else if (reviewer !== null && !reviewer.approved)
+      diagnosisParts.push(`Reviewer did not approve. Risks: ${(reviewer.risks ?? []).join("; ") || "—"}`);
     const diagnosis = diagnosisParts.filter(Boolean).join("\n\n") || null;
 
     if (accepted) {
@@ -868,6 +879,10 @@ export class Orchestrator {
           await this.notify("pr_merged", project, "PR merged", `${ticket.title}\n${state.url}`).catch(() => {});
         } else if (state.state === "CLOSED") {
           this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", `PR closed without merging: ${state.url}`);
+          // The worktree was removed when the PR opened. Clear the branch too so
+          // a future attempt starts fresh (a stale branch with no worktree makes
+          // runWorker treat it as a resume and run in a directory that's gone).
+          this.deps.db.updateTicket(ticket.id, { branch: null });
           this.handBackToOrchestrator(project.id, ticket.id);
         }
       }
