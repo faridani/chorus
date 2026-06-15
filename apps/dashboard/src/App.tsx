@@ -3,7 +3,6 @@ import {
   type AppState,
   api,
   type BackendInfo,
-  type CommitLogEntry,
   type Project,
   type ProjectDetail,
   type TicketEvent,
@@ -11,8 +10,10 @@ import {
 } from "./api.js";
 import { AgentGallery } from "./components/AgentGallery.js";
 import { EventFeed, type FeedEntry } from "./components/EventFeed.js";
-import { IntegrationLog } from "./components/IntegrationLog.js";
+import { GlobalSettings } from "./components/GlobalSettings.js";
+import { LoopGallery } from "./components/LoopGallery.js";
 import { ModelsPanel } from "./components/ModelsPanel.js";
+import { OpenPrs } from "./components/OpenPrs.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 
 export function App() {
@@ -21,10 +22,10 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [projectEvents, setProjectEvents] = useState<TicketEvent[]>([]);
-  const [commits, setCommits] = useState<CommitLogEntry[]>([]);
   const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [showNew, setShowNew] = useState(false);
-  const [leftTab, setLeftTab] = useState<"projects" | "gallery">("projects");
+  const [showSettings, setShowSettings] = useState(false);
+  const [leftTab, setLeftTab] = useState<"projects" | "gallery" | "loops">("projects");
   const [backends, setBackends] = useState<BackendInfo[]>([]);
   const [refreshingBackends, setRefreshingBackends] = useState(false);
   const seq = useRef(0);
@@ -52,7 +53,6 @@ export function App() {
   const refreshDetail = useCallback(async (id: string) => {
     setDetail(await api.project(id).catch(() => null));
     setProjectEvents(await api.projectEvents(id).catch(() => []));
-    setCommits(await api.integrationLog(id).catch(() => []));
   }, []);
 
   useEffect(() => {
@@ -99,6 +99,14 @@ export function App() {
           </span>
           <span className="pill">running: {state?.runningTasks.length ?? 0}</span>
         </div>
+        <button
+          className="hamburger"
+          onClick={() => setShowSettings(true)}
+          title="Global settings"
+          aria-label="Global settings"
+        >
+          ☰
+        </button>
       </header>
 
       <div className="body">
@@ -117,6 +125,13 @@ export function App() {
               title="Reusable agent definitions usable across all projects."
             >
               Agent Gallery
+            </button>
+            <button
+              className={`tabbtn ${leftTab === "loops" ? "active" : ""}`}
+              onClick={() => setLeftTab("loops")}
+              title="Loops chain Agent Gallery agents into a pipeline (e.g. Orchestrator → Feature Designer → Orchestrator → Software Dev → Test and QA → Orchestrator)."
+            >
+              Loop Gallery
             </button>
           </nav>
 
@@ -137,8 +152,10 @@ export function App() {
                 ))}
               </ul>
             </>
-          ) : (
+          ) : leftTab === "gallery" ? (
             <AgentGallery backends={backends} projects={projects} />
+          ) : (
+            <LoopGallery />
           )}
         </aside>
 
@@ -157,27 +174,14 @@ export function App() {
         </main>
 
         <aside className="events">
-          <section className="commits-pane">
+          <section className="prs-pane">
             <h3>
-              Integration Branch
+              Open PRs
               {selected && detail ? (
-                <span className="muted"> — {detail.project.integrationBranch}</span>
+                <span className="muted"> — {detail.project.baseBranch}</span>
               ) : null}
-              {selected && (
-                <button
-                  className="runbtn refresh"
-                  onClick={() => selected && refreshDetail(selected)}
-                  title="Refresh the integration-branch commit log."
-                >
-                  ↻
-                </button>
-              )}
             </h3>
-            <IntegrationLog
-              branch={detail?.project.integrationBranch ?? null}
-              commits={commits}
-              hasProject={!!selected}
-            />
+            <OpenPrs tickets={detail?.tickets ?? []} hasProject={!!selected} />
           </section>
           <section className="models-pane">
             <h3>
@@ -212,6 +216,8 @@ export function App() {
           </section>
         </aside>
       </div>
+
+      {showSettings && <GlobalSettings onClose={() => setShowSettings(false)} />}
 
       {showNew && (
         <NewProject
@@ -269,7 +275,7 @@ function NewProject({
           placeholder="main"
           value={baseBranch}
           onChange={(e) => setBaseBranch(e.target.value)}
-          title="The repo's base/main branch (default: main). Chorus cuts its integration branch from here and only merges back to it after your explicit approval; it is never modified autonomously."
+          title="The repo's base/main branch (default: main). Chorus cuts each ticket's branch from here and opens a GitHub PR against it when the work is ready; you merge the PR manually. It is never modified autonomously."
         />
 
         <label>Spec text (optional — only if the repo has no docs/SPEC.md)</label>

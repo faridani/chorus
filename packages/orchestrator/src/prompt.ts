@@ -1,4 +1,5 @@
 import type { Project, Role, Ticket, TicketEvent } from "@chorus/core";
+import { type TaskManifest, renderManifestMarkdown } from "./manifest.js";
 
 const GLOBAL_GUARDRAILS = [
   "Work ONLY inside the current working directory (your isolated git worktree).",
@@ -76,14 +77,14 @@ export function buildOrchestratorPrompt(args: {
   lines.push("## Decide");
   lines.push("Choose exactly one action and return it as the required JSON:");
   lines.push("- assign: hand the ticket to one of the worker agents above (set `assignee` to its exact name). Use this when the ticket needs (more) implementation work.");
-  lines.push("- merge: the committed work on the branch fully satisfies the ticket — merge it and close. Only use when there IS committed work and it's ready.");
-  lines.push("- close: close the ticket without merging (e.g. nothing to do, duplicate, or obsolete).");
+  lines.push("- open_pr: the committed work on the branch fully satisfies the ticket — push the branch and open a GitHub PR against the base branch for the human to merge. Only use when there IS committed work and it's ready.");
+  lines.push("- close: close the ticket without opening a PR (e.g. nothing to do, duplicate, or obsolete).");
   lines.push("- needs_human: you cannot proceed (e.g. you need an agent that doesn't exist, or repeated attempts failed). Explain via `suggestions`.");
   lines.push("You may also create follow-up tickets (`newTickets`) and raise `suggestions` for the human. Never assign to an agent that isn't listed above.");
   lines.push("");
   lines.push("## Avoid loops (IMPORTANT)");
   lines.push(
-    "If the trail shows you have already assigned the same or similar work before and the worker keeps reporting success WITHOUT delivering the missing piece (or made no new commits), do NOT assign it again. That usually means the remaining work is impossible in this repository (e.g. the required surface/stack doesn't exist here). In that case either `merge` what's committed (if it's a coherent improvement), `close` the ticket, or `needs_human` with a `suggestion` describing what's needed (e.g. an agent/stack that can do it). When you `assign`, your `message` MUST describe the SPECIFIC remaining change — it is passed verbatim to the worker as its instruction.",
+    "If the trail shows you have already assigned the same or similar work before and the worker keeps reporting success WITHOUT delivering the missing piece (or made no new commits), do NOT assign it again. That usually means the remaining work is impossible in this repository (e.g. the required surface/stack doesn't exist here). In that case either `open_pr` for what's committed (if it's a coherent improvement), `close` the ticket, or `needs_human` with a `suggestion` describing what's needed (e.g. an agent/stack that can do it). When you `assign`, your `message` MUST describe the SPECIFIC remaining change — it is passed verbatim to the worker as its instruction.",
   );
 
   return lines.join("\n");
@@ -101,15 +102,17 @@ export function buildAgentPrompt(args: {
   resume: boolean;
   /** The ticket's activity trail, so the worker sees the orchestrator's direction. */
   trail?: TicketEvent[];
+  /** Structured per-attempt context: commands, acceptance criteria, prior failures. */
+  manifest?: TaskManifest;
 }): string {
-  const { project, role, ticket, specExcerpt, resume, trail = [] } = args;
+  const { project, role, ticket, specExcerpt, resume, trail = [], manifest } = args;
   const lines: string[] = [];
 
   lines.push("# Chorus agent task");
   lines.push("");
   lines.push("## Project");
   lines.push(`Repository: ${project.repoUrl}`);
-  lines.push(`Integration branch (your work merges here): ${project.integrationBranch}`);
+  lines.push(`Base branch (Chorus opens a PR against this when your work is ready): ${project.baseBranch}`);
   if (project.expectations?.trim()) {
     lines.push("");
     lines.push("### High-level expectations");
@@ -151,6 +154,11 @@ export function buildAgentPrompt(args: {
   lines.push(`Title: ${ticket.title}`);
   lines.push("");
   lines.push(ticket.body);
+
+  if (manifest) {
+    lines.push("");
+    lines.push(renderManifestMarkdown(manifest));
+  }
 
   // The most recent orchestrator direction tells the worker what to do THIS round.
   const lastDirection = [...trail].reverse().find((e) => e.kind === "triage");

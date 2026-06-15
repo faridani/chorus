@@ -10,10 +10,9 @@ export const ConfigSchema = z.object({
   dataDir: z.string(),
   /** Port the web API/dashboard listens on. */
   port: z.number().int().positive().default(7878),
-  /** Bind host. 0.0.0.0 is fine behind Tailscale; default loopback. */
-  host: z.string().default("127.0.0.1"),
-  /** Default branch agents merge into. */
-  integrationBranch: z.string().default("chorus/integration"),
+  /** Bind host. Defaults to 0.0.0.0 so the dashboard is reachable from other
+   * machines (LAN/Tailscale); set CHORUS_HOST=127.0.0.1 to restrict to loopback. */
+  host: z.string().default("0.0.0.0"),
   /** Max number of agents running at once. */
   maxConcurrentAgents: z.number().int().positive().default(2),
   /** Max dispatch attempts per ticket before it is parked for human review. */

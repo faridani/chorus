@@ -4,16 +4,20 @@ import { dirname, join } from "node:path";
 import { run } from "@chorus/proc";
 import { Mutex } from "./mutex.js";
 
-export interface MergeOutcome {
-  status: "merged" | "conflicted";
-  mergeCommit: string | null;
-  conflictFiles: string[];
+/** A pull request as reported by `gh`. */
+export interface PrInfo {
+  url: string;
+  number: number | null;
+  /** GitHub PR state: OPEN | MERGED | CLOSED. */
+  state: string;
+  /** ISO timestamp when merged, or null if not merged. */
+  mergedAt: string | null;
 }
 
 /**
  * All git access funnels through here. A single mutex serializes every
  * operation that mutates shared refs/objects (clone, fetch, worktree add,
- * merge), which is what keeps parallel agents from corrupting `.git`.
+ * push), which is what keeps parallel agents from corrupting `.git`.
  * Per-worktree file edits by agents happen outside this class and are safe.
  */
 export class GitService {
@@ -38,40 +42,24 @@ export class GitService {
     return cur.stdout.trim();
   }
 
-  /** Create (if needed) and check out the integration branch off the base. */
-  async ensureIntegrationBranch(
-    localPath: string,
-    baseBranch: string,
-    integrationBranch: string,
-  ): Promise<void> {
-    await this.mutex.run(async () => {
-      await this.gitUnlocked(["fetch", "origin"], localPath, false);
-      const exists = await this.gitUnlocked(
-        ["rev-parse", "--verify", "--quiet", integrationBranch],
-        localPath,
-        false,
-      );
-      if (exists.code === 0) {
-        await this.gitUnlocked(["checkout", integrationBranch], localPath, true);
-      } else {
-        await this.gitUnlocked(["checkout", "-b", integrationBranch, baseBranch], localPath, true);
-      }
-    });
-  }
-
   async headCommit(localPath: string, ref = "HEAD"): Promise<string> {
     const r = await this.git(["rev-parse", ref], localPath, true);
     return r.stdout.trim();
   }
 
-  /** Add a worktree on a fresh branch cut from `baseRef`. */
+  /**
+   * Add a worktree on a fresh branch cut from the latest `origin/<baseBranch>`.
+   * Fetches first so the ticket branch (and the PR it later opens) targets the
+   * current state of the base branch on GitHub.
+   */
   async addWorktree(
     localPath: string,
     worktreePath: string,
     branch: string,
-    baseRef: string,
+    baseBranch: string,
   ): Promise<void> {
     await this.mutex.run(async () => {
+      await this.gitUnlocked(["fetch", "origin", baseBranch], localPath, false);
       await this.gitUnlocked(["worktree", "prune"], localPath, false);
       // Clear any leftover worktree dir from a crashed run; `worktree add`
       // refuses a non-empty target. `-B` force-creates/resets the branch so a
@@ -81,7 +69,7 @@ export class GitService {
         await this.gitUnlocked(["worktree", "prune"], localPath, false);
       }
       await this.gitUnlocked(
-        ["worktree", "add", "-B", branch, worktreePath, baseRef],
+        ["worktree", "add", "-B", branch, worktreePath, `origin/${baseBranch}`],
         localPath,
         true,
       );
@@ -99,17 +87,6 @@ export class GitService {
     await this.mutex.run(() => this.gitUnlocked(["worktree", "prune"], localPath, false).then(() => {}));
   }
 
-  /**
-   * Check out a branch in the main checkout (best-effort). Used on boot to
-   * restore HEAD to the integration branch after a crash mid-promote, so later
-   * changelog commits don't land on the wrong branch.
-   */
-  async checkout(localPath: string, branch: string): Promise<void> {
-    await this.mutex.run(() =>
-      this.gitUnlocked(["checkout", branch], localPath, false).then(() => {}),
-    );
-  }
-
   /** Summarize a branch's work vs a base ref: commit subjects + changed files. */
   async branchSummary(
     localPath: string,
@@ -123,47 +100,10 @@ export class GitService {
     return { commits, files };
   }
 
-  /**
-   * Recent commit log of a ref (newest first). Uses unit/record separators so
-   * subjects with arbitrary punctuation parse safely. Returns [] if the ref or
-   * repo doesn't exist yet (e.g. a project still initializing).
-   */
-  async recentLog(
-    localPath: string,
-    ref: string,
-    limit = 30,
-  ): Promise<
-    {
-      hash: string;
-      shortHash: string;
-      subject: string;
-      author: string;
-      relativeDate: string;
-      timestamp: number;
-    }[]
-  > {
-    const FMT = "%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%at%x1e";
-    const r = await this.git(
-      ["log", ref, `-n${Math.max(1, Math.min(limit, 200))}`, `--format=${FMT}`],
-      localPath,
-      false,
-    );
-    if (r.code !== 0) return [];
-    return r.stdout
-      .split("\x1e")
-      .map((rec) => rec.replace(/^\n/, "").trim())
-      .filter(Boolean)
-      .map((rec) => {
-        const [hash, shortHash, subject, author, relativeDate, at] = rec.split("\x1f");
-        return {
-          hash: hash ?? "",
-          shortHash: shortHash ?? "",
-          subject: subject ?? "",
-          author: author ?? "",
-          relativeDate: relativeDate ?? "",
-          timestamp: Number(at ?? 0) * 1000,
-        };
-      });
+  /** Unified diff of `branch` vs `baseRef` (empty string if none / on error). */
+  async diff(localPath: string, baseRef: string, branch: string): Promise<string> {
+    const r = await this.git(["diff", `${baseRef}..${branch}`], localPath, false);
+    return r.code === 0 ? r.stdout : "";
   }
 
   /** True if `branch` has commits beyond `baseCommit`. */
@@ -190,74 +130,93 @@ export class GitService {
   }
 
   /**
-   * Merge an agent branch into the integration branch with `--no-ff`
-   * (each ticket becomes one revertable merge commit). On conflict, abort
-   * cleanly and report the conflicting files; the agent branch is untouched.
+   * Push a ticket branch to `origin` (force-with-lease so a re-run that adds
+   * commits updates the already-open PR). Chorus — not the agent — performs
+   * this; the pre-push guard only blocks protected branches, so ticket
+   * branches (`chorus/ticket-*`) push cleanly.
    */
-  async mergeIntoIntegration(
-    localPath: string,
-    integrationBranch: string,
-    branch: string,
-    message: string,
-  ): Promise<MergeOutcome> {
-    return this.mutex.run(async () => {
-      await this.gitUnlocked(["checkout", integrationBranch], localPath, true);
-      const merge = await this.gitUnlocked(
-        ["merge", "--no-ff", "-m", message, branch],
+  async pushBranch(localPath: string, branch: string): Promise<void> {
+    await this.mutex.run(async () => {
+      const r = await this.gitUnlocked(
+        ["push", "-u", "origin", branch, "--force-with-lease"],
         localPath,
         false,
       );
-      if (merge.code === 0) {
-        const commit = await this.gitUnlocked(["rev-parse", "HEAD"], localPath, true);
-        return { status: "merged", mergeCommit: commit.stdout.trim(), conflictFiles: [] };
+      if (r.code !== 0) {
+        throw new Error(`git push failed for ${branch}: ${r.stderr.trim() || r.stdout.trim()}`);
       }
-      // Conflict (or other failure) — collect unmerged paths, then abort.
-      const conflicts = await this.gitUnlocked(
-        ["diff", "--name-only", "--diff-filter=U"],
-        localPath,
-        false,
-      );
-      const conflictFiles = conflicts.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-      await this.gitUnlocked(["merge", "--abort"], localPath, false);
-      return { status: "conflicted", mergeCommit: null, conflictFiles };
     });
   }
 
   /**
-   * Human-approved promotion: merge the integration branch into the base
-   * branch (e.g. `main`) locally with `--no-ff`. This is only ever invoked
-   * from the explicit approval action — never autonomously. Pushing remains
-   * the human's decision (and the pre-push guard still blocks accidental
-   * pushes to protected branches).
+   * Open a PR for `branch` against `baseBranch`, or return the existing one if
+   * a PR for this head branch is already open (idempotent on re-runs — the
+   * re-push above already updated it). `gh` infers the repo from origin and
+   * uses the user's authenticated account.
    */
-  async mergeIntegrationToBase(
+  async openOrUpdatePr(
     localPath: string,
+    branch: string,
     baseBranch: string,
-    integrationBranch: string,
-  ): Promise<MergeOutcome> {
-    return this.mutex.run(async () => {
-      await this.gitUnlocked(["checkout", baseBranch], localPath, true);
-      const merge = await this.gitUnlocked(
-        ["merge", "--no-ff", "-m", `chorus: promote ${integrationBranch} to ${baseBranch}`, integrationBranch],
-        localPath,
-        false,
-      );
-      if (merge.code === 0) {
-        const commit = await this.gitUnlocked(["rev-parse", "HEAD"], localPath, true);
-        // Return to the integration branch so agents keep building on it.
-        await this.gitUnlocked(["checkout", integrationBranch], localPath, false);
-        return { status: "merged", mergeCommit: commit.stdout.trim(), conflictFiles: [] };
-      }
-      const conflicts = await this.gitUnlocked(
-        ["diff", "--name-only", "--diff-filter=U"],
-        localPath,
-        false,
-      );
-      const conflictFiles = conflicts.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-      await this.gitUnlocked(["merge", "--abort"], localPath, false);
-      await this.gitUnlocked(["checkout", integrationBranch], localPath, false);
-      return { status: "conflicted", mergeCommit: null, conflictFiles };
-    });
+    title: string,
+    body: string,
+  ): Promise<PrInfo> {
+    const existing = await this.getPrState(localPath, branch);
+    if (existing) return existing;
+    const create = await run(
+      "gh",
+      [
+        "pr",
+        "create",
+        "--head",
+        branch,
+        "--base",
+        baseBranch,
+        "--title",
+        title,
+        "--body",
+        body,
+      ],
+      { cwd: localPath, throwOnError: false },
+    );
+    if (create.code !== 0) {
+      throw new Error(`gh pr create failed for ${branch}: ${create.stderr.trim() || create.stdout.trim()}`);
+    }
+    // Re-read to get the structured fields (number/state/url).
+    const info = await this.getPrState(localPath, branch);
+    if (info) return info;
+    // Fall back to the URL printed by `gh pr create`.
+    return { url: create.stdout.trim(), number: null, state: "OPEN", mergedAt: null };
+  }
+
+  /**
+   * Query the PR (if any) for a head branch. Returns null when no PR exists.
+   * The polling primitive: `state` flips to MERGED / CLOSED on GitHub.
+   */
+  async getPrState(localPath: string, branch: string): Promise<PrInfo | null> {
+    const r = await run(
+      "gh",
+      ["pr", "view", branch, "--json", "url,number,state,mergedAt"],
+      { cwd: localPath, throwOnError: false },
+    );
+    if (r.code !== 0) return null; // "no pull requests found for branch"
+    try {
+      const j = JSON.parse(r.stdout) as {
+        url?: string;
+        number?: number;
+        state?: string;
+        mergedAt?: string | null;
+      };
+      if (!j.url) return null;
+      return {
+        url: j.url,
+        number: typeof j.number === "number" ? j.number : null,
+        state: j.state ?? "OPEN",
+        mergedAt: j.mergedAt ?? null,
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**
