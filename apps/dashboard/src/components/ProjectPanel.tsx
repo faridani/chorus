@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type ProjectDetail } from "../api.js";
+import { api, type BackendInfo, type ProjectDetail } from "../api.js";
 import { ActivityTab } from "./ActivityTab.js";
 import { AgentsTab } from "./AgentsTab.js";
 import { SettingsTab } from "./SettingsTab.js";
@@ -10,10 +10,12 @@ type Tab = "tickets" | "agents" | "settings" | "activity";
 /** The project control panel: header + tabbed sections. */
 export function ProjectPanel({
   detail,
+  backends,
   runningTaskIds,
   onChange,
 }: {
   detail: ProjectDetail;
+  backends: BackendInfo[];
   runningTaskIds: string[];
   onChange: () => void;
 }) {
@@ -60,7 +62,9 @@ export function ProjectPanel({
             onChange={onChange}
           />
         )}
-        {tab === "agents" && <AgentsTab projectId={project.id} roles={roles} onChange={onChange} />}
+        {tab === "agents" && (
+          <AgentsTab projectId={project.id} roles={roles} backends={backends} onChange={onChange} />
+        )}
         {tab === "settings" && <SettingsTab project={project} onSaved={onChange} />}
         {tab === "activity" && <ActivityTab merges={merges} changelog={changelog} />}
       </div>

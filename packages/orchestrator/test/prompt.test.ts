@@ -12,6 +12,7 @@ const project: Project = {
   specPath: "docs/SPEC.md",
   expectations: "Ship a delightful CLI that never loses data.",
   groundRules: ["Always add tests", "Keep PRs small"],
+  runState: "running",
   status: "ready",
   createdAt: 0,
 };

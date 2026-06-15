@@ -35,40 +35,41 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
 
   return (
     <div className="settings">
-      <div className="field">
+      <div className="field" title={TIPS.repository}>
         <label>Repository</label>
         <div className="ro">{project.repoUrl}</div>
       </div>
-      <div className="field">
+      <div className="field" title={TIPS.integrationBranch}>
         <label>Integration branch (read-only)</label>
         <div className="ro">{project.integrationBranch}</div>
       </div>
-      <div className="field">
+      <div className="field" title={TIPS.specPath}>
         <label>Spec path</label>
         <div className="ro">{project.specPath ?? "—"}</div>
       </div>
 
-      <div className="field">
+      <div className="field" title={TIPS.baseBranch}>
         <label>Base / main branch</label>
-        <input value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} />
+        <input value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} title={TIPS.baseBranch} />
         <div className="hint">
           Used as the promote target (Approve) and for new clones. Applies going forward; the
           existing integration branch is unchanged.
         </div>
       </div>
 
-      <div className="field">
+      <div className="field" title={TIPS.expectations}>
         <label>High-level expectations</label>
         <textarea
           rows={5}
           value={expectations}
           placeholder="What is this project for? What does 'good' look like? Constraints, priorities…"
           onChange={(e) => setExpectations(e.target.value)}
+          title={TIPS.expectations}
         />
         <div className="hint">Injected into every agent's prompt.</div>
       </div>
 
-      <div className="field">
+      <div className="field" title={TIPS.groundRules}>
         <label>Ground rules (project-wide guardrails)</label>
         <StringListEditor
           items={groundRules}
@@ -81,9 +82,26 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
         </div>
       </div>
 
-      <button className="primary" disabled={!dirty || busy} onClick={save}>
+      <button className="primary" disabled={!dirty || busy} onClick={save} title={TIPS.save}>
         {busy ? "Saving…" : dirty ? "Save settings" : "Saved"}
       </button>
     </div>
   );
 }
+
+/** Detailed hover tooltips for each Settings field. */
+const TIPS = {
+  repository:
+    "The GitHub repository this project works on. Cloned via the gh CLI under your authenticated account. Read-only — it's fixed when the project is created.",
+  integrationBranch:
+    "The branch agents merge their completed, reviewed work into (created by Chorus, e.g. chorus/integration). It is NOT your main branch. Read-only. You test this branch, then promote it to the base branch with the Approve button.",
+  specPath:
+    "Path inside the repo to the specification Chorus read to generate tickets (e.g. docs/SPEC.md or SPEC.md). Read-only — detected when the repo is imported, or set when you paste a spec for a repo that had none.",
+  baseBranch:
+    "Your repository's protected base branch (default: main). Chorus cuts the integration branch from it and, when you click Approve, merges integration back into it. Agents never modify it directly. Changing it applies going forward (used as the Approve/promote target and for new clones); the existing integration branch is left unchanged.",
+  expectations:
+    "A plain-language description of what this project is and what 'good' looks like — goals, priorities, and constraints. This text is injected verbatim into every agent's prompt so all agents share the same high-level intent beyond the per-ticket details.",
+  groundRules:
+    "Project-wide rules added to EVERY agent's guardrails, on top of each role's own allowed/forbidden lists. Use them for conventions like 'always add tests' or 'never edit generated files'. Built-in safety rules (never push, never touch the base branch, always commit) always apply and can't be removed here.",
+  save: "Save these settings. They take effect for future agent runs; work already in progress is unaffected.",
+} as const;

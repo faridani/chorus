@@ -30,6 +30,7 @@ test("project + ticket + task round-trip", () => {
     specPath: "docs/SPEC.md",
     expectations: "",
     groundRules: [],
+    runState: "running",
     status: "ready",
     createdAt: Date.now(),
   });
@@ -88,6 +89,7 @@ test("migration 0002: project round-trips expectations + ground rules", () => {
     specPath: null,
     expectations: "Build a great thing",
     groundRules: ["rule one", "rule two"],
+    runState: "running",
     status: "ready",
     createdAt: Date.now(),
   });
@@ -100,6 +102,13 @@ test("migration 0002: project round-trips expectations + ground rules", () => {
   assert.equal(upd.expectations, "new vision");
   assert.deepEqual(upd.groundRules, ["only one"]);
   assert.equal(upd.baseBranch, "develop");
+
+  // migration 0003: run_state round-trips and is independently updatable.
+  assert.equal(got.runState, "running");
+  db.updateProject(id, { runState: "paused" });
+  assert.equal(db.getProject(id)!.runState, "paused");
+  db.updateProject(id, { runState: "stopped" });
+  assert.equal(db.getProject(id)!.runState, "stopped");
   db.close();
 });
 
@@ -115,6 +124,7 @@ test("ticket delete + role update/delete", () => {
     specPath: null,
     expectations: "",
     groundRules: [],
+    runState: "running",
     status: "ready",
     createdAt: Date.now(),
   });

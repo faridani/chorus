@@ -25,6 +25,7 @@ test("reconcile: interrupted running task with no worktree → ticket reopened, 
     specPath: null,
     expectations: "",
     groundRules: [],
+    runState: "running",
     status: "ready",
     createdAt: Date.now(),
   });

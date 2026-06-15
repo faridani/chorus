@@ -10,6 +10,7 @@ export interface Project {
   expectations: string;
   groundRules: string[];
   status: string;
+  runState: "running" | "paused" | "stopped";
   createdAt: number;
 }
 
@@ -75,11 +76,33 @@ export interface RoleInput {
   model?: string;
 }
 
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  description: string;
+  allowed: string[];
+  forbidden: string[];
+  backendId: string;
+  model?: string;
+  createdAt: number;
+}
+
 export interface VersionInfo {
   number: string;
   commit: string;
   dirty: boolean;
   startedAt: number;
+}
+
+export interface BackendInfo {
+  id: string;
+  label: string;
+  bin: string;
+  available: boolean;
+  version: string | null;
+  models: string[];
+  defaultModel: string | null;
+  implemented: boolean;
 }
 
 export interface AppState {
@@ -97,6 +120,9 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   state: () => fetch("/api/state").then((r) => json<AppState>(r)),
+  backends: () => fetch("/api/backends").then((r) => json<BackendInfo[]>(r)),
+  refreshBackends: () =>
+    fetch("/api/backends/refresh", { method: "POST" }).then((r) => json<BackendInfo[]>(r)),
   projects: () => fetch("/api/projects").then((r) => json<Project[]>(r)),
   project: (id: string) => fetch(`/api/projects/${id}`).then((r) => json<ProjectDetail>(r)),
   createProject: (repoUrl: string, specText?: string, baseBranch?: string) =>
@@ -148,6 +174,23 @@ export const api = {
     fetch(`/api/projects/${id}/roles/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
       json(r),
     ),
+  agentTemplates: () => fetch("/api/agent-templates").then((r) => json<AgentTemplate[]>(r)),
+  upsertAgentTemplate: (t: RoleInput) =>
+    fetch("/api/agent-templates", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(t),
+    }).then((r) => json<AgentTemplate>(r)),
+  deleteAgentTemplate: (name: string) =>
+    fetch(`/api/agent-templates/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
+      json(r),
+    ),
+  setProjectRunState: (id: string, state: "running" | "paused" | "stopped") =>
+    fetch(`/api/projects/${id}/run-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state }),
+    }).then((r) => json<Project>(r)),
   approve: (id: string) =>
     fetch(`/api/projects/${id}/approve`, { method: "POST" }).then((r) =>
       json<{ ok: boolean; message: string }>(r),

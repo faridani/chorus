@@ -1,24 +1,27 @@
-import { useState } from "react";
-import { api, type Role } from "../api.js";
+import { useEffect, useState } from "react";
+import { type AgentTemplate, api, type BackendInfo, type Role } from "../api.js";
 import { StringListEditor } from "./StringListEditor.js";
 
 /** Manage the project's agents (roles): persona, guardrails, backend, model. */
 export function AgentsTab({
   projectId,
   roles,
+  backends,
   onChange,
 }: {
   projectId: string;
   roles: Role[];
+  backends: BackendInfo[];
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState<Role | "new" | null>(null);
+  const [choosing, setChoosing] = useState(false);
 
   return (
     <div>
       <div className="tabhead">
         <h3>Agents ({roles.length})</h3>
-        <button className="primary" onClick={() => setEditing("new")}>
+        <button className="primary" onClick={() => setChoosing(true)}>
           + New agent
         </button>
       </div>
@@ -53,10 +56,27 @@ export function AgentsTab({
         {roles.length === 0 && <p className="muted">No agents defined yet.</p>}
       </div>
 
+      {choosing && (
+        <NewAgentChooser
+          projectId={projectId}
+          existingRoleNames={roles.map((r) => r.name)}
+          onClose={() => setChoosing(false)}
+          onCreateNew={() => {
+            setChoosing(false);
+            setEditing("new");
+          }}
+          onAdded={() => {
+            setChoosing(false);
+            onChange();
+          }}
+        />
+      )}
+
       {editing && (
         <RoleEditor
           projectId={projectId}
           role={editing === "new" ? null : editing}
+          backends={backends}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -68,14 +88,101 @@ export function AgentsTab({
   );
 }
 
+/** Choose how to add an agent: from the gallery, or create a new one. */
+function NewAgentChooser({
+  projectId,
+  existingRoleNames,
+  onClose,
+  onCreateNew,
+  onAdded,
+}: {
+  projectId: string;
+  existingRoleNames: string[];
+  onClose: () => void;
+  onCreateNew: () => void;
+  onAdded: () => void;
+}) {
+  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [busy, setBusy] = useState(false);
+  const existing = new Set(existingRoleNames);
+
+  useEffect(() => {
+    void api.agentTemplates().then(setTemplates).catch(() => setTemplates([]));
+  }, []);
+
+  const add = async (t: AgentTemplate) => {
+    setBusy(true);
+    try {
+      await api.upsertRole(projectId, {
+        name: t.name,
+        description: t.description,
+        allowed: t.allowed,
+        forbidden: t.forbidden,
+        backendId: t.backendId,
+        model: t.model,
+      });
+      onAdded();
+    } catch (err) {
+      alert(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>Add an agent</h3>
+
+        <button className="primary" onClick={onCreateNew}>
+          + Create a new agent
+        </button>
+
+        <label style={{ marginTop: 14 }}>Or add one from the Agent Gallery</label>
+        <div className="hint">
+          Gallery agents are shared across projects. They don't take any work until added here.
+        </div>
+        <ul className="chooser-list">
+          {templates.map((t) => {
+            const added = existing.has(t.name);
+            return (
+              <li key={t.id}>
+                <div className="ci-text">
+                  <strong>{t.name}</strong>{" "}
+                  <span className="muted">[{t.backendId}{t.model ? ` · ${t.model}` : ""}]</span>
+                  <div className="muted">{t.description || "—"}</div>
+                </div>
+                <button disabled={busy || added} onClick={() => add(t)}>
+                  {added ? "Added" : "Add"}
+                </button>
+              </li>
+            );
+          })}
+          {templates.length === 0 && (
+            <li className="muted">
+              No gallery agents yet — create them in the “Agent Gallery” tab on the left.
+            </li>
+          )}
+        </ul>
+
+        <div className="modal-actions">
+          <button onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RoleEditor({
   projectId,
   role,
+  backends,
   onClose,
   onSaved,
 }: {
   projectId: string;
   role: Role | null;
+  backends: BackendInfo[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -86,6 +193,13 @@ function RoleEditor({
   const [backendId, setBackendId] = useState(role?.backendId ?? "codex");
   const [model, setModel] = useState(role?.model ?? "");
   const [busy, setBusy] = useState(false);
+
+  // Backends to offer: detected + available; ensure the role's current backend
+  // is present even if not detected, and always keep codex as a fallback.
+  const known = backends.length ? backends : [];
+  const selectable = known.filter((b) => b.available);
+  const currentBackend = known.find((b) => b.id === backendId);
+  const modelOptions = currentBackend?.models ?? [];
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -121,13 +235,37 @@ function RoleEditor({
         <div className="row2">
           <div>
             <label>Backend</label>
-            <select value={backendId} onChange={(e) => setBackendId(e.target.value)}>
-              <option value="codex">codex</option>
+            <select
+              value={backendId}
+              onChange={(e) => {
+                setBackendId(e.target.value);
+                setModel(""); // reset model when backend changes
+              }}
+            >
+              {selectable.length === 0 && <option value="codex">codex</option>}
+              {selectable.map((b) => (
+                <option key={b.id} value={b.id} disabled={!b.implemented}>
+                  {b.label}
+                  {b.implemented ? "" : " (detected — not wired yet)"}
+                </option>
+              ))}
             </select>
           </div>
           <div>
             <label>Model (optional)</label>
-            <input value={model} placeholder="default" onChange={(e) => setModel(e.target.value)} />
+            <select value={model} onChange={(e) => setModel(e.target.value)}>
+              <option value="">
+                {currentBackend?.defaultModel
+                  ? `default (${currentBackend.defaultModel})`
+                  : "default"}
+              </option>
+              {modelOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+              {model && !modelOptions.includes(model) && <option value={model}>{model}</option>}
+            </select>
           </div>
         </div>
         <label>Allowed actions</label>

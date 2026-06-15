@@ -32,7 +32,41 @@ button:disabled { opacity: .5; cursor: default; }
 .quota-exhausted { color: #f85149; }
 .body { display: grid; grid-template-columns: 280px 1fr 320px; flex: 1; overflow: hidden; }
 .sidebar, .events { background: var(--panel); border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
-.events { border-right: none; border-left: 1px solid var(--border); }
+.events { border-right: none; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.models-pane { flex: 0 0 auto; max-height: 40%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.feed-pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* models panel */
+.backends { list-style: none; padding: 0; margin: 0; }
+.backends li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.bk-head { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.bk-head .muted { font-size: 11px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.on { background: #7ee787; }
+.dot.off { background: #6e7681; }
+.backends li.unavail { opacity: .55; }
+.bk-models { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
+.chip.default { color: #e3b341; border-color: #5e4e2e; }
+
+/* agent gallery */
+.gallery-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.gallery-item { padding: 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; background: var(--panel); }
+.gi-head { cursor: pointer; font-size: 13px; }
+.gi-desc { cursor: pointer; margin: 2px 0 6px; }
+.gi-use { display: flex; gap: 4px; }
+.gi-use select { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; font-size: 12px; }
+.gi-use button { font-size: 12px; padding: 2px 8px; }
+
+/* new-agent chooser */
+.chooser-list { list-style: none; padding: 0; margin: 6px 0 0; max-height: 320px; overflow-y: auto; }
+.chooser-list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.chooser-list .ci-text { flex: 1; min-width: 0; font-size: 13px; }
+.chooser-list button { flex: 0 0 auto; font-size: 12px; padding: 3px 10px; }
+
+.runbtn.refresh { margin-left: 8px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.runbtn.refresh.spinning { display: inline-block; animation: spin 0.7s linear infinite; }
 .main { padding: 16px 24px; overflow-y: auto; }
 h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .newproj input, .newproj textarea, .providespec textarea, .addticket input {
@@ -40,11 +74,22 @@ h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
   border: 1px solid var(--border); border-radius: 6px; padding: 6px;
 }
 .newproj textarea { min-height: 50px; }
+.newproj-btn { width: 100%; margin-bottom: 12px; }
 .projlist { list-style: none; padding: 0; margin: 0; }
 .projlist li { padding: 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
 .projlist li:hover { background: var(--panel2); }
 .projlist li.active { background: var(--panel2); border: 1px solid var(--accent); }
 .repo { font-weight: 600; font-size: 13px; }
+.projrow { display: flex; align-items: center; gap: 6px; }
+.runctl { display: inline-flex; gap: 2px; margin-left: auto; }
+.runbtn {
+  padding: 1px 5px; font-size: 11px; line-height: 1.4; border-radius: 4px;
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+}
+.runbtn:hover { color: var(--text); border-color: var(--accent); }
+.runbtn.on.run { color: #7ee787; border-color: #2e5e40; background: #16241a; }
+.runbtn.on.pause { color: #e3b341; border-color: #5e4e2e; background: #2a2412; }
+.runbtn.on.stop { color: #f85149; border-color: #5e2e34; background: #2a1517; }
 .tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--panel2); border: 1px solid var(--border); }
 .status-ready, .status-merged { color: #7ee787; }
 .status-error, .status-failed, .status-conflicted, .status-blocked { color: #f85149; }

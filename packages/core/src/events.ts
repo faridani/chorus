@@ -21,6 +21,7 @@ export type ChorusEvent =
     }
   | {
       type: "agent_event";
+      projectId: string;
       taskId: string;
       /** Role/agent name working the ticket (null if unassigned). */
       role: string | null;
@@ -33,7 +34,7 @@ export type ChorusEvent =
   | { type: "changelog"; projectId: string; entryId: string; at: number }
   | { type: "usage"; projectId: string | null; at: number }
   | { type: "quota"; state: "available" | "exhausted"; resumeAt: number | null; at: number }
-  | { type: "notification"; kind: string; title: string; body: string; at: number };
+  | { type: "notification"; projectId: string; kind: string; title: string; body: string; at: number };
 
 /**
  * Minimal typed wrapper over EventEmitter. A single shared instance is the
