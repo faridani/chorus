@@ -24,13 +24,27 @@ export interface UsageCounters {
   raw?: unknown;
 }
 
+export interface PlanItem {
+  text: string;
+  completed: boolean;
+}
+
 /**
  * Normalized streaming event. Each backend adapter translates its native
  * JSONL into this union so the orchestrator never sees Codex-specific shapes.
+ * These are surfaced verbatim in the dashboard's live feed.
  */
 export type AgentEvent =
-  | { kind: "progress"; message: string; at: number }
-  | { kind: "tool_use"; tool: string; detail?: string; at: number }
+  /** The model's internal reasoning summary. */
+  | { kind: "reasoning"; text: string; at: number }
+  /** A message the agent wrote to narrate what it's doing. */
+  | { kind: "message"; text: string; at: number }
+  /** A shell command the agent ran (with status once known). */
+  | { kind: "command"; command: string; status?: string; exitCode?: number | null; at: number }
+  /** Files the agent created/edited. */
+  | { kind: "file_change"; files: string[]; at: number }
+  /** The agent's evolving to-do plan. */
+  | { kind: "plan"; items: PlanItem[]; at: number }
   | { kind: "usage"; usage: UsageCounters; at: number }
   | { kind: "log"; line: string; at: number }
   | { kind: "quota_warning"; message: string; at: number };

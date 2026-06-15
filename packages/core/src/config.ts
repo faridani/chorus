@@ -24,6 +24,8 @@ export const ConfigSchema = z.object({
       idleTimeoutMs: z.number().int().positive().default(8 * 60 * 1000),
       /** Default model for the codex backend (empty = CLI default). */
       model: z.string().optional(),
+      /** Reasoning summary verbosity streamed to the live feed. */
+      reasoningSummary: z.enum(["auto", "concise", "detailed", "none"]).default("auto"),
     })
     .default({}),
   quota: z

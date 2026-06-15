@@ -21,6 +21,8 @@ export interface CodexBackendOptions {
   quotaPolicy: QuotaPolicy;
   /** Default model (empty → CLI default). */
   defaultModel?: string;
+  /** Reasoning summary verbosity: auto | concise | detailed | none. */
+  reasoningSummary?: string;
   /** Override the binary (tests). */
   bin?: string;
 }
@@ -53,11 +55,14 @@ export class CodexBackend implements AIBackend {
     let killedByUs = false;
 
     const model = spec.model ?? this.opts.defaultModel;
+    const reasoning = this.opts.reasoningSummary ?? "auto";
     const args = [
       "exec",
       "--json",
       "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
+      // Stream the model's reasoning summary so the dashboard can show it.
+      ...(reasoning !== "none" ? ["-c", `model_reasoning_summary=${reasoning}`] : []),
       "-C",
       spec.worktreePath,
       "--output-schema",
@@ -76,7 +81,7 @@ export class CodexBackend implements AIBackend {
     });
 
     proc.onLine((line) => {
-      for (const ev of mapCodexLine(line)) {
+      for (const ev of mapCodexLine(line, spec.worktreePath)) {
         if (ev.kind === "usage") usage = mergeUsage(usage, ev.usage);
         lastEvents.push(ev);
         if (lastEvents.length > 20) lastEvents.shift();
