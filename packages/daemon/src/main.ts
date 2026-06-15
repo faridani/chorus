@@ -65,6 +65,7 @@ async function main(): Promise<void> {
     detectedBackends,
   });
   controller.ensureProjectAgents(); // backfill the orchestrator agent for existing projects
+  controller.backfillProjectCommands(); // backfill setup/verify commands for older projects
 
   // Web + dashboard.
   const version = resolveVersion();
