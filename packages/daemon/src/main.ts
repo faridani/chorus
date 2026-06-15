@@ -66,6 +66,7 @@ async function main(): Promise<void> {
   });
   controller.ensureProjectAgents(); // backfill the orchestrator agent for existing projects
   controller.backfillProjectCommands(); // backfill setup/verify commands for older projects
+  await controller.reinstallPushGuards(); // self-heal stale/broken pre-push hooks on older clones
 
   // Web + dashboard.
   const version = resolveVersion();

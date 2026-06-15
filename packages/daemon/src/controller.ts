@@ -149,6 +149,28 @@ export class AppController implements ControlApi {
     }
   }
 
+  /**
+   * Re-install the pre-push hook for every existing project's clone. The hook
+   * is generated deterministically and only written at project creation, so a
+   * clone created by an older (buggy) generator keeps a stale/broken hook —
+   * which silently breaks the PR-open push. Reinstalling on boot is idempotent
+   * and cheap (one small file write per clone) and self-heals those hooks.
+   */
+  async reinstallPushGuards(): Promise<void> {
+    for (const project of this.deps.db.listProjects()) {
+      if (!existsSync(join(project.localPath, ".git"))) continue; // clone missing
+      try {
+        await this.deps.git.installPushGuard(project.localPath, [
+          project.baseBranch,
+          "main",
+          "master",
+        ]);
+      } catch {
+        /* best-effort; a bad hook shouldn't block startup */
+      }
+    }
+  }
+
   /** Reject unknown tool ids or an id that is both allowed and forbidden. */
   private assertValidTools(input: { allowedToolIds?: string[]; forbiddenToolIds?: string[] }): void {
     const v = validateToolSelection(input.allowedToolIds ?? [], input.forbiddenToolIds ?? []);
