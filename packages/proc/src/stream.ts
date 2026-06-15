@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { createInterface, type Interface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 
 export interface StreamSpawnOptions {
   cwd?: string;
@@ -83,8 +84,12 @@ export class StreamingProcess {
       for (const h of this.lineHandlers) h(line);
     });
 
+    // Decode stderr through a StringDecoder so a multibyte UTF-8 sequence split
+    // across two chunks isn't corrupted (the tail feeds quota classification).
+    const stderrDecoder = new StringDecoder("utf8");
     this.child.stderr!.on("data", (d: Buffer) => {
-      const s = d.toString();
+      const s = stderrDecoder.write(d);
+      if (!s) return;
       this.writeRaw(s, "stderr");
       this.stderrTail = (this.stderrTail + s).slice(-this.stderrTailBytes);
     });

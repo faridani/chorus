@@ -99,6 +99,17 @@ export class GitService {
     await this.mutex.run(() => this.gitUnlocked(["worktree", "prune"], localPath, false).then(() => {}));
   }
 
+  /**
+   * Check out a branch in the main checkout (best-effort). Used on boot to
+   * restore HEAD to the integration branch after a crash mid-promote, so later
+   * changelog commits don't land on the wrong branch.
+   */
+  async checkout(localPath: string, branch: string): Promise<void> {
+    await this.mutex.run(() =>
+      this.gitUnlocked(["checkout", branch], localPath, false).then(() => {}),
+    );
+  }
+
   /** True if `branch` has commits beyond `baseCommit`. */
   async hasNewCommits(localPath: string, baseCommit: string, branch: string): Promise<boolean> {
     const r = await this.git(["rev-list", "--count", `${baseCommit}..${branch}`], localPath, false);
@@ -193,14 +204,22 @@ export class GitService {
     });
   }
 
-  /** Write a file in the integration checkout, commit it, return the commit. */
+  /**
+   * Write a file in the main checkout, commit it, return the commit. When
+   * `branch` is given, check it out first so the commit can't land on whatever
+   * branch HEAD happened to be on (e.g. after a promote-to-base).
+   */
   async commitFile(
     localPath: string,
     relPath: string,
     content: string,
     message: string,
+    branch?: string,
   ): Promise<string> {
     return this.mutex.run(async () => {
+      if (branch) {
+        await this.gitUnlocked(["checkout", branch], localPath, true);
+      }
       const full = join(localPath, relPath);
       await mkdir(dirname(full), { recursive: true });
       await writeFile(full, content, "utf8");
@@ -259,9 +278,13 @@ exit 0
     return r.stdout.trim();
   }
 
-  /** Mutex-wrapped git for read-only single calls. */
+  /**
+   * Read-only git call that does NOT take the shared mutex. Read commands
+   * (rev-parse, rev-list, status, symbolic-ref) are safe to run concurrently
+   * with ref-mutating ops, so done-detection need not serialize behind merges.
+   */
   private git(args: string[], cwd: string, throwOnError: boolean) {
-    return this.mutex.run(() => this.gitUnlocked(args, cwd, throwOnError));
+    return run("git", args, { cwd, throwOnError });
   }
 
   /** Raw git call — only call when already holding the mutex. */

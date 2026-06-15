@@ -79,3 +79,19 @@ test("commitFile is a no-op when nothing changed and surfaces the new commit whe
   const c2 = await gs.commitFile(repo, "CHANGELOG.md", "v1\n", "noop");
   assert.equal(c2, c1);
 });
+
+test("commitFile(branch) commits on the target branch even if HEAD is elsewhere", async () => {
+  const gs = new GitService();
+  const { repo } = await makeRepo(); // currently on chorus/integration
+  await git(repo, "checkout", "main"); // move HEAD off integration
+
+  const c = await gs.commitFile(repo, "CHANGELOG.md", "log\n", "changelog", "chorus/integration");
+  // The commit lands on integration...
+  assert.equal(await gs.headCommit(repo, "chorus/integration"), c);
+  // ...and main does NOT have the changelog file.
+  const onMain = await run("git", ["cat-file", "-e", "main:CHANGELOG.md"], {
+    cwd: repo,
+    throwOnError: false,
+  });
+  assert.notEqual(onMain.code, 0);
+});
