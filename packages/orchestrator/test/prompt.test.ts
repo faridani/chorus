@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project, Role, Ticket, TicketEvent } from "@chorus/core";
-import { buildAgentPrompt } from "@chorus/orchestrator";
+import { buildAgentPrompt, buildManifest } from "@chorus/orchestrator";
 
 const project: Project = {
   id: "p1",
   repoUrl: "owner/repo",
   localPath: "/tmp/x",
-  integrationBranch: "chorus/integration",
   baseBranch: "main",
   specPath: "docs/SPEC.md",
   expectations: "Ship a delightful CLI that never loses data.",
@@ -28,6 +27,8 @@ const ticket: Ticket = {
   source: "spec",
   branch: null,
   worktreePath: null,
+  prUrl: null,
+  prNumber: null,
   createdAt: 0,
   updatedAt: 0,
 };
@@ -84,6 +85,40 @@ test("worker prompt carries the orchestrator's latest direction + prior work", (
   assert.match(p, /backend move_ticket helper/);
   // Worker is told it may report blocked if the change is impossible here.
   assert.match(p, /status: blocked/);
+});
+
+test("prompt includes the task manifest: verify commands + prior failure evidence", () => {
+  const manifest = buildManifest({
+    project: { ...project, setupCommand: "npm install", verifyCommands: ["npm test"] },
+    ticket,
+    attempt: 2,
+    branch: { commits: ["abc add loader"], files: ["src/config.ts"] },
+    trail: [],
+    latestJournal: {
+      id: "j1",
+      taskId: "task1",
+      ticketId: "t1",
+      projectId: "p1",
+      attempt: 1,
+      promptHash: null,
+      diffHash: null,
+      verifyPassed: false,
+      verifyOutput: "npm test\nFAIL config loads from file",
+      diagnosis: "Loader ignores the path argument",
+      nextAction: "reassign-to-worker",
+      evaluatorVerdict: null,
+      reviewerVerdict: null,
+      proof: null,
+      createdAt: 1,
+    },
+    artifactsDir: `${process.env.TMPDIR ?? "/tmp"}/chorus-manifest-test-${Date.now()}`,
+  });
+  const p = buildAgentPrompt({ project, role, ticket, specExcerpt: null, resume: true, manifest });
+  assert.match(p, /Task manifest/);
+  assert.match(p, /npm test/);
+  assert.match(p, /What failed on the previous attempt/);
+  assert.match(p, /Loader ignores the path argument/);
+  assert.match(p, /src\/config\.ts/);
 });
 
 test("prompt omits expectations section when empty", () => {

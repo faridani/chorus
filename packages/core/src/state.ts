@@ -10,9 +10,10 @@ export const TICKET_STATUSES = [
   "assigned", // (legacy) picked up by the orchestrator, task created
   "in_progress", // an agent is actively running on it (transient)
   "needs_review", // (legacy) agent finished, awaiting human
-  "merged", // work merged into the integration branch (terminal)
-  "closed", // closed by the orchestrator without a merge (terminal)
-  "blocked", // cannot proceed (e.g. conflict, needs a human/agent that doesn't exist)
+  "pr_open", // a PR has been opened on GitHub, awaiting the human to merge it
+  "merged", // the PR was merged on GitHub (terminal)
+  "closed", // closed by the orchestrator without a PR (terminal)
+  "blocked", // cannot proceed (e.g. push/PR failed, needs a human/agent that doesn't exist)
   "failed", // gave up after exhausting attempts
 ] as const;
 export type TicketStatus = (typeof TICKET_STATUSES)[number];
@@ -31,8 +32,7 @@ export const TASK_STATES = [
   "done-unverified", // clean exit but output file missing/invalid (commit may exist)
   "partial", // exited with uncommitted changes left in the worktree
   "paused-quota", // suspended because the account quota is exhausted
-  "merged", // successfully merged into the integration branch
-  "conflicted", // merge into integration hit a conflict (left for human)
+  "merged", // its work was pushed and a PR opened (terminal for the attempt)
   "failed", // crashed / non-zero exit / gave up
   "interrupted", // daemon restarted while this was running (process is gone)
 ] as const;
@@ -46,14 +46,9 @@ export const TERMINAL_TASK_STATES: ReadonlySet<TaskState> = new Set<TaskState>([
   "done-unverified",
   "partial",
   "merged",
-  "conflicted",
   "failed",
   "interrupted",
 ]);
-
-/** Outcome of attempting to merge an agent branch into integration. */
-export const MERGE_STATUSES = ["merged", "conflicted", "skipped"] as const;
-export type MergeStatus = (typeof MERGE_STATUSES)[number];
 
 /**
  * How an agent run ended, as classified from exit code/signal/output.

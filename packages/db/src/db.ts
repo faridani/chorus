@@ -2,9 +2,10 @@ import Database from "better-sqlite3";
 import type {
   AgentRun,
   AgentTemplate,
+  AttemptJournalEntry,
   ChangelogEntry,
-  Merge,
   Project,
+  PullRequest,
   QuotaInfo,
   Role,
   Suggestion,
@@ -42,10 +43,15 @@ export class ChorusDb {
   insertProject(p: Project): void {
     this.raw
       .prepare(
-        `INSERT INTO projects (id, repo_url, local_path, integration_branch, base_branch, spec_path, expectations, ground_rules, status, run_state, created_at)
-         VALUES (@id, @repoUrl, @localPath, @integrationBranch, @baseBranch, @specPath, @expectations, @groundRules, @status, @runState, @createdAt)`,
+        `INSERT INTO projects (id, repo_url, local_path, base_branch, spec_path, expectations, ground_rules, setup_command, verify_commands, status, run_state, created_at)
+         VALUES (@id, @repoUrl, @localPath, @baseBranch, @specPath, @expectations, @groundRules, @setupCommand, @verifyCommands, @status, @runState, @createdAt)`,
       )
-      .run({ ...p, groundRules: JSON.stringify(p.groundRules) });
+      .run({
+        ...p,
+        groundRules: JSON.stringify(p.groundRules),
+        setupCommand: p.setupCommand ?? null,
+        verifyCommands: JSON.stringify(p.verifyCommands ?? []),
+      });
   }
   updateProject(id: string, patch: Partial<Project>): void {
     const cur = this.getProject(id);
@@ -53,10 +59,16 @@ export class ChorusDb {
     const next = { ...cur, ...patch };
     this.raw
       .prepare(
-        `UPDATE projects SET repo_url=@repoUrl, local_path=@localPath, integration_branch=@integrationBranch,
-         base_branch=@baseBranch, spec_path=@specPath, expectations=@expectations, ground_rules=@groundRules, status=@status, run_state=@runState WHERE id=@id`,
+        `UPDATE projects SET repo_url=@repoUrl, local_path=@localPath,
+         base_branch=@baseBranch, spec_path=@specPath, expectations=@expectations, ground_rules=@groundRules,
+         setup_command=@setupCommand, verify_commands=@verifyCommands, status=@status, run_state=@runState WHERE id=@id`,
       )
-      .run({ ...next, groundRules: JSON.stringify(next.groundRules) });
+      .run({
+        ...next,
+        groundRules: JSON.stringify(next.groundRules),
+        setupCommand: next.setupCommand ?? null,
+        verifyCommands: JSON.stringify(next.verifyCommands ?? []),
+      });
   }
   getProject(id: string): Project | undefined {
     const r = this.raw.prepare("SELECT * FROM projects WHERE id=?").get(id) as Row | undefined;
@@ -151,10 +163,17 @@ export class ChorusDb {
   insertTicket(t: Ticket): void {
     this.raw
       .prepare(
-        `INSERT INTO tickets (id, project_id, title, body, status, role_name, priority, source, branch, worktree_path, created_at, updated_at)
-         VALUES (@id, @projectId, @title, @body, @status, @roleName, @priority, @source, @branch, @worktreePath, @createdAt, @updatedAt)`,
+        `INSERT INTO tickets (id, project_id, title, body, status, role_name, priority, source, branch, worktree_path, pr_url, pr_number, created_at, updated_at)
+         VALUES (@id, @projectId, @title, @body, @status, @roleName, @priority, @source, @branch, @worktreePath, @prUrl, @prNumber, @createdAt, @updatedAt)`,
       )
-      .run({ ...t, roleName: t.roleName ?? null, branch: t.branch ?? null, worktreePath: t.worktreePath ?? null });
+      .run({
+        ...t,
+        roleName: t.roleName ?? null,
+        branch: t.branch ?? null,
+        worktreePath: t.worktreePath ?? null,
+        prUrl: t.prUrl ?? null,
+        prNumber: t.prNumber ?? null,
+      });
   }
   updateTicket(id: string, patch: Partial<Ticket>): void {
     const cur = this.getTicket(id);
@@ -163,13 +182,15 @@ export class ChorusDb {
     this.raw
       .prepare(
         `UPDATE tickets SET title=@title, body=@body, status=@status, role_name=@roleName,
-         priority=@priority, branch=@branch, worktree_path=@worktreePath, updated_at=@updatedAt WHERE id=@id`,
+         priority=@priority, branch=@branch, worktree_path=@worktreePath, pr_url=@prUrl, pr_number=@prNumber, updated_at=@updatedAt WHERE id=@id`,
       )
       .run({
         ...next,
         roleName: next.roleName ?? null,
         branch: next.branch ?? null,
         worktreePath: next.worktreePath ?? null,
+        prUrl: next.prUrl ?? null,
+        prNumber: next.prNumber ?? null,
       });
   }
   getTicket(id: string): Ticket | undefined {
@@ -177,8 +198,8 @@ export class ChorusDb {
     return r ? mapTicket(r) : undefined;
   }
   deleteTicket(id: string): void {
-    // Tasks (and their merges) cascade via FK; changelog entries are kept as
-    // historical record (changelog.ticket_id has no FK).
+    // Tasks cascade via FK; pull_requests and changelog entries are kept as
+    // historical record (their ticket_id columns have no FK).
     this.raw.prepare("DELETE FROM tickets WHERE id=?").run(id);
   }
   listTickets(projectId: string): Ticket[] {
@@ -196,6 +217,14 @@ export class ChorusDb {
       )
       .get(projectId) as Row | undefined;
     return r ? mapTicket(r) : undefined;
+  }
+  /** Tickets in a given status (e.g. "pr_open" for the PR poller). */
+  listTicketsByStatus(projectId: string, status: Ticket["status"]): Ticket[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM tickets WHERE project_id=? AND status=? ORDER BY created_at")
+        .all(projectId, status) as Row[]
+    ).map(mapTicket);
   }
 
   // ---- ticket events (trail) ----
@@ -308,31 +337,79 @@ export class ChorusDb {
     );
   }
 
-  // ---- merges ----
-  insertMerge(m: Merge): void {
+  // ---- pull requests ----
+  insertPullRequest(p: PullRequest): void {
     this.raw
       .prepare(
-        `INSERT INTO merges (id, task_id, project_id, integration_branch, merge_commit, status, conflict_files, created_at)
-         VALUES (@id, @taskId, @projectId, @integrationBranch, @mergeCommit, @status, @conflictFiles, @createdAt)`,
+        `INSERT INTO pull_requests (id, ticket_id, project_id, task_id, url, number, state, created_at, updated_at)
+         VALUES (@id, @ticketId, @projectId, @taskId, @url, @number, @state, @createdAt, @updatedAt)`,
       )
-      .run({ ...m, conflictFiles: JSON.stringify(m.conflictFiles) });
+      .run({ ...p, taskId: p.taskId ?? null, number: p.number ?? null });
   }
-  listMerges(projectId: string, limit = 50): Merge[] {
+  updatePullRequestState(id: string, state: string): void {
+    this.raw
+      .prepare("UPDATE pull_requests SET state=@state, updated_at=@updatedAt WHERE id=@id")
+      .run({ id, state, updatedAt: Date.now() });
+  }
+  listPullRequests(projectId: string, limit = 50): PullRequest[] {
     return (
       this.raw
-        .prepare("SELECT * FROM merges WHERE project_id=? ORDER BY created_at DESC LIMIT ?")
+        .prepare("SELECT * FROM pull_requests WHERE project_id=? ORDER BY created_at DESC LIMIT ?")
         .all(projectId, limit) as Row[]
-    ).map(mapMerge);
+    ).map(mapPullRequest);
+  }
+
+  // ---- attempt journal (reflective memory) ----
+  insertAttemptJournal(e: AttemptJournalEntry): void {
+    this.raw
+      .prepare(
+        `INSERT INTO attempt_journal (id, task_id, ticket_id, project_id, attempt, prompt_hash, diff_hash,
+         verify_passed, verify_output, diagnosis, next_action, evaluator_verdict, reviewer_verdict, proof, created_at)
+         VALUES (@id, @taskId, @ticketId, @projectId, @attempt, @promptHash, @diffHash,
+         @verifyPassed, @verifyOutput, @diagnosis, @nextAction, @evaluatorVerdict, @reviewerVerdict, @proof, @createdAt)`,
+      )
+      .run({
+        ...e,
+        promptHash: e.promptHash ?? null,
+        diffHash: e.diffHash ?? null,
+        verifyPassed: e.verifyPassed == null ? null : e.verifyPassed ? 1 : 0,
+        verifyOutput: e.verifyOutput ?? null,
+        diagnosis: e.diagnosis ?? null,
+        nextAction: e.nextAction ?? null,
+        evaluatorVerdict: e.evaluatorVerdict ?? null,
+        reviewerVerdict: e.reviewerVerdict ?? null,
+        proof: e.proof ?? null,
+      });
+  }
+  listAttemptJournal(ticketId: string): AttemptJournalEntry[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM attempt_journal WHERE ticket_id=? ORDER BY created_at")
+        .all(ticketId) as Row[]
+    ).map(mapAttemptJournal);
+  }
+  latestAttemptJournal(ticketId: string): AttemptJournalEntry | undefined {
+    const r = this.raw
+      .prepare("SELECT * FROM attempt_journal WHERE ticket_id=? ORDER BY created_at DESC LIMIT 1")
+      .get(ticketId) as Row | undefined;
+    return r ? mapAttemptJournal(r) : undefined;
+  }
+  listProjectAttemptJournal(projectId: string, limit = 200): AttemptJournalEntry[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM attempt_journal WHERE project_id=? ORDER BY created_at DESC LIMIT ?")
+        .all(projectId, limit) as Row[]
+    ).map(mapAttemptJournal);
   }
 
   // ---- changelog ----
   insertChangelog(c: ChangelogEntry): void {
     this.raw
       .prepare(
-        `INSERT INTO changelog (id, project_id, ticket_id, merge_id, entry, agent_role, created_at)
-         VALUES (@id, @projectId, @ticketId, @mergeId, @entry, @agentRole, @createdAt)`,
+        `INSERT INTO changelog (id, project_id, ticket_id, pr_id, entry, agent_role, created_at)
+         VALUES (@id, @projectId, @ticketId, @prId, @entry, @agentRole, @createdAt)`,
       )
-      .run({ ...c, ticketId: c.ticketId ?? null, mergeId: c.mergeId ?? null, agentRole: c.agentRole ?? null });
+      .run({ ...c, ticketId: c.ticketId ?? null, prId: c.prId ?? null, agentRole: c.agentRole ?? null });
   }
   listChangelog(projectId: string, limit = 100): ChangelogEntry[] {
     return (
@@ -412,11 +489,12 @@ function mapProject(r: Row): Project {
     id: r.id as string,
     repoUrl: r.repo_url as string,
     localPath: r.local_path as string,
-    integrationBranch: r.integration_branch as string,
     baseBranch: r.base_branch as string,
     specPath: (r.spec_path as string | null) ?? null,
     expectations: (r.expectations as string | null) ?? "",
     groundRules: JSON.parse((r.ground_rules as string | null) ?? "[]"),
+    setupCommand: (r.setup_command as string | null) ?? null,
+    verifyCommands: JSON.parse((r.verify_commands as string | null) ?? "[]"),
     status: r.status as Project["status"],
     runState: (r.run_state as Project["runState"] | null) ?? "running",
     createdAt: r.created_at as number,
@@ -458,6 +536,8 @@ function mapTicket(r: Row): Ticket {
     source: r.source as Ticket["source"],
     branch: (r.branch as string | null) ?? null,
     worktreePath: (r.worktree_path as string | null) ?? null,
+    prUrl: (r.pr_url as string | null) ?? null,
+    prNumber: (r.pr_number as number | null) ?? null,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
   };
@@ -514,15 +594,35 @@ function mapRun(r: Row): AgentRun {
     outputFilePath: (r.output_file_path as string | null) ?? null,
   };
 }
-function mapMerge(r: Row): Merge {
+function mapPullRequest(r: Row): PullRequest {
+  return {
+    id: r.id as string,
+    ticketId: r.ticket_id as string,
+    projectId: r.project_id as string,
+    taskId: (r.task_id as string | null) ?? null,
+    url: r.url as string,
+    number: (r.number as number | null) ?? null,
+    state: r.state as string,
+    createdAt: r.created_at as number,
+    updatedAt: r.updated_at as number,
+  };
+}
+function mapAttemptJournal(r: Row): AttemptJournalEntry {
   return {
     id: r.id as string,
     taskId: r.task_id as string,
+    ticketId: r.ticket_id as string,
     projectId: r.project_id as string,
-    integrationBranch: r.integration_branch as string,
-    mergeCommit: (r.merge_commit as string | null) ?? null,
-    status: r.status as Merge["status"],
-    conflictFiles: JSON.parse(r.conflict_files as string),
+    attempt: r.attempt as number,
+    promptHash: (r.prompt_hash as string | null) ?? null,
+    diffHash: (r.diff_hash as string | null) ?? null,
+    verifyPassed: r.verify_passed == null ? null : (r.verify_passed as number) === 1,
+    verifyOutput: (r.verify_output as string | null) ?? null,
+    diagnosis: (r.diagnosis as string | null) ?? null,
+    nextAction: (r.next_action as string | null) ?? null,
+    evaluatorVerdict: (r.evaluator_verdict as string | null) ?? null,
+    reviewerVerdict: (r.reviewer_verdict as string | null) ?? null,
+    proof: (r.proof as string | null) ?? null,
     createdAt: r.created_at as number,
   };
 }
@@ -531,7 +631,7 @@ function mapChangelog(r: Row): ChangelogEntry {
     id: r.id as string,
     projectId: r.project_id as string,
     ticketId: (r.ticket_id as string | null) ?? null,
-    mergeId: (r.merge_id as string | null) ?? null,
+    prId: (r.pr_id as string | null) ?? null,
     entry: r.entry as string,
     agentRole: (r.agent_role as string | null) ?? null,
     createdAt: r.created_at as number,

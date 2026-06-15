@@ -1,20 +1,25 @@
 # chorus
 
-Chorus is a self-hosted, 24/7 AI engineering team. A single orchestrator coordinates role-based agents—dev, QA, designer, and more—each with defined guardrails. Powered by subscription CLI tools like Codex, it tracks costs, manages git branches, logs every change, and merges work for human review before it reaches main.
+Chorus is a self-hosted, 24/7 AI engineering team. A single orchestrator coordinates role-based agents—dev, QA, designer, and more—each with defined guardrails. Powered by subscription CLI tools like Codex, it tracks costs, manages git branches, logs every change, and opens a GitHub pull request for each ticket so a human can review and merge it.
 
 > **Status:** Milestone 1 — an end-to-end vertical slice is implemented:
 > New Project → clone via `gh` → read `docs/SPEC.md` → generate tickets →
-> Codex agent works on a per-ticket git branch → orchestrator detects done →
-> `--no-ff` merge into the integration branch → changelog + iMessage →
-> live web dashboard. `main` is never touched autonomously.
+> Codex agent works on a per-ticket git branch (cut from `origin/main`) →
+> orchestrator detects done → pushes the branch and opens a **GitHub PR** against
+> `main` → the ticket shows the PR link → you merge the PR manually; Chorus polls
+> GitHub and marks the ticket merged. `main` is never pushed to autonomously.
 
 ## Quick start
 
 ```bash
 npm install && npm run build
 npm --workspace @chorus/dashboard run build
-node packages/daemon/dist/main.js   # → http://127.0.0.1:7878
+node packages/daemon/dist/main.js   # → http://0.0.0.0:7878
 ```
+
+The dashboard binds to `0.0.0.0` by default, so it's reachable from other
+machines on your network/Tailscale at `http://<this-host>:7878`. To restrict it
+to loopback, set `CHORUS_HOST=127.0.0.1`.
 
 See **[docs/RUNNING.md](docs/RUNNING.md)** for prerequisites, config, the 24/7
 launchd service, Tailscale, and the safety model, and
@@ -23,9 +28,9 @@ launchd service, Tailscale, and the safety model, and
 ## Architecture (hub-and-spoke)
 
 A single TypeScript daemon (Node 22) is the hub. It owns task dispatch, agent
-execution, git, merging, the changelog, quota gating, and notifications. Agents
-are stateless workers: each runs a subscription CLI (`codex exec`) in an
-isolated git worktree on its own branch.
+execution, git, pushing branches + opening PRs, the changelog, quota gating, and
+notifications. Agents are stateless workers: each runs a subscription CLI
+(`codex exec`) in an isolated git worktree on its per-ticket branch.
 
 ```
 packages/
@@ -36,7 +41,7 @@ packages/
   backends/      AIBackend registry + Codex adapter (Claude/Gemini deferred)
   notifier/      iMessage (osascript) + composite/null notifiers
   spec-ingest/   SPEC.md → tickets via a structured Codex run
-  orchestrator/  the state machine: dispatch → done-detect → merge → changelog; quota; reconcile
+  orchestrator/  the state machine: dispatch → done-detect → push + open PR → poll for merge; quota; reconcile
   web/           Fastify REST + WebSocket; reads the DB, issues commands to the daemon
   daemon/        composition root: wires everything, boot reconciliation, lifecycle
 apps/

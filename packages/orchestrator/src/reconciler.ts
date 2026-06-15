@@ -27,8 +27,6 @@ export class Reconciler {
       try {
         await this.git.pruneWorktrees(project.localPath);
         await this.git.abortMergeIfInProgress(project.localPath);
-        // Restore HEAD to integration in case we crashed mid-promote.
-        await this.git.checkout(project.localPath, project.integrationBranch);
       } catch {
         /* project dir may be missing; ignore */
       }
