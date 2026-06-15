@@ -1,0 +1,21 @@
+{
+  "name": "@chorus/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@chorus/backends": "*",
+    "@chorus/core": "*",
+    "@chorus/db": "*",
+    "@chorus/git-service": "*",
+    "@chorus/notifier": "*",
+    "@chorus/orchestrator": "*",
+    "@chorus/spec-ingest": "*",
+    "@chorus/web": "*"
+  }
+}

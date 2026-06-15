@@ -1,0 +1,63 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel2: #1e222b;
+  --border: #2a2f3a;
+  --text: #e6e9ef;
+  --muted: #8a93a3;
+  --accent: #6ea8fe;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+.app { display: flex; flex-direction: column; height: 100vh; }
+.topbar {
+  display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.topbar h1 { font-size: 18px; margin: 0; }
+.controls, .metrics { display: flex; gap: 8px; align-items: center; }
+.metrics { margin-left: auto; }
+button {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.pill { padding: 3px 8px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--border); font-size: 12px; }
+.state-running { color: #7ee787; }
+.state-paused { color: #e3b341; }
+.state-stopped { color: #8a93a3; }
+.quota-available { color: #7ee787; }
+.quota-exhausted { color: #f85149; }
+.body { display: grid; grid-template-columns: 280px 1fr 320px; flex: 1; overflow: hidden; }
+.sidebar, .events { background: var(--panel); border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
+.events { border-right: none; border-left: 1px solid var(--border); }
+.main { padding: 16px 24px; overflow-y: auto; }
+h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.newproj input, .newproj textarea, .providespec textarea, .addticket input {
+  width: 100%; margin-bottom: 6px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px;
+}
+.newproj textarea { min-height: 50px; }
+.projlist { list-style: none; padding: 0; margin: 0; }
+.projlist li { padding: 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.projlist li:hover { background: var(--panel2); }
+.projlist li.active { background: var(--panel2); border: 1px solid var(--accent); }
+.repo { font-weight: 600; font-size: 13px; }
+.tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--panel2); border: 1px solid var(--border); }
+.status-ready, .status-merged { color: #7ee787; }
+.status-error, .status-failed, .status-conflicted, .status-blocked { color: #f85149; }
+.status-needs_spec, .status-needs_review, .status-in_progress { color: #e3b341; }
+.muted { color: var(--muted); font-size: 12px; }
+.projhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.approve { margin-left: auto; background: #1f3d2b; border-color: #2e5e40; }
+table.tickets { width: 100%; border-collapse: collapse; }
+table.tickets th, table.tickets td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.merges, .changelog, .roles { list-style: none; padding: 0; margin: 0; }
+.merges li, .changelog li, .roles li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.addticket { display: flex; gap: 6px; margin-bottom: 8px; }
+.addticket input { margin: 0; }
+.events ul { list-style: none; padding: 0; margin: 0; font-family: ui-monospace, monospace; font-size: 11px; }
+.events li { padding: 2px 0; border-bottom: 1px solid var(--border); color: var(--muted); }
+.empty { color: var(--muted); margin-top: 40px; text-align: center; }

@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/proc" },
+    { "path": "packages/db" },
+    { "path": "packages/git-service" },
+    { "path": "packages/backends" },
+    { "path": "packages/notifier" },
+    { "path": "packages/spec-ingest" },
+    { "path": "packages/orchestrator" },
+    { "path": "packages/web" },
+    { "path": "packages/daemon" }
+  ]
+}
