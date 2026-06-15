@@ -196,6 +196,18 @@ export interface UsageEvent {
   observedAt: number;
 }
 
+/** One commit in a branch's history (for the Integration Branch log view). */
+export interface CommitLogEntry {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  /** Human-relative date, e.g. "3 hours ago". */
+  relativeDate: string;
+  /** Commit time in ms since epoch. */
+  timestamp: number;
+}
+
 /** Account-global quota singleton. */
 export interface QuotaInfo {
   state: QuotaState;

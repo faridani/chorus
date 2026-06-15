@@ -123,6 +123,49 @@ export class GitService {
     return { commits, files };
   }
 
+  /**
+   * Recent commit log of a ref (newest first). Uses unit/record separators so
+   * subjects with arbitrary punctuation parse safely. Returns [] if the ref or
+   * repo doesn't exist yet (e.g. a project still initializing).
+   */
+  async recentLog(
+    localPath: string,
+    ref: string,
+    limit = 30,
+  ): Promise<
+    {
+      hash: string;
+      shortHash: string;
+      subject: string;
+      author: string;
+      relativeDate: string;
+      timestamp: number;
+    }[]
+  > {
+    const FMT = "%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%at%x1e";
+    const r = await this.git(
+      ["log", ref, `-n${Math.max(1, Math.min(limit, 200))}`, `--format=${FMT}`],
+      localPath,
+      false,
+    );
+    if (r.code !== 0) return [];
+    return r.stdout
+      .split("\x1e")
+      .map((rec) => rec.replace(/^\n/, "").trim())
+      .filter(Boolean)
+      .map((rec) => {
+        const [hash, shortHash, subject, author, relativeDate, at] = rec.split("\x1f");
+        return {
+          hash: hash ?? "",
+          shortHash: shortHash ?? "",
+          subject: subject ?? "",
+          author: author ?? "",
+          relativeDate: relativeDate ?? "",
+          timestamp: Number(at ?? 0) * 1000,
+        };
+      });
+  }
+
   /** True if `branch` has commits beyond `baseCommit`. */
   async hasNewCommits(localPath: string, baseCommit: string, branch: string): Promise<boolean> {
     const r = await this.git(["rev-list", "--count", `${baseCommit}..${branch}`], localPath, false);

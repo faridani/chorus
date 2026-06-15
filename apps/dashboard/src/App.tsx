@@ -3,6 +3,7 @@ import {
   type AppState,
   api,
   type BackendInfo,
+  type CommitLogEntry,
   type Project,
   type ProjectDetail,
   type TicketEvent,
@@ -10,6 +11,7 @@ import {
 } from "./api.js";
 import { AgentGallery } from "./components/AgentGallery.js";
 import { EventFeed, type FeedEntry } from "./components/EventFeed.js";
+import { IntegrationLog } from "./components/IntegrationLog.js";
 import { ModelsPanel } from "./components/ModelsPanel.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 
@@ -19,6 +21,7 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [projectEvents, setProjectEvents] = useState<TicketEvent[]>([]);
+  const [commits, setCommits] = useState<CommitLogEntry[]>([]);
   const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [leftTab, setLeftTab] = useState<"projects" | "gallery">("projects");
@@ -49,6 +52,7 @@ export function App() {
   const refreshDetail = useCallback(async (id: string) => {
     setDetail(await api.project(id).catch(() => null));
     setProjectEvents(await api.projectEvents(id).catch(() => []));
+    setCommits(await api.integrationLog(id).catch(() => []));
   }, []);
 
   useEffect(() => {
@@ -153,6 +157,28 @@ export function App() {
         </main>
 
         <aside className="events">
+          <section className="commits-pane">
+            <h3>
+              Integration Branch
+              {selected && detail ? (
+                <span className="muted"> — {detail.project.integrationBranch}</span>
+              ) : null}
+              {selected && (
+                <button
+                  className="runbtn refresh"
+                  onClick={() => selected && refreshDetail(selected)}
+                  title="Refresh the integration-branch commit log."
+                >
+                  ↻
+                </button>
+              )}
+            </h3>
+            <IntegrationLog
+              branch={detail?.project.integrationBranch ?? null}
+              commits={commits}
+              hasProject={!!selected}
+            />
+          </section>
           <section className="models-pane">
             <h3>
               Models

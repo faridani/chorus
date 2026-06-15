@@ -59,6 +59,15 @@ export interface TicketEvent {
   createdAt: number;
 }
 
+export interface CommitLogEntry {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  relativeDate: string;
+  timestamp: number;
+}
+
 export interface Suggestion {
   id: string;
   projectId: string;
@@ -184,6 +193,16 @@ export const api = {
     }).then((r) => json(r)),
   deleteTicket: (id: string, ticketId: string) =>
     fetch(`/api/projects/${id}/tickets/${ticketId}`, { method: "DELETE" }).then((r) => json(r)),
+  reorderTickets: (id: string, orderedIds: string[]) =>
+    fetch(`/api/projects/${id}/tickets/reorder`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orderedIds }),
+    }).then((r) => json(r)),
+  integrationLog: (id: string, limit?: number) =>
+    fetch(`/api/projects/${id}/integration-log${limit ? `?limit=${limit}` : ""}`).then((r) =>
+      json<CommitLogEntry[]>(r),
+    ),
   upsertRole: (id: string, role: RoleInput) =>
     fetch(`/api/projects/${id}/roles`, {
       method: "POST",
