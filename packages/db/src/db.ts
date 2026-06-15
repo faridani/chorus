@@ -43,14 +43,15 @@ export class ChorusDb {
   insertProject(p: Project): void {
     this.raw
       .prepare(
-        `INSERT INTO projects (id, repo_url, local_path, base_branch, spec_path, expectations, ground_rules, setup_command, verify_commands, status, run_state, created_at)
-         VALUES (@id, @repoUrl, @localPath, @baseBranch, @specPath, @expectations, @groundRules, @setupCommand, @verifyCommands, @status, @runState, @createdAt)`,
+        `INSERT INTO projects (id, repo_url, local_path, base_branch, spec_path, expectations, ground_rules, setup_command, verify_commands, commands_detected, status, run_state, created_at)
+         VALUES (@id, @repoUrl, @localPath, @baseBranch, @specPath, @expectations, @groundRules, @setupCommand, @verifyCommands, @commandsDetected, @status, @runState, @createdAt)`,
       )
       .run({
         ...p,
         groundRules: JSON.stringify(p.groundRules),
         setupCommand: p.setupCommand ?? null,
         verifyCommands: JSON.stringify(p.verifyCommands ?? []),
+        commandsDetected: p.commandsDetected ? 1 : 0,
       });
   }
   updateProject(id: string, patch: Partial<Project>): void {
@@ -61,13 +62,14 @@ export class ChorusDb {
       .prepare(
         `UPDATE projects SET repo_url=@repoUrl, local_path=@localPath,
          base_branch=@baseBranch, spec_path=@specPath, expectations=@expectations, ground_rules=@groundRules,
-         setup_command=@setupCommand, verify_commands=@verifyCommands, status=@status, run_state=@runState WHERE id=@id`,
+         setup_command=@setupCommand, verify_commands=@verifyCommands, commands_detected=@commandsDetected, status=@status, run_state=@runState WHERE id=@id`,
       )
       .run({
         ...next,
         groundRules: JSON.stringify(next.groundRules),
         setupCommand: next.setupCommand ?? null,
         verifyCommands: JSON.stringify(next.verifyCommands ?? []),
+        commandsDetected: next.commandsDetected ? 1 : 0,
       });
   }
   getProject(id: string): Project | undefined {
@@ -510,6 +512,7 @@ function mapProject(r: Row): Project {
     groundRules: JSON.parse((r.ground_rules as string | null) ?? "[]"),
     setupCommand: (r.setup_command as string | null) ?? null,
     verifyCommands: JSON.parse((r.verify_commands as string | null) ?? "[]"),
+    commandsDetected: ((r.commands_detected as number | null) ?? 0) === 1,
     status: r.status as Project["status"],
     runState: (r.run_state as Project["runState"] | null) ?? "running",
     createdAt: r.created_at as number,

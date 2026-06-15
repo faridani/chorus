@@ -184,6 +184,7 @@ export class AppController implements ControlApi {
       groundRules: DEFAULT_GROUND_RULES,
       setupCommand: null,
       verifyCommands: [],
+      commandsDetected: false,
       status: "initializing",
       runState: "running",
       createdAt: Date.now(),
@@ -201,7 +202,12 @@ export class AppController implements ControlApi {
       const baseBranch = baseOverride ?? (await this.deps.git.detectDefaultBranch(project.localPath));
       await this.deps.git.installPushGuard(project.localPath, [baseBranch, "main", "master"]);
       const { setupCommand, verifyCommands } = detectCommands(project.localPath);
-      this.deps.db.updateProject(project.id, { baseBranch, setupCommand, verifyCommands });
+      this.deps.db.updateProject(project.id, {
+        baseBranch,
+        setupCommand,
+        verifyCommands,
+        commandsDetected: true,
+      });
 
       for (const role of DEFAULT_ROLES) this.seedRole(project.id, role);
 

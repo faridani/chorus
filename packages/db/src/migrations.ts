@@ -234,6 +234,13 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE agent_templates ADD COLUMN allowed_tool_ids TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE agent_templates ADD COLUMN forbidden_tool_ids TEXT NOT NULL DEFAULT '[]';
   `,
+
+  // 0009 — once-only command-detection gate so the boot backfill never
+  // re-clobbers a user who cleared their commands, and skips already-handled
+  // projects. Existing rows default to 0 → backfilled once on the next boot.
+  `
+  ALTER TABLE projects ADD COLUMN commands_detected INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {
