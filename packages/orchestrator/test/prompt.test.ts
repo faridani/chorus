@@ -40,6 +40,8 @@ const role: Role = {
   description: "Implements tickets.",
   allowed: ["write code"],
   forbidden: ["delete data"],
+  allowedToolIds: ["repo.modify", "verify.run"],
+  forbiddenToolIds: ["prs.open.request"],
   backendId: "codex",
 };
 
@@ -119,6 +121,30 @@ test("prompt includes the task manifest: verify commands + prior failure evidenc
   assert.match(p, /What failed on the previous attempt/);
   assert.match(p, /Loader ignores the path argument/);
   assert.match(p, /src\/config\.ts/);
+});
+
+test("prompt lists explicitly allowed + forbidden Chorus tools", () => {
+  const p = buildAgentPrompt({ project, role, ticket, specExcerpt: null, resume: false });
+  assert.match(p, /## Chorus tools/);
+  assert.match(p, /repo\.modify/);
+  assert.match(p, /\[available\]/); // repo.modify is sandbox-real
+  assert.match(p, /Explicitly forbidden/);
+  assert.match(p, /prs\.open\.request/);
+  // Honest about executability of mediated tools.
+  assert.match(p, /do not fabricate calls/i);
+});
+
+test("prompt says no tools granted when the role has none", () => {
+  const bare: Role = { ...role, allowedToolIds: [], forbiddenToolIds: [] };
+  const p = buildAgentPrompt({ project, role: bare, ticket, specExcerpt: null, resume: false });
+  assert.match(p, /No Chorus tools are explicitly granted/);
+});
+
+test("a planned tool is annotated as not directly callable", () => {
+  const r: Role = { ...role, allowedToolIds: ["tickets.create"], forbiddenToolIds: [] };
+  const p = buildAgentPrompt({ project, role: r, ticket, specExcerpt: null, resume: false });
+  assert.match(p, /tickets\.create/);
+  assert.match(p, /not directly callable yet/);
 });
 
 test("prompt omits expectations section when empty", () => {

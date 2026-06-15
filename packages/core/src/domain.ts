@@ -46,6 +46,10 @@ export interface AgentTemplate {
   description: string;
   allowed: string[];
   forbidden: string[];
+  /** Catalog tool ids this agent is explicitly granted. */
+  allowedToolIds: string[];
+  /** Catalog tool ids this agent is explicitly denied. */
+  forbiddenToolIds: string[];
   backendId: string;
   model?: string;
   createdAt: number;
@@ -58,10 +62,14 @@ export interface Role {
   name: string;
   /** Plain-language description of the role's responsibility. */
   description: string;
-  /** Things this role is explicitly allowed to do. */
+  /** Things this role is explicitly allowed to do (free-text guardrails). */
   allowed: string[];
-  /** Things this role must never do (guardrails). */
+  /** Things this role must never do (free-text guardrails). */
   forbidden: string[];
+  /** Catalog tool ids this role is explicitly granted. */
+  allowedToolIds: string[];
+  /** Catalog tool ids this role is explicitly denied. */
+  forbiddenToolIds: string[];
   /** Backend id to use for this role (e.g. "codex"). */
   backendId: string;
   /** Optional model override. */

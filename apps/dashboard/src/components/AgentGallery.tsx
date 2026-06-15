@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { type AgentTemplate, api, type BackendInfo, type Project } from "../api.js";
+import { type AgentTemplate, api, type BackendInfo, type Project, type ToolDef } from "../api.js";
 import { StringListEditor } from "./StringListEditor.js";
+import { summarizeTools, ToolPermissionEditor } from "./ToolPermissionEditor.js";
 
 /**
  * Global gallery of reusable agent definitions, usable across all projects.
@@ -9,9 +10,11 @@ import { StringListEditor } from "./StringListEditor.js";
 export function AgentGallery({
   backends,
   projects,
+  tools,
 }: {
   backends: BackendInfo[];
   projects: Project[];
+  tools: ToolDef[];
 }) {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [editing, setEditing] = useState<AgentTemplate | "new" | null>(null);
@@ -37,6 +40,11 @@ export function AgentGallery({
             <div className="muted gi-desc" onClick={() => setEditing(t)}>
               {t.description || "—"}
             </div>
+            {(t.allowedToolIds?.length || t.forbiddenToolIds?.length) && (
+              <div className="muted gi-tools" onClick={() => setEditing(t)}>
+                {summarizeTools(t.allowedToolIds ?? [], t.forbiddenToolIds ?? [])}
+              </div>
+            )}
             <UseInProject template={t} projects={projects} />
           </li>
         ))}
@@ -46,6 +54,7 @@ export function AgentGallery({
         <TemplateEditor
           template={editing === "new" ? null : editing}
           backends={backends}
+          tools={tools}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -64,14 +73,8 @@ function UseInProject({ template, projects }: { template: AgentTemplate; project
     if (!projectId) return;
     setBusy(true);
     try {
-      await api.upsertRole(projectId, {
-        name: template.name,
-        description: template.description,
-        allowed: template.allowed,
-        forbidden: template.forbidden,
-        backendId: template.backendId,
-        model: template.model,
-      });
+      // Server copies tool permissions from the template into the new role.
+      await api.applyTemplate(projectId, template.name);
       alert(`Added "${template.name}" to the project.`);
     } catch (err) {
       alert(String(err));
@@ -99,11 +102,13 @@ function UseInProject({ template, projects }: { template: AgentTemplate; project
 function TemplateEditor({
   template,
   backends,
+  tools,
   onClose,
   onSaved,
 }: {
   template: AgentTemplate | null;
   backends: BackendInfo[];
+  tools: ToolDef[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -111,6 +116,8 @@ function TemplateEditor({
   const [description, setDescription] = useState(template?.description ?? "");
   const [allowed, setAllowed] = useState<string[]>(template?.allowed ?? []);
   const [forbidden, setForbidden] = useState<string[]>(template?.forbidden ?? []);
+  const [allowedToolIds, setAllowedToolIds] = useState<string[]>(template?.allowedToolIds ?? []);
+  const [forbiddenToolIds, setForbiddenToolIds] = useState<string[]>(template?.forbiddenToolIds ?? []);
   const [backendId, setBackendId] = useState(template?.backendId ?? "codex");
   const [model, setModel] = useState(template?.model ?? "");
   const [busy, setBusy] = useState(false);
@@ -187,6 +194,18 @@ function TemplateEditor({
         <label>Forbidden actions (guardrails)</label>
         <StringListEditor items={forbidden} onChange={setForbidden} placeholder="e.g. close PRs" />
 
+        <label>Chorus tools</label>
+        <div className="hint">Mark each tool Allowed (✓), Disallowed (✕), or Unspecified (–).</div>
+        <ToolPermissionEditor
+          tools={tools}
+          allowed={allowedToolIds}
+          forbidden={forbiddenToolIds}
+          onChange={(a, f) => {
+            setAllowedToolIds(a);
+            setForbiddenToolIds(f);
+          }}
+        />
+
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
           {template && (
@@ -211,6 +230,8 @@ function TemplateEditor({
                   description,
                   allowed,
                   forbidden,
+                  allowedToolIds,
+                  forbiddenToolIds,
                   backendId,
                   model: model.trim() || undefined,
                 }),

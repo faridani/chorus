@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
-import { type AgentTemplate, api, type BackendInfo, type Role } from "../api.js";
+import { type AgentTemplate, api, type BackendInfo, type Role, type ToolDef } from "../api.js";
 import { StringListEditor } from "./StringListEditor.js";
+import { summarizeTools, ToolPermissionEditor } from "./ToolPermissionEditor.js";
 
-/** Manage the project's agents (roles): persona, guardrails, backend, model. */
+/** Manage the project's agents (roles): persona, guardrails, tools, backend, model. */
 export function AgentsTab({
   projectId,
   roles,
   backends,
+  tools,
   onChange,
 }: {
   projectId: string;
   roles: Role[];
   backends: BackendInfo[];
+  tools: ToolDef[];
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState<Role | "new" | null>(null);
@@ -51,6 +54,11 @@ export function AgentsTab({
                 </ul>
               </div>
             </div>
+            {(r.allowedToolIds?.length || r.forbiddenToolIds?.length) && (
+              <div className="muted agenttools">
+                {summarizeTools(r.allowedToolIds ?? [], r.forbiddenToolIds ?? [])}
+              </div>
+            )}
           </div>
         ))}
         {roles.length === 0 && <p className="muted">No agents defined yet.</p>}
@@ -77,6 +85,7 @@ export function AgentsTab({
           projectId={projectId}
           role={editing === "new" ? null : editing}
           backends={backends}
+          tools={tools}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -113,14 +122,8 @@ function NewAgentChooser({
   const add = async (t: AgentTemplate) => {
     setBusy(true);
     try {
-      await api.upsertRole(projectId, {
-        name: t.name,
-        description: t.description,
-        allowed: t.allowed,
-        forbidden: t.forbidden,
-        backendId: t.backendId,
-        model: t.model,
-      });
+      // Server copies tool permissions from the template too.
+      await api.applyTemplate(projectId, t.name);
       onAdded();
     } catch (err) {
       alert(String(err));
@@ -177,12 +180,14 @@ function RoleEditor({
   projectId,
   role,
   backends,
+  tools,
   onClose,
   onSaved,
 }: {
   projectId: string;
   role: Role | null;
   backends: BackendInfo[];
+  tools: ToolDef[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -190,6 +195,8 @@ function RoleEditor({
   const [description, setDescription] = useState(role?.description ?? "");
   const [allowed, setAllowed] = useState<string[]>(role?.allowed ?? []);
   const [forbidden, setForbidden] = useState<string[]>(role?.forbidden ?? []);
+  const [allowedToolIds, setAllowedToolIds] = useState<string[]>(role?.allowedToolIds ?? []);
+  const [forbiddenToolIds, setForbiddenToolIds] = useState<string[]>(role?.forbiddenToolIds ?? []);
   const [backendId, setBackendId] = useState(role?.backendId ?? "codex");
   const [model, setModel] = useState(role?.model ?? "");
   const [busy, setBusy] = useState(false);
@@ -273,6 +280,18 @@ function RoleEditor({
         <label>Forbidden actions (guardrails)</label>
         <StringListEditor items={forbidden} onChange={setForbidden} placeholder="e.g. delete data" />
 
+        <label>Chorus tools</label>
+        <div className="hint">Mark each tool Allowed (✓), Disallowed (✕), or Unspecified (–).</div>
+        <ToolPermissionEditor
+          tools={tools}
+          allowed={allowedToolIds}
+          forbidden={forbiddenToolIds}
+          onChange={(a, f) => {
+            setAllowedToolIds(a);
+            setForbiddenToolIds(f);
+          }}
+        />
+
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
           {role && role.name !== "orchestrator" && (
@@ -302,6 +321,8 @@ function RoleEditor({
                   description,
                   allowed,
                   forbidden,
+                  allowedToolIds,
+                  forbiddenToolIds,
                   backendId,
                   model: model.trim() || undefined,
                 }),

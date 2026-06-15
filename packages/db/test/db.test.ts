@@ -385,6 +385,72 @@ test("migration 0007: project commands + attempt journal + pr task_id", () => {
   db.close();
 });
 
+test("migration 0008: tool permissions default empty + round-trip on role & template", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    status: "ready",
+    runState: "running",
+    createdAt: Date.now(),
+  });
+
+  // Inserted without tool fields → defaults to empty arrays.
+  const roleId = newId("role");
+  db.insertRole({
+    id: roleId,
+    projectId,
+    name: "legacy",
+    description: "no tools set",
+    allowed: [],
+    forbidden: [],
+    backendId: "codex",
+  } as never);
+  assert.deepEqual(db.getRole(projectId, "legacy")!.allowedToolIds, []);
+  assert.deepEqual(db.getRole(projectId, "legacy")!.forbiddenToolIds, []);
+
+  // Round-trip non-empty tool ids on a role.
+  db.insertRole({
+    id: newId("role"),
+    projectId,
+    name: "dev",
+    description: "coder",
+    allowed: [],
+    forbidden: [],
+    allowedToolIds: ["repo.read", "repo.modify", "verify.run"],
+    forbiddenToolIds: ["prs.open.request"],
+    backendId: "codex",
+  });
+  const dev = db.getRole(projectId, "dev")!;
+  assert.deepEqual(dev.allowedToolIds, ["repo.read", "repo.modify", "verify.run"]);
+  assert.deepEqual(dev.forbiddenToolIds, ["prs.open.request"]);
+  db.updateRole({ ...dev, allowedToolIds: ["repo.read"], forbiddenToolIds: [] });
+  assert.deepEqual(db.getRole(projectId, "dev")!.allowedToolIds, ["repo.read"]);
+
+  // Round-trip on an agent template.
+  db.insertAgentTemplate({
+    id: newId("tmpl"),
+    name: "qa",
+    description: "tester",
+    allowed: [],
+    forbidden: [],
+    allowedToolIds: ["repo.read", "verify.run"],
+    forbiddenToolIds: ["repo.modify"],
+    backendId: "codex",
+    createdAt: Date.now(),
+  });
+  const tmpl = db.getAgentTemplate("qa")!;
+  assert.deepEqual(tmpl.allowedToolIds, ["repo.read", "verify.run"]);
+  assert.deepEqual(tmpl.forbiddenToolIds, ["repo.modify"]);
+  db.close();
+});
+
 test("quota singleton defaults and updates", () => {
   const db = freshDb();
   assert.equal(db.getQuota().state, "available");

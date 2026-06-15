@@ -1,5 +1,41 @@
-import type { Project, Role, Ticket, TicketEvent } from "@chorus/core";
+import { getTool, type Project, type Role, type Ticket, type TicketEvent } from "@chorus/core";
 import { type TaskManifest, renderManifestMarkdown } from "./manifest.js";
+
+/**
+ * Render the "Chorus tools" section: which catalog tools the agent is granted
+ * or denied. Honest about executability — only `available` tools are directly
+ * callable in the sandbox; `planned` ones are Chorus-mediated permissions and
+ * the model is told not to fabricate calls to them.
+ */
+export function renderToolSection(allowedToolIds: string[], forbiddenToolIds: string[]): string[] {
+  const lines: string[] = ["", "## Chorus tools"];
+  if (allowedToolIds.length === 0) {
+    lines.push(
+      "No Chorus tools are explicitly granted; work within your sandbox and the guardrails above.",
+    );
+  } else {
+    lines.push("Explicitly allowed capabilities:");
+    for (const id of allowedToolIds) {
+      const t = getTool(id);
+      const note = t ? t.usageNote : "";
+      const tag = t?.availability === "available" ? "[available]" : "[Chorus-mediated; not directly callable yet]";
+      lines.push(`- ${id}${note ? ` — ${note}` : ""} ${tag}`);
+    }
+  }
+  if (forbiddenToolIds.length) {
+    lines.push("");
+    lines.push("Explicitly forbidden — do NOT attempt these, even indirectly:");
+    for (const id of forbiddenToolIds) {
+      const t = getTool(id);
+      lines.push(`- ${id}${t ? ` — ${t.description}` : ""}`);
+    }
+  }
+  lines.push("");
+  lines.push(
+    "Only `[available]` tools are directly executable in your sandbox. Granted Chorus-mediated tools describe permissions Chorus handles — do not fabricate calls to them.",
+  );
+  return lines;
+}
 
 const GLOBAL_GUARDRAILS = [
   "Work ONLY inside the current working directory (your isolated git worktree).",
@@ -22,8 +58,10 @@ export function buildOrchestratorPrompt(args: {
   workSummary: string | null;
   attempt: number;
   maxAttempts: number;
+  /** The orchestrator's own role, for rendering its granted/denied Chorus tools. */
+  orchestratorRole?: Role | null;
 }): string {
-  const { project, ticket, trail, workers, workSummary, attempt, maxAttempts } = args;
+  const { project, ticket, trail, workers, workSummary, attempt, maxAttempts, orchestratorRole } = args;
   const lines: string[] = [];
   lines.push("# You are the project ORCHESTRATOR agent");
   lines.push(
@@ -41,6 +79,12 @@ export function buildOrchestratorPrompt(args: {
     lines.push("");
     lines.push("### Ground rules");
     for (const g of project.groundRules) if (g.trim()) lines.push(`- ${g.trim()}`);
+  }
+
+  if (orchestratorRole) {
+    lines.push(
+      ...renderToolSection(orchestratorRole.allowedToolIds ?? [], orchestratorRole.forbiddenToolIds ?? []),
+    );
   }
 
   lines.push("");
@@ -138,6 +182,7 @@ export function buildAgentPrompt(args: {
       lines.push("Forbidden:");
       for (const f of role.forbidden) lines.push(`- ${f}`);
     }
+    lines.push(...renderToolSection(role.allowedToolIds ?? [], role.forbiddenToolIds ?? []));
   } else {
     lines.push("You are a software engineer implementing the ticket below.");
   }

@@ -249,3 +249,26 @@ tr.clickable:hover td { background: var(--panel2); }
 .loop-steps { margin: 8px 0 0; }
 .loop-step { padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; color: var(--text); }
 .loop-arrow { text-align: center; color: var(--muted); font-size: 12px; line-height: 1; margin: 3px 0; }
+
+/* tools gallery + tool permission editor */
+.tools-cat { margin-top: 10px; }
+.tools-cat-name { text-transform: uppercase; font-size: 11px; letter-spacing: .05em; color: var(--muted); margin: 8px 0 4px; }
+.tool-card .tool-id { font-family: ui-monospace, monospace; font-size: 11px; }
+.tool-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.tag.risk-high { color: #f85149; }
+.tag.risk-medium { color: #e3b341; }
+.tag.risk-low { color: #7ee787; }
+.tag.avail-available { color: #7ee787; }
+.tag.avail-planned { color: var(--muted); }
+.toolperm { border: 1px solid var(--border); border-radius: 6px; padding: 6px; max-height: 300px; overflow-y: auto; background: var(--bg); }
+.toolperm-cat-name { text-transform: uppercase; font-size: 10px; letter-spacing: .05em; color: var(--muted); margin: 8px 0 2px; }
+.toolperm-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; }
+.toolperm-id { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.toolperm-id code { font-family: ui-monospace, monospace; }
+.toolperm-planned { font-size: 9px; color: var(--muted); }
+.toolperm-toggle { display: flex; gap: 2px; }
+.toolperm-btn { padding: 1px 8px; font-size: 12px; line-height: 1.4; background: var(--panel2); border: 1px solid var(--border); }
+.toolperm-btn.on.allowed { color: #7ee787; border-color: #2e5e40; background: #14241a; }
+.toolperm-btn.on.disallowed { color: #f85149; border-color: #5e2e34; background: #2a1517; }
+.toolperm-btn.on.unspecified { color: var(--text); }
+.agenttools, .gi-tools { font-family: ui-monospace, monospace; font-size: 11px; margin-top: 4px; }

@@ -84,10 +84,17 @@ export class ChorusDb {
   insertRole(r: Role): void {
     this.raw
       .prepare(
-        `INSERT INTO roles (id, project_id, name, description, allowed, forbidden, backend_id, model)
-         VALUES (@id, @projectId, @name, @description, @allowed, @forbidden, @backendId, @model)`,
+        `INSERT INTO roles (id, project_id, name, description, allowed, forbidden, allowed_tool_ids, forbidden_tool_ids, backend_id, model)
+         VALUES (@id, @projectId, @name, @description, @allowed, @forbidden, @allowedToolIds, @forbiddenToolIds, @backendId, @model)`,
       )
-      .run({ ...r, allowed: JSON.stringify(r.allowed), forbidden: JSON.stringify(r.forbidden), model: r.model ?? null });
+      .run({
+        ...r,
+        allowed: JSON.stringify(r.allowed),
+        forbidden: JSON.stringify(r.forbidden),
+        allowedToolIds: JSON.stringify(r.allowedToolIds ?? []),
+        forbiddenToolIds: JSON.stringify(r.forbiddenToolIds ?? []),
+        model: r.model ?? null,
+      });
   }
   listRoles(projectId: string): Role[] {
     return (
@@ -104,12 +111,15 @@ export class ChorusDb {
     this.raw
       .prepare(
         `UPDATE roles SET description=@description, allowed=@allowed, forbidden=@forbidden,
+         allowed_tool_ids=@allowedToolIds, forbidden_tool_ids=@forbiddenToolIds,
          backend_id=@backendId, model=@model WHERE id=@id`,
       )
       .run({
         ...r,
         allowed: JSON.stringify(r.allowed),
         forbidden: JSON.stringify(r.forbidden),
+        allowedToolIds: JSON.stringify(r.allowedToolIds ?? []),
+        forbiddenToolIds: JSON.stringify(r.forbiddenToolIds ?? []),
         model: r.model ?? null,
       });
   }
@@ -121,13 +131,15 @@ export class ChorusDb {
   insertAgentTemplate(t: AgentTemplate): void {
     this.raw
       .prepare(
-        `INSERT INTO agent_templates (id, name, description, allowed, forbidden, backend_id, model, created_at)
-         VALUES (@id, @name, @description, @allowed, @forbidden, @backendId, @model, @createdAt)`,
+        `INSERT INTO agent_templates (id, name, description, allowed, forbidden, allowed_tool_ids, forbidden_tool_ids, backend_id, model, created_at)
+         VALUES (@id, @name, @description, @allowed, @forbidden, @allowedToolIds, @forbiddenToolIds, @backendId, @model, @createdAt)`,
       )
       .run({
         ...t,
         allowed: JSON.stringify(t.allowed),
         forbidden: JSON.stringify(t.forbidden),
+        allowedToolIds: JSON.stringify(t.allowedToolIds ?? []),
+        forbiddenToolIds: JSON.stringify(t.forbiddenToolIds ?? []),
         model: t.model ?? null,
       });
   }
@@ -135,12 +147,15 @@ export class ChorusDb {
     this.raw
       .prepare(
         `UPDATE agent_templates SET description=@description, allowed=@allowed, forbidden=@forbidden,
+         allowed_tool_ids=@allowedToolIds, forbidden_tool_ids=@forbiddenToolIds,
          backend_id=@backendId, model=@model WHERE id=@id`,
       )
       .run({
         ...t,
         allowed: JSON.stringify(t.allowed),
         forbidden: JSON.stringify(t.forbidden),
+        allowedToolIds: JSON.stringify(t.allowedToolIds ?? []),
+        forbiddenToolIds: JSON.stringify(t.forbiddenToolIds ?? []),
         model: t.model ?? null,
       });
   }
@@ -508,6 +523,8 @@ function mapRole(r: Row): Role {
     description: r.description as string,
     allowed: JSON.parse(r.allowed as string),
     forbidden: JSON.parse(r.forbidden as string),
+    allowedToolIds: JSON.parse((r.allowed_tool_ids as string | null) ?? "[]"),
+    forbiddenToolIds: JSON.parse((r.forbidden_tool_ids as string | null) ?? "[]"),
     backendId: r.backend_id as string,
     model: (r.model as string | null) ?? undefined,
   };
@@ -519,6 +536,8 @@ function mapAgentTemplate(r: Row): AgentTemplate {
     description: r.description as string,
     allowed: JSON.parse(r.allowed as string),
     forbidden: JSON.parse(r.forbidden as string),
+    allowedToolIds: JSON.parse((r.allowed_tool_ids as string | null) ?? "[]"),
+    forbiddenToolIds: JSON.parse((r.forbidden_tool_ids as string | null) ?? "[]"),
     backendId: r.backend_id as string,
     model: (r.model as string | null) ?? undefined,
     createdAt: r.created_at as number,

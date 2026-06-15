@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ChorusBus, Config, ControlApi } from "@chorus/core";
+import { type ChorusBus, type Config, type ControlApi, TOOL_CATALOG } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -53,6 +53,9 @@ export function createServer(deps: WebDeps): FastifyInstance {
   app.get("/api/backends", () => api.listBackends());
   app.post("/api/backends/refresh", () => api.refreshBackends());
 
+  // ---- tool catalog (source-defined, read-only) ----
+  app.get("/api/tools", () => TOOL_CATALOG);
+
   // ---- agent gallery (global templates) ----
   app.get("/api/agent-templates", () => db.listAgentTemplates());
 
@@ -62,6 +65,8 @@ export function createServer(deps: WebDeps): FastifyInstance {
       description?: string;
       allowed?: string[];
       forbidden?: string[];
+      allowedToolIds?: string[];
+      forbiddenToolIds?: string[];
       backendId?: string;
       model?: string;
     };
@@ -71,6 +76,8 @@ export function createServer(deps: WebDeps): FastifyInstance {
       description: body.description ?? "",
       allowed: body.allowed ?? [],
       forbidden: body.forbidden ?? [],
+      allowedToolIds: body.allowedToolIds ?? [],
+      forbiddenToolIds: body.forbiddenToolIds ?? [],
       backendId: body.backendId ?? "codex",
       model: body.model,
     });
@@ -231,6 +238,8 @@ export function createServer(deps: WebDeps): FastifyInstance {
       description?: string;
       allowed?: string[];
       forbidden?: string[];
+      allowedToolIds?: string[];
+      forbiddenToolIds?: string[];
       backendId?: string;
       model?: string;
     };
@@ -240,9 +249,19 @@ export function createServer(deps: WebDeps): FastifyInstance {
       description: body.description ?? "",
       allowed: body.allowed ?? [],
       forbidden: body.forbidden ?? [],
+      allowedToolIds: body.allowedToolIds ?? [],
+      forbiddenToolIds: body.forbiddenToolIds ?? [],
       backendId: body.backendId ?? "codex",
       model: body.model,
     });
+  });
+
+  // Create/update a project role from a gallery template (copies tool permissions).
+  app.post("/api/projects/:id/roles/from-template", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string };
+    if (!body?.name) return reply.code(400).send({ error: "name required" });
+    return api.applyTemplate(id, body.name);
   });
 
   app.delete("/api/projects/:id/roles/:name", async (req) => {
