@@ -135,9 +135,15 @@ export class StreamingProcess {
     await this.exit;
   }
 
+  private killTimer: NodeJS.Timeout | undefined;
+
   private forceKill(): void {
     this.signalGroup("SIGTERM");
-    setTimeout(() => this.signalGroup("SIGKILL"), this.killGraceMs);
+    // Escalate to SIGKILL after the grace period, but track the timer so it can
+    // be cleared on exit — otherwise it fires after the process is gone and may
+    // signal a recycled PID/PGID (and keeps the event loop alive).
+    if (this.killTimer) clearTimeout(this.killTimer);
+    this.killTimer = setTimeout(() => this.signalGroup("SIGKILL"), this.killGraceMs);
   }
 
   private signalGroup(sig: NodeJS.Signals): void {
@@ -167,6 +173,7 @@ export class StreamingProcess {
   private cleanup(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (this.wallTimer) clearTimeout(this.wallTimer);
+    if (this.killTimer) clearTimeout(this.killTimer);
     this.rl.close();
   }
 

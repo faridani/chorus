@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { run } from "@chorus/proc";
 import { Mutex } from "./mutex.js";
@@ -73,8 +73,15 @@ export class GitService {
   ): Promise<void> {
     await this.mutex.run(async () => {
       await this.gitUnlocked(["worktree", "prune"], localPath, false);
+      // Clear any leftover worktree dir from a crashed run; `worktree add`
+      // refuses a non-empty target. `-B` force-creates/resets the branch so a
+      // leftover branch of the same name doesn't fail the add.
+      if (existsSync(worktreePath)) {
+        await rm(worktreePath, { recursive: true, force: true });
+        await this.gitUnlocked(["worktree", "prune"], localPath, false);
+      }
       await this.gitUnlocked(
-        ["worktree", "add", "-b", branch, worktreePath, baseRef],
+        ["worktree", "add", "-B", branch, worktreePath, baseRef],
         localPath,
         true,
       );
@@ -198,10 +205,16 @@ export class GitService {
       await mkdir(dirname(full), { recursive: true });
       await writeFile(full, content, "utf8");
       await this.gitUnlocked(["add", relPath], localPath, true);
+      // Distinguish "nothing changed" (a no-op, fine) from a real commit
+      // failure (hook rejection, index lock, in-progress merge), which the old
+      // code silently swallowed as success.
+      const staged = await this.gitUnlocked(["diff", "--cached", "--quiet"], localPath, false);
+      if (staged.code === 0) {
+        return this.headCommitUnlocked(localPath); // nothing staged to commit
+      }
       const commit = await this.gitUnlocked(["commit", "-m", message], localPath, false);
       if (commit.code !== 0) {
-        // Nothing to commit is not fatal for the changelog path.
-        return this.headCommitUnlocked(localPath);
+        throw new Error(`git commit failed for ${relPath}: ${commit.stderr.trim()}`);
       }
       return this.headCommitUnlocked(localPath);
     });
@@ -214,20 +227,28 @@ export class GitService {
    */
   async installPushGuard(localPath: string, protectedBranches: string[]): Promise<void> {
     const hookPath = join(localPath, ".git", "hooks", "pre-push");
-    const patterns = protectedBranches.map((b) => `refs/heads/${b}`).join("|");
-    const script = `#!/bin/sh
+    // Dedupe (base branch is often "main", passed twice) and build a single
+    // `|`-joined case pattern. A naive `pat) pat) pat)` is invalid shell and
+    // makes the hook error on *every* push.
+    const unique = [...new Set(protectedBranches.filter((b) => b.trim()))];
+    const pattern = unique.map((b) => `refs/heads/${b}`).join("|");
+    const script = unique.length
+      ? `#!/bin/sh
 # Installed by Chorus: block pushes to protected branches.
 while read local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
-    ${protectedBranches.map((b) => `refs/heads/${b})`).join(" ")}
+    ${pattern})
       echo "chorus: pushing to a protected branch is not allowed ($remote_ref)" >&2
       exit 1
       ;;
   esac
 done
 exit 0
+`
+      : `#!/bin/sh
+# Installed by Chorus: no protected branches configured.
+exit 0
 `;
-    void patterns;
     await writeFile(hookPath, script, "utf8");
     await chmod(hookPath, 0o755);
   }

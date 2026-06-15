@@ -85,31 +85,36 @@ export class CodexBackend implements AIBackend {
     });
 
     const result: Promise<AgentResult> = (async () => {
-      const exit = await proc.exit;
-      queue.close();
+      // Always close the event queue, even if result-processing throws —
+      // otherwise a consumer iterating `events` would hang forever.
+      try {
+        const exit = await proc.exit;
 
-      const ctx: ExitContext = {
-        exitCode: exit.code,
-        signal: exit.signal,
-        stderrTail: exit.stderrTail,
-        lastEvents: [...lastEvents],
-        killedByUs,
-      };
-      let terminalReason =
-        exit.outcome === "timeout" || exit.outcome === "idle_timeout"
-          ? exit.outcome
-          : this.opts.quotaPolicy.classifyExit(ctx);
-      if (killedByUs) terminalReason = "killed";
+        const ctx: ExitContext = {
+          exitCode: exit.code,
+          signal: exit.signal,
+          stderrTail: exit.stderrTail,
+          lastEvents: [...lastEvents],
+          killedByUs,
+        };
+        let terminalReason =
+          exit.outcome === "timeout" || exit.outcome === "idle_timeout"
+            ? exit.outcome
+            : this.opts.quotaPolicy.classifyExit(ctx);
+        if (killedByUs) terminalReason = "killed";
 
-      return {
-        payload: readPayload(outputPath),
-        exitCode: exit.code,
-        signal: exit.signal,
-        terminalReason,
-        usage,
-        rawLogPath,
-        outputFilePath: outputPath,
-      } satisfies AgentResult;
+        return {
+          payload: readPayload(outputPath),
+          exitCode: exit.code,
+          signal: exit.signal,
+          terminalReason,
+          usage,
+          rawLogPath,
+          outputFilePath: outputPath,
+        } satisfies AgentResult;
+      } finally {
+        queue.close();
+      }
     })();
 
     return {
