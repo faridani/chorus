@@ -38,6 +38,15 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <h1>🎼 Chorus</h1>
+        {state?.version && (
+          <span
+            className="version"
+            title={`commit ${state.version.commit}${state.version.dirty ? " (dirty)" : ""} · running since ${new Date(state.version.startedAt).toLocaleString()}`}
+          >
+            v{state.version.number} · {state.version.commit}
+            {state.version.dirty ? "*" : ""}
+          </span>
+        )}
         <div className="controls">
           <span className={`pill state-${state?.orchestrator}`}>
             orchestrator: {state?.orchestrator ?? "…"}

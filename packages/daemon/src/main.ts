@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { VersionInfo } from "@chorus/web";
 import { BackendRegistry, CodexBackend, CodexQuotaPolicy } from "@chorus/backends";
 import { ChorusBus, type Notifier } from "@chorus/core";
 import { ChorusDb } from "@chorus/db";
@@ -45,7 +47,16 @@ async function main(): Promise<void> {
   const controller = new AppController({ db, git, backends, orchestrator, notifier, bus, config });
 
   // Web + dashboard.
-  const app = createServer({ db, bus, api: controller, config, dashboardDir: resolveDashboardDir() });
+  const version = resolveVersion();
+  console.log(`[chorus] version ${version.number} (${version.commit}${version.dirty ? "-dirty" : ""})`);
+  const app = createServer({
+    db,
+    bus,
+    api: controller,
+    config,
+    version,
+    dashboardDir: resolveDashboardDir(),
+  });
   await app.listen({ host: config.host, port: config.port });
   console.log(`[chorus] dashboard on http://${config.host}:${config.port}`);
 
@@ -72,6 +83,39 @@ function buildNotifier(config: ReturnType<typeof loadConfig>): Notifier {
     return new NullNotifier();
   }
   return new CompositeNotifier([new IMessageNotifier(config.notifications.imessageTo)]);
+}
+
+/** Repo root, relative to this file (works from both dist and tsx/src). */
+function repoRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "..", "..", ".."); // packages/daemon/{dist,src} → repo root
+}
+
+/**
+ * Version of the live build: package version + git commit captured at startup.
+ * Since the daemon is restarted on deploy, startup-time HEAD reflects the
+ * running code. `startedAt` lets you confirm a restart actually took effect.
+ */
+function resolveVersion(): VersionInfo {
+  const root = repoRoot();
+  let number = "0.0.0";
+  try {
+    number = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version as string) ?? number;
+  } catch {
+    /* ignore */
+  }
+  let commit = "unknown";
+  let dirty = false;
+  try {
+    commit = execFileSync("git", ["-C", root, "rev-parse", "--short", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+    dirty =
+      execFileSync("git", ["-C", root, "status", "--porcelain"], { encoding: "utf8" }).trim().length > 0;
+  } catch {
+    /* not a git checkout */
+  }
+  return { number, commit, dirty, startedAt: Date.now() };
 }
 
 /** Locate the built dashboard SPA, if present. */

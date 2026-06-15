@@ -75,11 +75,19 @@ export interface RoleInput {
   model?: string;
 }
 
+export interface VersionInfo {
+  number: string;
+  commit: string;
+  dirty: boolean;
+  startedAt: number;
+}
+
 export interface AppState {
   orchestrator: string;
   runningTasks: string[];
   quota: { state: string; resumeAt: number | null };
   usageTotals: { inputTokens: number; outputTokens: number };
+  version?: VersionInfo;
 }
 
 async function json<T>(res: Response): Promise<T> {
