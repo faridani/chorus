@@ -6,12 +6,13 @@
 
 /** Lifecycle of a ticket (a unit of work the human/orchestrator defines). */
 export const TICKET_STATUSES = [
-  "open", // created, not yet dispatched
-  "assigned", // picked up by the orchestrator, task created
-  "in_progress", // an agent is actively working
-  "needs_review", // agent finished but work did not auto-merge (human must look)
-  "merged", // work merged into the integration branch
-  "blocked", // cannot proceed (e.g. merge conflict, dependency)
+  "open", // the current assignee should act on it
+  "assigned", // (legacy) picked up by the orchestrator, task created
+  "in_progress", // an agent is actively running on it (transient)
+  "needs_review", // (legacy) agent finished, awaiting human
+  "merged", // work merged into the integration branch (terminal)
+  "closed", // closed by the orchestrator without a merge (terminal)
+  "blocked", // cannot proceed (e.g. conflict, needs a human/agent that doesn't exist)
   "failed", // gave up after exhausting attempts
 ] as const;
 export type TicketStatus = (typeof TICKET_STATUSES)[number];

@@ -2,21 +2,26 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BackendRegistry } from "@chorus/backends";
 import {
+  type AgentEvent,
   type AgentResult,
   type ChorusBus,
   type Config,
-  type Notifier,
   newId,
+  type Notifier,
+  ORCHESTRATOR_ROLE,
+  type OrchestratorDecision,
   type OrchestratorState,
   type Project,
+  type Role,
   type Task,
-  type TaskState,
   type Ticket,
+  type TicketEvent,
 } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import type { GitService } from "@chorus/git-service";
 import { renderChangelog } from "./changelog.js";
-import { buildAgentPrompt } from "./prompt.js";
+import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
+import { runTriage } from "./triage.js";
 
 export interface OrchestratorDeps {
   db: ChorusDb;
@@ -28,15 +33,16 @@ export interface OrchestratorDeps {
 }
 
 /**
- * The hub. Owns the dispatch loop, agent execution, done-detection, merging
- * into the integration branch, the changelog, quota gating, and human
- * notifications. The only writer of task/merge/changelog state.
+ * The daemon dispatch loop. Processes tickets serially per project through a
+ * per-project "orchestrator" triage agent: every ticket flows
+ * orchestrator → worker → orchestrator (keep working / merge / close) → done.
+ * The orchestrator agent gates merges; workers never merge themselves.
  */
 export class Orchestrator {
   private state: OrchestratorState = "stopped";
   private timer: NodeJS.Timeout | undefined;
-  /** taskId → live run handle, used for concurrency counting and stop(). */
-  private readonly running = new Map<string, { stop: () => Promise<void> }>();
+  /** ticketId → active op (one per ticket; per-project serial). */
+  private readonly active = new Map<string, { projectId: string; stop: () => Promise<void> }>();
   private ticking = false;
 
   constructor(private readonly deps: OrchestratorDeps) {}
@@ -45,8 +51,9 @@ export class Orchestrator {
     return this.state;
   }
 
+  /** Ticket ids currently being acted on (used by the UI + controller guards). */
   runningTaskIds(): string[] {
-    return [...this.running.keys()];
+    return [...this.active.keys()];
   }
 
   start(): void {
@@ -63,14 +70,13 @@ export class Orchestrator {
     this.setState("paused");
   }
 
-  /** Stop dispatching and stop all running agents. */
   async stop(): Promise<void> {
     this.setState("stopped");
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    await Promise.allSettled([...this.running.values()].map((h) => h.stop()));
+    await Promise.allSettled([...this.active.values()].map((h) => h.stop()));
   }
 
   private setState(s: OrchestratorState): void {
@@ -78,165 +84,254 @@ export class Orchestrator {
     this.deps.bus.emit({ type: "orchestrator_state", state: s, at: Date.now() });
   }
 
-  /** One iteration of the dispatch loop. Re-entrancy guarded. */
+  /** One iteration of the dispatch loop. Serial: at most one agent per project. */
   async tick(): Promise<void> {
     if (this.ticking) return;
     this.ticking = true;
     try {
       if (this.state !== "running") return;
       this.reconcileQuota();
-      const quota = this.deps.db.getQuota();
-      if (quota.state === "exhausted") return;
+      if (this.deps.db.getQuota().state === "exhausted") return;
 
-      // Resume quota-paused tasks whose retry time has arrived (only for
-      // running projects, within each project's own capacity).
+      // Resume quota-paused worker runs (per running project, if it's idle).
       for (const task of this.deps.db.listTasksByState("paused-quota")) {
         const project = this.deps.db.getProject(task.projectId);
         if (!project || project.runState !== "running") continue;
-        if (this.atCapacityForProject(project.id)) continue;
-        if (task.resumeAt && task.resumeAt <= Date.now() && !this.running.has(task.id)) {
-          void this.runTask(task, true).catch((e) => console.error("[chorus] runTask error:", e));
-        }
+        if (this.projectBusy(project.id)) continue;
+        const ticket = this.deps.db.getTicket(task.ticketId);
+        if (!ticket || this.active.has(ticket.id)) continue;
+        void this.processTicket(ticket, task.id);
       }
 
-      // Dispatch new work — each project runs independently up to its OWN cap,
-      // so a busy project can't starve the others ("its own orchestrator").
+      // Dispatch the top open ticket of each idle, running project (serial).
       for (const project of this.deps.db.listProjects()) {
         if (project.status !== "ready" || project.runState !== "running") continue;
-        while (!this.atCapacityForProject(project.id)) {
-          const ticket = this.deps.db.nextOpenTicket(project.id);
-          if (!ticket) break;
-          await this.dispatchTicket(ticket);
-        }
+        if (this.projectBusy(project.id)) continue;
+        const ticket = this.deps.db.nextOpenTicket(project.id);
+        if (!ticket) continue;
+        void this.processTicket(ticket);
       }
     } finally {
       this.ticking = false;
     }
   }
 
-  private countRunningForProject(projectId: string): number {
-    let n = 0;
-    for (const taskId of this.running.keys()) {
-      const t = this.deps.db.getTask(taskId);
-      if (t && t.projectId === projectId) n++;
-    }
-    return n;
+  private projectBusy(projectId: string): boolean {
+    for (const v of this.active.values()) if (v.projectId === projectId) return true;
+    return false;
   }
 
-  private atCapacityForProject(projectId: string): boolean {
-    return this.countRunningForProject(projectId) >= this.deps.config.maxConcurrentAgents;
-  }
-
-  private reconcileQuota(): void {
-    const quota = this.deps.db.getQuota();
-    if (quota.state === "exhausted" && quota.resumeAt && quota.resumeAt <= Date.now()) {
-      this.deps.db.setQuota({ ...quota, state: "available", resumeAt: null });
-      this.deps.bus.emit({ type: "quota", state: "available", resumeAt: null, at: Date.now() });
-    }
-  }
-
-  /** Stop any agents currently running for a single project (used by Stop). */
+  /** Stop the agent currently running for a project (Stop button). */
   async stopProjectAgents(projectId: string): Promise<void> {
     const stops: Array<Promise<void>> = [];
-    for (const [taskId, handle] of this.running) {
-      const task = this.deps.db.getTask(taskId);
-      if (task && task.projectId === projectId) stops.push(handle.stop());
-    }
+    for (const v of this.active.values()) if (v.projectId === projectId) stops.push(v.stop());
     await Promise.allSettled(stops);
   }
 
-  // ---- dispatch ----
-  private async dispatchTicket(ticket: Ticket): Promise<void> {
+  // ---- ticket processing ----
+  /** Reserve the project's serial slot, then route to orchestrator or worker. */
+  private async processTicket(ticket: Ticket, resumeTaskId?: string): Promise<void> {
+    if (this.active.has(ticket.id)) return;
     const project = this.deps.db.getProject(ticket.projectId);
     if (!project) return;
+    this.active.set(ticket.id, { projectId: project.id, stop: async () => {} });
+    this.deps.db.updateTicket(ticket.id, { status: "in_progress" });
+    this.emitTicket(project.id, ticket.id);
 
-    const role = ticket.roleName ? this.deps.db.getRole(project.id, ticket.roleName) ?? null : null;
-    const backendId = role?.backendId ?? "codex";
-    if (!this.deps.backends.has(backendId)) {
-      this.failTicket(ticket, `No backend "${backendId}" registered.`);
-      return;
+    try {
+      const isOrchestrator = !ticket.roleName || ticket.roleName === ORCHESTRATOR_ROLE;
+      if (isOrchestrator) {
+        await this.runOrchestratorDecision(project, ticket);
+      } else {
+        await this.runWorker(project, ticket, resumeTaskId);
+      }
+    } catch (err) {
+      this.trail(project.id, ticket.id, "system", "note", `Processing error: ${String(err)}`);
+      this.handBackToOrchestrator(project.id, ticket.id);
+      void this.notify("error", project, "Processing error", `${ticket.title}: ${String(err)}`).catch(() => {});
+    } finally {
+      this.active.delete(ticket.id);
+      void this.tick().catch((e) => console.error("[chorus] tick error:", e));
     }
+  }
 
-    const attempt = this.deps.db.listTasksForTicket(ticket.id).length + 1;
-    if (attempt > this.deps.config.maxAttemptsPerTicket) {
-      this.failTicket(
-        ticket,
-        `Exceeded max attempts (${this.deps.config.maxAttemptsPerTicket}).`,
+  // ---- orchestrator (triage / review) ----
+  private async runOrchestratorDecision(project: Project, ticket: Ticket): Promise<void> {
+    const workers = this.deps.db
+      .listRoles(project.id)
+      .filter((r) => r.name !== ORCHESTRATOR_ROLE);
+    const orchRole = this.deps.db.getRole(project.id, ORCHESTRATOR_ROLE);
+    const attempt = this.workerAttempts(ticket.id);
+
+    let workSummaryText: string | null = null;
+    if (ticket.branch) {
+      const { commits, files } = await this.deps.git.branchSummary(
+        project.localPath,
+        project.integrationBranch,
+        ticket.branch,
       );
+      workSummaryText =
+        commits.length === 0
+          ? "Branch exists but has no commits beyond the integration branch."
+          : `Commits:\n${commits.map((c) => `  - ${c}`).join("\n")}\nFiles changed:\n${files.map((f) => `  - ${f}`).join("\n")}`;
+    }
+
+    const prompt = buildOrchestratorPrompt({
+      project,
+      ticket,
+      trail: this.deps.db.listTicketEvents(ticket.id),
+      workers,
+      workSummary: workSummaryText,
+      attempt,
+      maxAttempts: this.deps.config.maxAttemptsPerTicket,
+    });
+
+    this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, {
+      kind: "message",
+      text: "Orchestrator is reviewing the ticket…",
+      at: Date.now(),
+    });
+
+    const cwd =
+      ticket.worktreePath && existsSync(ticket.worktreePath) ? ticket.worktreePath : project.localPath;
+    const artifactsDir = join(this.deps.config.dataDir, "triage", ticket.id, newId("t"));
+
+    let decision: OrchestratorDecision;
+    try {
+      decision = await runTriage({ cwd, artifactsDir, prompt, model: orchRole?.model });
+    } catch (err) {
+      if (this.looksLikeQuota(String(err))) {
+        this.enterQuotaBackoff();
+        // Leave the ticket open & assigned to the orchestrator; retried after backoff.
+        this.deps.db.updateTicket(ticket.id, { status: "open", roleName: ORCHESTRATOR_ROLE });
+        return;
+      }
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "note", `Triage failed: ${String(err)}`);
+      this.blockTicket(project, ticket, `Orchestrator could not triage this ticket: ${String(err)}`);
       return;
     }
-    const branch = `chorus/ticket-${ticket.id}-a${attempt}`;
-    const worktreePath = join(
-      this.deps.config.dataDir,
-      "worktrees",
+
+    this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, {
+      kind: "message",
+      text: `${decision.action.toUpperCase()}: ${decision.message}`,
+      at: Date.now(),
+    });
+    this.trail(
       project.id,
-      `${ticket.id}-a${attempt}`,
+      ticket.id,
+      ORCHESTRATOR_ROLE,
+      "triage",
+      `${decision.action.toUpperCase()} — ${decision.message}`,
     );
 
+    // Side effects allowed alongside any action.
+    for (const s of decision.suggestions ?? []) this.addSuggestion(project, ticket.id, s);
+    for (const nt of decision.newTickets ?? []) this.createFollowUpTicket(project.id, nt);
+
+    await this.applyDecision(project, ticket, decision, workers);
+  }
+
+  private async applyDecision(
+    project: Project,
+    ticket: Ticket,
+    decision: OrchestratorDecision,
+    workers: Role[],
+  ): Promise<void> {
+    switch (decision.action) {
+      case "assign": {
+        const target = workers.find((w) => w.name === decision.assignee);
+        if (!target) {
+          this.addSuggestion(
+            project,
+            ticket.id,
+            `Orchestrator wanted to assign to "${decision.assignee}", which is not an agent in this project. Add it (Agents tab / Gallery) or adjust.`,
+          );
+          this.blockTicket(project, ticket, `No such agent: ${decision.assignee}`);
+          return;
+        }
+        this.deps.db.updateTicket(ticket.id, {
+          status: "open",
+          roleName: target.name,
+          priority: decision.priority ?? ticket.priority,
+        });
+        this.emitTicket(project.id, ticket.id);
+        return;
+      }
+      case "merge":
+        await this.mergeTicket(project, ticket);
+        return;
+      case "close":
+        await this.closeTicket(project, ticket, "closed");
+        return;
+      case "needs_human":
+        this.blockTicket(project, ticket, decision.message);
+        return;
+    }
+  }
+
+  // ---- worker run ----
+  private async runWorker(project: Project, ticket: Ticket, resumeTaskId?: string): Promise<void> {
+    const role = ticket.roleName ? this.deps.db.getRole(project.id, ticket.roleName) ?? null : null;
+    if (!role) {
+      this.trail(project.id, ticket.id, "system", "note", `Assigned agent "${ticket.roleName}" no longer exists.`);
+      this.handBackToOrchestrator(project.id, ticket.id);
+      return;
+    }
+    if (this.workerAttempts(ticket.id) >= this.deps.config.maxAttemptsPerTicket) {
+      this.addSuggestion(project, ticket.id, `Ticket reached ${this.deps.config.maxAttemptsPerTicket} worker attempts without completion.`);
+      this.blockTicket(project, ticket, "Max worker attempts reached.");
+      return;
+    }
+
+    // Ensure a persistent per-ticket branch/worktree; resume if it already exists.
+    const resume = !!ticket.branch;
+    let branch = ticket.branch ?? `chorus/ticket-${ticket.id}`;
+    let worktreePath =
+      ticket.worktreePath ?? join(this.deps.config.dataDir, "worktrees", project.id, ticket.id);
     let baseCommit: string;
     try {
       baseCommit = await this.deps.git.headCommit(project.localPath, project.integrationBranch);
-      await this.deps.git.addWorktree(project.localPath, worktreePath, branch, project.integrationBranch);
+      if (!resume) {
+        await this.deps.git.addWorktree(project.localPath, worktreePath, branch, project.integrationBranch);
+        this.deps.db.updateTicket(ticket.id, { branch, worktreePath });
+      }
     } catch (err) {
-      this.failTicket(ticket, `Failed to create worktree: ${String(err)}`);
+      this.trail(project.id, ticket.id, role.name, "note", `Failed to prepare worktree: ${String(err)}`);
+      this.handBackToOrchestrator(project.id, ticket.id);
       return;
     }
 
-    const now = Date.now();
-    const task: Task = {
-      id: newId("task"),
-      ticketId: ticket.id,
-      projectId: project.id,
-      backendId,
-      worktreePath,
-      branch,
-      baseCommit,
-      state: "running",
-      attempt,
-      resumeAt: null,
-      startedAt: now,
-      endedAt: null,
-    };
-    this.deps.db.insertTask(task);
-    this.deps.db.updateTicket(ticket.id, { status: "in_progress" });
-    this.emitTask(task);
-    this.deps.bus.emit({ type: "ticket_changed", projectId: project.id, ticketId: ticket.id, at: now });
-
-    void this.runTask(task, false).catch((e) => console.error("[chorus] runTask error:", e));
-  }
-
-  // ---- run a task (initial or resume) ----
-  private async runTask(task: Task, resume: boolean): Promise<void> {
-    const project = this.deps.db.getProject(task.projectId);
-    const ticket = this.deps.db.getTicket(task.ticketId);
-    if (!project || !ticket) return;
-
-    // Guard against double-dispatch (e.g. a quota-resume racing the next tick):
-    // reserve the slot and flip state synchronously, before any await.
-    if (this.running.has(task.id)) return;
-    this.running.set(task.id, { stop: async () => {} });
-    this.deps.db.updateTask(task.id, { state: "running", resumeAt: null });
-    this.emitTaskState(task, "running");
-
-    const role = ticket.roleName ? this.deps.db.getRole(project.id, ticket.roleName) ?? null : null;
-    const backend = this.deps.backends.get(task.backendId);
+    const backend = this.deps.backends.has(role.backendId)
+      ? this.deps.backends.get(role.backendId)
+      : this.deps.backends.get("codex");
     const runId = newId("run");
-    const artifactsDir = join(this.deps.config.dataDir, "runs", task.id, runId);
-
-    const prompt = buildAgentPrompt({
-      project,
-      role,
-      ticket,
-      specExcerpt: this.readSpecExcerpt(project),
-      resume,
-    });
-
+    const taskId = resumeTaskId ?? newId("task");
+    const now = Date.now();
+    if (resumeTaskId) {
+      this.deps.db.updateTask(taskId, { state: "running", resumeAt: null });
+    } else {
+      const task: Task = {
+        id: taskId,
+        ticketId: ticket.id,
+        projectId: project.id,
+        backendId: role.backendId,
+        worktreePath,
+        branch,
+        baseCommit,
+        state: "running",
+        attempt: this.workerAttempts(ticket.id) + 1,
+        resumeAt: null,
+        startedAt: now,
+        endedAt: null,
+      };
+      this.deps.db.insertTask(task);
+    }
     this.deps.db.insertRun({
       id: runId,
-      taskId: task.id,
+      taskId,
       pid: null,
       pgid: null,
-      startedAt: Date.now(),
+      startedAt: now,
       endedAt: null,
       exitCode: null,
       exitSignal: null,
@@ -245,27 +340,34 @@ export class Orchestrator {
       outputFilePath: null,
     });
 
+    const prompt = buildAgentPrompt({
+      project,
+      role,
+      ticket,
+      specExcerpt: this.readSpecExcerpt(project),
+      resume,
+    });
     const handle = backend.startRun({
-      taskId: task.id,
+      taskId,
       prompt,
-      worktreePath: task.worktreePath,
-      model: role?.model,
+      worktreePath,
+      model: role.model,
       resume,
       maxWallClockMs: this.deps.config.agent.maxWallClockMs,
       idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
-      artifactsDir,
+      artifactsDir: join(this.deps.config.dataDir, "runs", taskId, runId),
     });
     this.deps.db.updateRun(runId, { pid: handle.pid ?? null, pgid: handle.pgid ?? null });
-    this.running.set(task.id, { stop: () => handle.stop("killed") });
+    const slot = this.active.get(ticket.id);
+    if (slot) slot.stop = () => handle.stop("killed");
 
-    // Drain events for the live dashboard feed, tagged with who/what.
     const drain = (async () => {
       for await (const ev of handle.events) {
         this.deps.bus.emit({
           type: "agent_event",
           projectId: project.id,
-          taskId: task.id,
-          role: ticket.roleName,
+          taskId,
+          role: role.name,
           ticketId: ticket.id,
           ticketTitle: ticket.title,
           event: ev,
@@ -278,16 +380,13 @@ export class Orchestrator {
     try {
       [result] = await Promise.all([handle.result, drain]);
     } catch (err) {
-      this.running.delete(task.id);
+      this.deps.db.updateTask(taskId, { state: "failed", endedAt: Date.now() });
       this.deps.db.updateRun(runId, { endedAt: Date.now(), terminalReason: "failed" });
-      this.setTaskState(task, "failed");
-      this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-      void this.notify("error", project, "Agent run errored", `${ticket.title}: ${String(err)}`).catch(() => {});
-      void this.tick().catch((e) => console.error("[chorus] tick error:", e));
+      this.trail(project.id, ticket.id, role.name, "work", `Run errored: ${String(err)}`);
+      this.handBackToOrchestrator(project.id, ticket.id);
       return;
     }
 
-    this.running.delete(task.id);
     this.deps.db.updateRun(runId, {
       endedAt: Date.now(),
       exitCode: result.exitCode,
@@ -298,112 +397,56 @@ export class Orchestrator {
     });
     this.recordUsage(runId, project, result);
 
-    // Done-detection + merge can touch git/db; never let a failure here escape
-    // as an unhandled rejection and crash the daemon.
-    try {
-      await this.handleResult(project, ticket, task, runId, result);
-    } catch (err) {
-      this.setTaskState(task, "failed");
-      this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-      void this.notify(
-        "error",
-        project,
-        "Post-run handling failed",
-        `${ticket.title}: ${String(err)}`,
-      ).catch(() => {});
+    if (result.terminalReason === "quota_exhausted") {
+      await this.pauseForQuota(project, ticket, taskId, runId);
+      return; // ticket stays in_progress; resume loop re-runs the worker
     }
-    void this.tick().catch((e) => console.error("[chorus] tick error:", e));
+
+    // Any other terminal outcome: record the worker's result and hand back to
+    // the orchestrator, which decides whether to merge / keep working / close.
+    const summary = result.payload?.summary ?? `(${result.terminalReason})`;
+    this.deps.db.updateTask(taskId, { state: "done-pending-merge", endedAt: Date.now() });
+    this.trail(
+      project.id,
+      ticket.id,
+      role.name,
+      "work",
+      result.payload
+        ? `${result.payload.status}: ${summary}` +
+            (result.payload.filesChanged?.length ? ` (files: ${result.payload.filesChanged.join(", ")})` : "")
+        : `Ended (${result.terminalReason}).`,
+    );
+    this.handBackToOrchestrator(project.id, ticket.id);
   }
 
-  // ---- done-detection & merge ----
-  private async handleResult(
-    project: Project,
-    ticket: Ticket,
-    task: Task,
-    runId: string,
-    result: AgentResult,
-  ): Promise<void> {
-    switch (result.terminalReason) {
-      case "killed":
-        // Deliberate stop; leave the task interrupted for later inspection.
-        this.setTaskState(task, "interrupted");
-        return;
-      case "quota_exhausted":
-        await this.pauseForQuota(project, ticket, task, runId);
-        return;
-      case "timeout":
-      case "idle_timeout":
-      case "crashed":
-      case "failed":
-      case "unknown":
-        this.setTaskState(task, "failed");
-        this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-        await this.notify("error", project, "Task failed", `${ticket.title} (${result.terminalReason})`);
-        return;
-      case "completed":
-        break;
+  // ---- terminal ticket actions ----
+  private async mergeTicket(project: Project, ticket: Ticket): Promise<void> {
+    if (!ticket.branch) {
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", "Nothing to merge; closing.");
+      await this.closeTicket(project, ticket, "closed");
+      return;
     }
-
-    // Clean exit — inspect git state to decide whether to merge.
     const hasCommits = await this.deps.git.hasNewCommits(
       project.localPath,
-      task.baseCommit,
-      task.branch,
+      project.integrationBranch,
+      ticket.branch,
     );
-    const clean = await this.deps.git.isWorktreeClean(task.worktreePath);
-
     if (!hasCommits) {
-      this.setTaskState(task, "done-no-changes");
-      this.deps.db.updateTicket(ticket.id, {
-        status: result.payload?.status === "blocked" ? "blocked" : "needs_review",
-      });
-      await this.notify("needs_review", project, "No changes produced", ticket.title);
-      return;
-    }
-    if (!clean) {
-      this.setTaskState(task, "partial");
-      this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-      await this.notify("needs_review", project, "Partial work (uncommitted changes)", ticket.title);
-      return;
-    }
-    if (!result.payload) {
-      // Commits exist but output is missing/invalid — let a human gate it.
-      this.setTaskState(task, "done-unverified");
-      this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-      await this.notify("needs_review", project, "Unverified result (review before merge)", ticket.title);
-      return;
-    }
-    if (result.payload.status !== "success") {
-      this.setTaskState(task, "partial");
-      this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-      await this.notify("needs_review", project, `Agent reported ${result.payload.status}`, ticket.title);
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", "No commits to merge; closing.");
+      await this.closeTicket(project, ticket, "closed");
       return;
     }
 
-    // Eligible to merge.
-    this.setTaskState(task, "done-pending-merge");
-    await this.mergeTask(project, ticket, task, result);
-  }
-
-  private async mergeTask(
-    project: Project,
-    ticket: Ticket,
-    task: Task,
-    result: AgentResult,
-  ): Promise<void> {
-    const summary = result.payload?.summary ?? ticket.title;
-    const message = `chorus: ${ticket.title}\n\n${summary}\n\nTicket: ${ticket.id}\nBranch: ${task.branch}`;
     const outcome = await this.deps.git.mergeIntoIntegration(
       project.localPath,
       project.integrationBranch,
-      task.branch,
-      message,
+      ticket.branch,
+      `chorus: ${ticket.title}\n\nTicket: ${ticket.id}`,
     );
-
     const mergeId = newId("merge");
     this.deps.db.insertMerge({
       id: mergeId,
-      taskId: task.id,
+      taskId: ticket.id,
       projectId: project.id,
       integrationBranch: project.integrationBranch,
       mergeCommit: outcome.mergeCommit,
@@ -411,86 +454,165 @@ export class Orchestrator {
       conflictFiles: outcome.conflictFiles,
       createdAt: Date.now(),
     });
+    this.deps.bus.emit({ type: "merge", projectId: project.id, taskId: ticket.id, mergeId, at: Date.now() });
 
     if (outcome.status === "conflicted") {
-      this.setTaskState(task, "conflicted");
-      this.deps.db.updateTicket(ticket.id, { status: "blocked" });
-      this.deps.bus.emit({ type: "merge", projectId: project.id, taskId: task.id, mergeId, at: Date.now() });
-      await this.notify(
-        "conflict",
-        project,
-        "Merge conflict — human needed",
-        `${ticket.title}\nConflicting files:\n${outcome.conflictFiles.join("\n")}`,
-      );
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", `Merge conflict: ${outcome.conflictFiles.join(", ")}`);
+      this.blockTicket(project, ticket, `Merge conflict in: ${outcome.conflictFiles.join(", ")}`);
       return;
     }
 
-    // Merged. Record changelog (DB + repo), clean up worktree, notify.
-    const role = ticket.roleName;
     const entry = {
       id: newId("cl"),
       projectId: project.id,
       ticketId: ticket.id,
       mergeId,
-      entry: `${ticket.title} — ${summary}`,
-      agentRole: role,
+      entry: ticket.title,
+      agentRole: ORCHESTRATOR_ROLE,
       createdAt: Date.now(),
     };
     this.deps.db.insertChangelog(entry);
     await this.persistChangelog(project);
-
-    this.setTaskState(task, "merged");
-    this.deps.db.updateTicket(ticket.id, { status: "merged" });
-    this.deps.db.updateTask(task.id, { endedAt: Date.now() });
-
-    try {
-      await this.deps.git.removeWorktree(project.localPath, task.worktreePath);
-    } catch {
-      /* best-effort cleanup */
-    }
-
-    this.deps.bus.emit({ type: "merge", projectId: project.id, taskId: task.id, mergeId, at: Date.now() });
+    this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", `Merged into ${project.integrationBranch} (${outcome.mergeCommit?.slice(0, 8)}).`);
+    await this.cleanupWorktree(project, ticket);
+    this.deps.db.updateTicket(ticket.id, { status: "merged", branch: null, worktreePath: null });
+    this.emitTicket(project.id, ticket.id);
     this.deps.bus.emit({ type: "changelog", projectId: project.id, entryId: entry.id, at: Date.now() });
-    await this.notify("merged", project, "Merged into integration", `${ticket.title}\n${summary}`);
+    await this.notify("merged", project, "Merged into integration", ticket.title);
   }
 
-  private async persistChangelog(project: Project): Promise<void> {
-    const entries = this.deps.db.listChangelog(project.id, 1000);
-    const content = renderChangelog(entries);
+  private async closeTicket(project: Project, ticket: Ticket, status: "closed"): Promise<void> {
+    this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "close", "Ticket closed by the orchestrator.");
+    await this.cleanupWorktree(project, ticket);
+    this.deps.db.updateTicket(ticket.id, { status, branch: null, worktreePath: null });
+    this.emitTicket(project.id, ticket.id);
+  }
+
+  private blockTicket(project: Project, ticket: Ticket, reason: string): void {
+    this.deps.db.updateTicket(ticket.id, { status: "blocked" });
+    this.emitTicket(project.id, ticket.id);
+    void this.notify("needs_review", project, "Needs human", `${ticket.title}\n${reason}`).catch(() => {});
+  }
+
+  private handBackToOrchestrator(projectId: string, ticketId: string): void {
+    this.deps.db.updateTicket(ticketId, { status: "open", roleName: ORCHESTRATOR_ROLE });
+    this.emitTicket(projectId, ticketId);
+  }
+
+  private async cleanupWorktree(project: Project, ticket: Ticket): Promise<void> {
+    if (!ticket.worktreePath) return;
     try {
-      await this.deps.git.commitFile(
-        project.localPath,
-        "CHANGELOG.md",
-        content,
-        "chorus: update changelog",
-        project.integrationBranch,
-      );
+      await this.deps.git.removeWorktree(project.localPath, ticket.worktreePath);
     } catch {
-      /* changelog commit failure is non-fatal */
+      /* best-effort */
     }
+  }
+
+  private createFollowUpTicket(projectId: string, t: { title: string; body: string; priority?: number }): void {
+    const now = Date.now();
+    const id = newId("tkt");
+    this.deps.db.insertTicket({
+      id,
+      projectId,
+      title: t.title,
+      body: t.body,
+      status: "open",
+      roleName: ORCHESTRATOR_ROLE,
+      priority: t.priority ?? 0,
+      source: "manual",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId: id, at: now });
+  }
+
+  private addSuggestion(project: Project, ticketId: string | null, message: string): void {
+    const s = {
+      id: newId("sug"),
+      projectId: project.id,
+      ticketId,
+      message,
+      status: "open" as const,
+      createdAt: Date.now(),
+    };
+    this.deps.db.insertSuggestion(s);
+    this.deps.bus.emit({ type: "project_changed", projectId: project.id, at: Date.now() });
+    void this.notify("needs_review", project, "Orchestrator suggestion", message).catch(() => {});
+  }
+
+  // ---- trail / events ----
+  private trail(
+    projectId: string,
+    ticketId: string,
+    actor: string,
+    kind: TicketEvent["kind"],
+    message: string,
+  ): void {
+    this.deps.db.insertTicketEvent({
+      id: newId("te"),
+      projectId,
+      ticketId,
+      actor,
+      kind,
+      message,
+      createdAt: Date.now(),
+    });
+    this.emitTicket(projectId, ticketId);
+  }
+
+  private emitTicket(projectId: string, ticketId: string): void {
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
+  }
+
+  private emitAgentEvent(projectId: string, ticket: Ticket, role: string, event: AgentEvent): void {
+    this.deps.bus.emit({
+      type: "agent_event",
+      projectId,
+      taskId: ticket.id,
+      role,
+      ticketId: ticket.id,
+      ticketTitle: ticket.title,
+      event,
+      at: Date.now(),
+    });
+  }
+
+  // ---- quota ----
+  private reconcileQuota(): void {
+    const quota = this.deps.db.getQuota();
+    if (quota.state === "exhausted" && quota.resumeAt && quota.resumeAt <= Date.now()) {
+      this.deps.db.setQuota({ ...quota, state: "available", resumeAt: null });
+      this.deps.bus.emit({ type: "quota", state: "available", resumeAt: null, at: Date.now() });
+    }
+  }
+
+  private enterQuotaBackoff(): void {
+    const quota = this.deps.db.getQuota();
+    if (quota.state === "exhausted" && quota.resumeAt) return;
+    const pauses = quota.consecutivePauses + 1;
+    const resumeAt = this.nextRetryAt(pauses);
+    this.deps.db.setQuota({ state: "exhausted", resumeAt, consecutivePauses: pauses, updatedAt: Date.now() });
+    this.deps.bus.emit({ type: "quota", state: "exhausted", resumeAt, at: Date.now() });
+  }
+
+  private looksLikeQuota(text: string): boolean {
+    return this.deps.config.quota.exhaustionPatterns.some((p) => new RegExp(p, "i").test(text));
   }
 
   private async pauseForQuota(
     project: Project,
     ticket: Ticket,
-    task: Task,
+    taskId: string,
     runId: string,
   ): Promise<void> {
     const quota = this.deps.db.getQuota();
-    // If a sibling agent already flagged exhaustion in this window, join its
-    // backoff instead of re-incrementing the counter (concurrent agents would
-    // otherwise each bump it and clobber each other's resumeAt).
     const alreadyExhausted = quota.state === "exhausted" && quota.resumeAt != null;
     const pauses = alreadyExhausted ? quota.consecutivePauses : quota.consecutivePauses + 1;
     const resumeAt = alreadyExhausted ? quota.resumeAt! : this.nextRetryAt(pauses);
-    this.deps.db.setQuota({
-      state: "exhausted",
-      resumeAt,
-      consecutivePauses: pauses,
-      updatedAt: Date.now(),
-    });
-    this.deps.db.updateTask(task.id, { state: "paused-quota", resumeAt });
-    this.emitTaskState(task, "paused-quota");
+    this.deps.db.setQuota({ state: "exhausted", resumeAt, consecutivePauses: pauses, updatedAt: Date.now() });
+    this.deps.db.updateTask(taskId, { state: "paused-quota", resumeAt });
     this.deps.db.insertUsage({
       id: newId("usage"),
       runId,
@@ -502,12 +624,7 @@ export class Orchestrator {
       observedAt: Date.now(),
     });
     this.deps.bus.emit({ type: "quota", state: "exhausted", resumeAt, at: Date.now() });
-    await this.notify(
-      "quota_paused",
-      project,
-      "Quota exhausted — paused",
-      `${ticket.title}\nWill resume around ${new Date(resumeAt).toLocaleString()}`,
-    );
+    await this.notify("quota_paused", project, "Quota exhausted — paused", ticket.title);
   }
 
   private nextRetryAt(consecutivePauses: number): number {
@@ -516,11 +633,14 @@ export class Orchestrator {
     return Date.now() + Math.min(backoffStartMs * factor, backoffMaxMs);
   }
 
+  // ---- helpers ----
+  private workerAttempts(ticketId: string): number {
+    return this.deps.db.listTasksForTicket(ticketId).length;
+  }
+
   private recordUsage(runId: string, project: Project, result: AgentResult): void {
     const u = result.usage;
-    if (u.inputTokens === undefined && u.outputTokens === undefined && u.totalTokens === undefined) {
-      return;
-    }
+    if (u.inputTokens === undefined && u.outputTokens === undefined && u.totalTokens === undefined) return;
     this.deps.db.insertUsage({
       id: newId("usage"),
       runId,
@@ -534,6 +654,21 @@ export class Orchestrator {
     this.deps.bus.emit({ type: "usage", projectId: project.id, at: Date.now() });
   }
 
+  private async persistChangelog(project: Project): Promise<void> {
+    const content = renderChangelog(this.deps.db.listChangelog(project.id, 1000));
+    try {
+      await this.deps.git.commitFile(
+        project.localPath,
+        "CHANGELOG.md",
+        content,
+        "chorus: update changelog",
+        project.integrationBranch,
+      );
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   private readSpecExcerpt(project: Project): string | null {
     if (!project.specPath) return null;
     const full = join(project.localPath, project.specPath);
@@ -543,31 +678,6 @@ export class Orchestrator {
     } catch {
       return null;
     }
-  }
-
-  private failTicket(ticket: Ticket, reason: string): void {
-    this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-    const project = this.deps.db.getProject(ticket.projectId);
-    if (project) void this.notify("error", project, "Dispatch failed", `${ticket.title}: ${reason}`);
-  }
-
-  private setTaskState(task: Task, state: TaskState): void {
-    this.deps.db.updateTask(task.id, { state, endedAt: Date.now() });
-    this.emitTaskState(task, state);
-  }
-
-  private emitTask(task: Task): void {
-    this.emitTaskState(task, task.state);
-  }
-  private emitTaskState(task: Task, state: TaskState): void {
-    this.deps.bus.emit({
-      type: "task_changed",
-      projectId: task.projectId,
-      ticketId: task.ticketId,
-      taskId: task.id,
-      state,
-      at: Date.now(),
-    });
   }
 
   private async notify(

@@ -70,6 +70,9 @@ export interface ControlApi {
   upsertAgentTemplate(input: UpsertAgentTemplateInput): Promise<AgentTemplate>;
   deleteAgentTemplate(name: string): Promise<void>;
 
+  /** Dismiss an orchestrator suggestion. */
+  dismissSuggestion(projectId: string, suggestionId: string): Promise<void>;
+
   /** Backends/models detected on the host (for the Models panel + dropdowns). */
   listBackends(): BackendInfo[];
   /** Re-probe the host for backend CLIs/models (e.g. after installing one). */

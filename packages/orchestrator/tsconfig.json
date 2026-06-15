@@ -10,6 +10,7 @@
     { "path": "../db" },
     { "path": "../git-service" },
     { "path": "../backends" },
-    { "path": "../notifier" }
+    { "path": "../notifier" },
+    { "path": "../proc" }
   ]
 }

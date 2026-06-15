@@ -49,12 +49,32 @@ export interface ChangelogEntry {
   createdAt: number;
 }
 
+export interface TicketEvent {
+  id: string;
+  projectId: string;
+  ticketId: string;
+  actor: string;
+  kind: "triage" | "work" | "merge" | "close" | "note";
+  message: string;
+  createdAt: number;
+}
+
+export interface Suggestion {
+  id: string;
+  projectId: string;
+  ticketId: string | null;
+  message: string;
+  status: string;
+  createdAt: number;
+}
+
 export interface ProjectDetail {
   project: Project;
   tickets: Ticket[];
   roles: Role[];
   merges: Merge[];
   changelog: ChangelogEntry[];
+  suggestions: Suggestion[];
 }
 
 export interface Role {
@@ -174,6 +194,10 @@ export const api = {
     fetch(`/api/projects/${id}/roles/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
       json(r),
     ),
+  projectEvents: (id: string) =>
+    fetch(`/api/projects/${id}/events`).then((r) => json<TicketEvent[]>(r)),
+  dismissSuggestion: (id: string, sid: string) =>
+    fetch(`/api/projects/${id}/suggestions/${sid}/dismiss`, { method: "POST" }).then((r) => json(r)),
   agentTemplates: () => fetch("/api/agent-templates").then((r) => json<AgentTemplate[]>(r)),
   upsertAgentTemplate: (t: RoleInput) =>
     fetch("/api/agent-templates", {

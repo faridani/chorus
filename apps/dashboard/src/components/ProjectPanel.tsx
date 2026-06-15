@@ -1,25 +1,29 @@
 import { useState } from "react";
-import { api, type BackendInfo, type ProjectDetail } from "../api.js";
+import { api, type BackendInfo, type ProjectDetail, type TicketEvent } from "../api.js";
 import { ActivityTab } from "./ActivityTab.js";
 import { AgentsTab } from "./AgentsTab.js";
 import { SettingsTab } from "./SettingsTab.js";
+import { StateMachineTab } from "./StateMachineTab.js";
+import { SuggestionsTab } from "./SuggestionsTab.js";
 import { TicketsTab } from "./TicketsTab.js";
 
-type Tab = "tickets" | "agents" | "settings" | "activity";
+type Tab = "tickets" | "agents" | "state" | "settings" | "activity" | "suggestions";
 
 /** The project control panel: header + tabbed sections. */
 export function ProjectPanel({
   detail,
   backends,
+  events,
   runningTaskIds,
   onChange,
 }: {
   detail: ProjectDetail;
   backends: BackendInfo[];
+  events: TicketEvent[];
   runningTaskIds: string[];
   onChange: () => void;
 }) {
-  const { project, tickets, roles, merges, changelog } = detail;
+  const { project, tickets, roles, merges, changelog, suggestions } = detail;
   const [tab, setTab] = useState<Tab>("tickets");
 
   const needsSpec = project.status === "needs_spec";
@@ -48,8 +52,15 @@ export function ProjectPanel({
       <nav className="tabs">
         <TabBtn id="tickets" tab={tab} setTab={setTab} label={`Tickets (${tickets.length})`} />
         <TabBtn id="agents" tab={tab} setTab={setTab} label={`Agents (${roles.length})`} />
+        <TabBtn id="state" tab={tab} setTab={setTab} label="State Machine" />
         <TabBtn id="settings" tab={tab} setTab={setTab} label="Settings" />
         <TabBtn id="activity" tab={tab} setTab={setTab} label="Activity" />
+        <TabBtn
+          id="suggestions"
+          tab={tab}
+          setTab={setTab}
+          label={`Suggestions${suggestions.length ? ` (${suggestions.length})` : ""}`}
+        />
       </nav>
 
       <div className="tabbody">
@@ -57,7 +68,7 @@ export function ProjectPanel({
           <TicketsTab
             projectId={project.id}
             tickets={tickets}
-            roles={roles}
+            events={events}
             runningTaskIds={runningTaskIds}
             onChange={onChange}
           />
@@ -65,8 +76,12 @@ export function ProjectPanel({
         {tab === "agents" && (
           <AgentsTab projectId={project.id} roles={roles} backends={backends} onChange={onChange} />
         )}
+        {tab === "state" && <StateMachineTab tickets={tickets} events={events} />}
         {tab === "settings" && <SettingsTab project={project} onSaved={onChange} />}
         {tab === "activity" && <ActivityTab merges={merges} changelog={changelog} />}
+        {tab === "suggestions" && (
+          <SuggestionsTab projectId={project.id} suggestions={suggestions} onChange={onChange} />
+        )}
       </div>
     </div>
   );

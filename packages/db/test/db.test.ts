@@ -46,6 +46,8 @@ test("project + ticket + task round-trip", () => {
     roleName: "software-dev",
     priority: 5,
     source: "spec",
+    branch: null,
+    worktreePath: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -139,6 +141,8 @@ test("ticket delete + role update/delete", () => {
     roleName: null,
     priority: 0,
     source: "manual",
+    branch: null,
+    worktreePath: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -173,6 +177,71 @@ test("ticket delete + role update/delete", () => {
 
   db.deleteRole(projectId, "qa");
   assert.equal(db.getRole(projectId, "qa"), undefined);
+  db.close();
+});
+
+test("migration 0005: ticket branch/worktree, trail events, suggestions", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    integrationBranch: "chorus/integration",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    status: "ready",
+    runState: "running",
+    createdAt: Date.now(),
+  });
+  const ticketId = newId("tkt");
+  db.insertTicket({
+    id: ticketId,
+    projectId,
+    title: "t",
+    body: "b",
+    status: "open",
+    roleName: "orchestrator",
+    priority: 0,
+    source: "manual",
+    branch: "chorus/ticket-x",
+    worktreePath: "/tmp/wt",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  const got = db.getTicket(ticketId)!;
+  assert.equal(got.branch, "chorus/ticket-x");
+  assert.equal(got.worktreePath, "/tmp/wt");
+  db.updateTicket(ticketId, { branch: null, worktreePath: null, status: "merged" });
+  assert.equal(db.getTicket(ticketId)!.branch, null);
+
+  db.insertTicketEvent({
+    id: newId("te"),
+    projectId,
+    ticketId,
+    actor: "orchestrator",
+    kind: "triage",
+    message: "assigned to software-dev",
+    createdAt: Date.now(),
+  });
+  assert.equal(db.listTicketEvents(ticketId).length, 1);
+  assert.equal(db.listProjectTicketEvents(projectId)[0]?.actor, "orchestrator");
+
+  const sid = newId("sug");
+  db.insertSuggestion({
+    id: sid,
+    projectId,
+    ticketId,
+    message: "Create a Security agent",
+    status: "open",
+    createdAt: Date.now(),
+  });
+  assert.equal(db.listSuggestions(projectId, "open").length, 1);
+  db.setSuggestionStatus(sid, "dismissed");
+  assert.equal(db.listSuggestions(projectId, "open").length, 0);
+  assert.equal(db.listSuggestions(projectId, "dismissed").length, 1);
   db.close();
 });
 

@@ -275,7 +275,7 @@ function RoleEditor({
 
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
-          {role && (
+          {role && role.name !== "orchestrator" && (
             <button
               className="danger"
               disabled={busy}
@@ -286,6 +286,11 @@ function RoleEditor({
             >
               Delete
             </button>
+          )}
+          {role && role.name === "orchestrator" && (
+            <span className="hint" style={{ alignSelf: "center" }}>
+              The orchestrator agent can't be deleted.
+            </span>
           )}
           <button
             className="primary"

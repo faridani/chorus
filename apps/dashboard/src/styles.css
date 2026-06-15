@@ -64,6 +64,40 @@ button:disabled { opacity: .5; cursor: default; }
 .chooser-list .ci-text { flex: 1; min-width: 0; font-size: 13px; }
 .chooser-list button { flex: 0 0 auto; font-size: 12px; padding: 3px 10px; }
 
+/* ticket trail */
+.trail { list-style: none; padding: 0; margin: 4px 0 0; max-height: 220px; overflow-y: auto; }
+.trail li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; }
+.tag.te-triage { color: #8957e5; border-color: #4a3a7a; }
+.tag.te-work { color: #2f81f7; border-color: #244a78; }
+.tag.te-merge { color: #3fb950; border-color: #2e5e40; }
+.tag.te-close { color: #8a93a3; }
+.tag.te-note { color: #e3b341; border-color: #5e4e2e; }
+
+/* state machine graph */
+.statemachine { display: flex; flex-direction: column; gap: 16px; }
+.sm-ticket { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.sm-title { font-weight: 600; margin-bottom: 8px; }
+.sm-empty { font-size: 12px; }
+.sm-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 4px; }
+.sm-step-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.sm-step { display: inline-flex; flex-direction: column; gap: 2px; max-width: 220px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); border-left-width: 3px; }
+.sm-step .sm-actor { font-weight: 600; font-size: 12px; }
+.sm-step .sm-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.sm-step .sm-msg { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.sm-step.kind-triage { border-left-color: #8957e5; }
+.sm-step.kind-work { border-left-color: #2f81f7; }
+.sm-step.kind-merge { border-left-color: #3fb950; }
+.sm-step.kind-close { border-left-color: #8a93a3; }
+.sm-step.kind-note { border-left-color: #e3b341; }
+.sm-arrow { color: var(--muted); font-size: 16px; padding: 0 2px; }
+
+/* suggestions */
+.suggestions { list-style: none; padding: 0; margin: 0; }
+.suggestions li { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
+.sg-text { font-size: 13px; }
+.sg-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.sg-meta button { font-size: 12px; padding: 2px 10px; }
+
 .runbtn.refresh { margin-left: 8px; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .runbtn.refresh.spinning { display: inline-block; animation: spin 0.7s linear infinite; }

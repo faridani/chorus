@@ -110,6 +110,19 @@ export class GitService {
     );
   }
 
+  /** Summarize a branch's work vs a base ref: commit subjects + changed files. */
+  async branchSummary(
+    localPath: string,
+    baseRef: string,
+    branch: string,
+  ): Promise<{ commits: string[]; files: string[] }> {
+    const log = await this.git(["log", "--oneline", `${baseRef}..${branch}`], localPath, false);
+    const diff = await this.git(["diff", "--name-only", `${baseRef}..${branch}`], localPath, false);
+    const commits = log.code === 0 ? log.stdout.split("\n").map((s) => s.trim()).filter(Boolean) : [];
+    const files = diff.code === 0 ? diff.stdout.split("\n").map((s) => s.trim()).filter(Boolean) : [];
+    return { commits, files };
+  }
+
   /** True if `branch` has commits beyond `baseCommit`. */
   async hasNewCommits(localPath: string, baseCommit: string, branch: string): Promise<boolean> {
     const r = await this.git(["rev-list", "--count", `${baseCommit}..${branch}`], localPath, false);
