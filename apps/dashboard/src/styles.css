@@ -80,15 +80,24 @@ button:disabled { opacity: .5; cursor: default; }
 .sm-empty { font-size: 12px; }
 .sm-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 4px; }
 .sm-step-wrap { display: inline-flex; align-items: center; gap: 4px; }
-.sm-step { display: inline-flex; flex-direction: column; gap: 2px; max-width: 220px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); border-left-width: 3px; }
+.sm-step { display: inline-flex; flex-direction: column; gap: 2px; max-width: 240px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); border-left-width: 3px; color: var(--text); font-family: inherit; text-align: left; cursor: pointer; }
+.sm-step:hover { border-color: var(--accent); }
 .sm-step .sm-actor { font-weight: 600; font-size: 12px; }
 .sm-step .sm-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .sm-step .sm-msg { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+/* expanded: show the full message */
+.sm-step.expanded { max-width: 460px; }
+.sm-step.expanded .sm-msg { display: block; overflow: visible; white-space: pre-wrap; -webkit-line-clamp: unset; }
 .sm-step.kind-triage { border-left-color: #8957e5; }
 .sm-step.kind-work { border-left-color: #2f81f7; }
 .sm-step.kind-merge { border-left-color: #3fb950; }
 .sm-step.kind-close { border-left-color: #8a93a3; }
 .sm-step.kind-note { border-left-color: #e3b341; }
+/* current state node ("you are here") */
+.sm-step.sm-current { border: 2px solid var(--accent); background: #16202e; }
+.sm-step.sm-current .sm-kind { color: var(--accent); }
+.sm-step.sm-blinking { animation: smblink 1s ease-in-out infinite; }
+@keyframes smblink { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(110,168,254,0.5); } 50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(110,168,254,0.15); } }
 .sm-arrow { color: var(--muted); font-size: 16px; padding: 0 2px; }
 
 /* suggestions */
