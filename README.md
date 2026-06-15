@@ -48,3 +48,26 @@ apps/
 ```bash
 npm test
 ```
+
+---
+
+## Agent-generated Python build (`src/`)
+
+> This tree (`src/chorus/`, `tests/`) is an **independent Python implementation
+> produced by Chorus's own agents** building from the spec ("Chorus builds
+> Chorus"). It is kept alongside the TypeScript implementation above for
+> reference/review, not as a replacement.
+
+### Persistence
+
+Chorus uses a local SQLite database for durable orchestrator and dashboard state. The default path is `.chorus/chorus.db`, and it can be overridden with `CHORUS_DB_PATH` or by passing a path to `chorus.open_store(path)`.
+
+The initial migration creates tables for projects, roles, guardrails, agents, tickets, tasks, runs, quota samples, branch state, merges, notifications, and changelog entries. All mutable records include timestamps and status/state fields so the service can resume after a restart.
+
+Built-in tickets can be managed through the public ticket helpers (`create_ticket`, `edit_ticket`, `assign_ticket`, `reprioritize_ticket`, `transition_ticket`, and `close_ticket`). Tickets use the lifecycle statuses `backlog`, `ready`, `in_progress`, `review`, `merged`, `blocked`, and `done`, and resume snapshots from `build_project_resume_state` include tickets with linked agent-run IDs.
+
+Run the Python persistence tests with:
+
+```sh
+python3 -m unittest discover -s tests
+```
