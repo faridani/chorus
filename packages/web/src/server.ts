@@ -72,10 +72,20 @@ export function createServer(deps: WebDeps): FastifyInstance {
 
   // ---- command endpoints (delegate to the daemon) ----
   app.post("/api/projects", async (req, reply) => {
-    const body = req.body as { repoUrl?: string; specText?: string };
+    const body = req.body as { repoUrl?: string; specText?: string; baseBranch?: string };
     if (!body?.repoUrl) return reply.code(400).send({ error: "repoUrl required" });
-    const project = await api.createProject({ repoUrl: body.repoUrl, specText: body.specText });
+    const project = await api.createProject({
+      repoUrl: body.repoUrl,
+      specText: body.specText,
+      baseBranch: body.baseBranch,
+    });
     return project;
+  });
+
+  app.patch("/api/projects/:id", async (req) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { baseBranch?: string; expectations?: string; groundRules?: string[] };
+    return api.updateProjectSettings(id, body ?? {});
   });
 
   app.post("/api/projects/:id/spec", async (req, reply) => {
@@ -96,6 +106,24 @@ export function createServer(deps: WebDeps): FastifyInstance {
       roleName: body.roleName,
       priority: body.priority,
     });
+  });
+
+  app.put("/api/projects/:id/tickets/:ticketId", async (req) => {
+    const { id, ticketId } = req.params as { id: string; ticketId: string };
+    const body = req.body as {
+      title?: string;
+      body?: string;
+      roleName?: string;
+      priority?: number;
+      reopen?: boolean;
+    };
+    return api.updateTicket(id, ticketId, body ?? {});
+  });
+
+  app.delete("/api/projects/:id/tickets/:ticketId", async (req) => {
+    const { id, ticketId } = req.params as { id: string; ticketId: string };
+    await api.deleteTicket(id, ticketId);
+    return { ok: true };
   });
 
   app.get("/api/projects/:id/roles", (req) => {
@@ -122,6 +150,12 @@ export function createServer(deps: WebDeps): FastifyInstance {
       backendId: body.backendId ?? "codex",
       model: body.model,
     });
+  });
+
+  app.delete("/api/projects/:id/roles/:name", async (req) => {
+    const { id, name } = req.params as { id: string; name: string };
+    await api.deleteRole(id, decodeURIComponent(name));
+    return { ok: true };
   });
 
   app.post("/api/projects/:id/approve", async (req) => {

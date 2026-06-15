@@ -27,6 +27,11 @@ export function buildAgentPrompt(args: {
   lines.push("## Project");
   lines.push(`Repository: ${project.repoUrl}`);
   lines.push(`Integration branch (your work merges here): ${project.integrationBranch}`);
+  if (project.expectations?.trim()) {
+    lines.push("");
+    lines.push("### High-level expectations");
+    lines.push(project.expectations.trim());
+  }
   if (specExcerpt) {
     lines.push("");
     lines.push("### Project specification (excerpt)");
@@ -54,6 +59,9 @@ export function buildAgentPrompt(args: {
   lines.push("");
   lines.push("## Global guardrails");
   for (const g of GLOBAL_GUARDRAILS) lines.push(`- ${g}`);
+  for (const g of project.groundRules ?? []) {
+    if (g.trim()) lines.push(`- ${g.trim()}`);
+  }
 
   lines.push("");
   lines.push("## Ticket");

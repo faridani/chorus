@@ -39,10 +39,10 @@ export class ChorusDb {
   insertProject(p: Project): void {
     this.raw
       .prepare(
-        `INSERT INTO projects (id, repo_url, local_path, integration_branch, base_branch, spec_path, status, created_at)
-         VALUES (@id, @repoUrl, @localPath, @integrationBranch, @baseBranch, @specPath, @status, @createdAt)`,
+        `INSERT INTO projects (id, repo_url, local_path, integration_branch, base_branch, spec_path, expectations, ground_rules, status, created_at)
+         VALUES (@id, @repoUrl, @localPath, @integrationBranch, @baseBranch, @specPath, @expectations, @groundRules, @status, @createdAt)`,
       )
-      .run(p);
+      .run({ ...p, groundRules: JSON.stringify(p.groundRules) });
   }
   updateProject(id: string, patch: Partial<Project>): void {
     const cur = this.getProject(id);
@@ -51,9 +51,9 @@ export class ChorusDb {
     this.raw
       .prepare(
         `UPDATE projects SET repo_url=@repoUrl, local_path=@localPath, integration_branch=@integrationBranch,
-         base_branch=@baseBranch, spec_path=@specPath, status=@status WHERE id=@id`,
+         base_branch=@baseBranch, spec_path=@specPath, expectations=@expectations, ground_rules=@groundRules, status=@status WHERE id=@id`,
       )
-      .run(next);
+      .run({ ...next, groundRules: JSON.stringify(next.groundRules) });
   }
   getProject(id: string): Project | undefined {
     const r = this.raw.prepare("SELECT * FROM projects WHERE id=?").get(id) as Row | undefined;
@@ -85,6 +85,22 @@ export class ChorusDb {
       .get(projectId, name) as Row | undefined;
     return r ? mapRole(r) : undefined;
   }
+  updateRole(r: Role): void {
+    this.raw
+      .prepare(
+        `UPDATE roles SET description=@description, allowed=@allowed, forbidden=@forbidden,
+         backend_id=@backendId, model=@model WHERE id=@id`,
+      )
+      .run({
+        ...r,
+        allowed: JSON.stringify(r.allowed),
+        forbidden: JSON.stringify(r.forbidden),
+        model: r.model ?? null,
+      });
+  }
+  deleteRole(projectId: string, name: string): void {
+    this.raw.prepare("DELETE FROM roles WHERE project_id=? AND name=?").run(projectId, name);
+  }
 
   // ---- tickets ----
   insertTicket(t: Ticket): void {
@@ -109,6 +125,11 @@ export class ChorusDb {
   getTicket(id: string): Ticket | undefined {
     const r = this.raw.prepare("SELECT * FROM tickets WHERE id=?").get(id) as Row | undefined;
     return r ? mapTicket(r) : undefined;
+  }
+  deleteTicket(id: string): void {
+    // Tasks (and their merges) cascade via FK; changelog entries are kept as
+    // historical record (changelog.ticket_id has no FK).
+    this.raw.prepare("DELETE FROM tickets WHERE id=?").run(id);
   }
   listTickets(projectId: string): Ticket[] {
     return (
@@ -300,6 +321,8 @@ function mapProject(r: Row): Project {
     integrationBranch: r.integration_branch as string,
     baseBranch: r.base_branch as string,
     specPath: (r.spec_path as string | null) ?? null,
+    expectations: (r.expectations as string | null) ?? "",
+    groundRules: JSON.parse((r.ground_rules as string | null) ?? "[]"),
     status: r.status as Project["status"],
     createdAt: r.created_at as number,
   };

@@ -61,3 +61,52 @@ table.tickets th, table.tickets td { text-align: left; padding: 6px 8px; border-
 .events ul { list-style: none; padding: 0; margin: 0; font-family: ui-monospace, monospace; font-size: 11px; }
 .events li { padding: 2px 0; border-bottom: 1px solid var(--border); color: var(--muted); }
 .empty { color: var(--muted); margin-top: 40px; text-align: center; }
+
+button.primary { background: #1e3a5f; border-color: var(--accent); }
+button.danger { background: #3d1f24; border-color: #5e2e34; color: #f8a39a; }
+
+/* tabs */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 16px 0; }
+.tabbtn { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; color: var(--muted); }
+.tabbtn.active { color: var(--text); border-bottom-color: var(--accent); }
+.tabbody { padding-top: 4px; }
+.tabhead { display: flex; align-items: center; justify-content: space-between; }
+.tag.running { color: #7ee787; border-color: #2e5e40; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--panel2); }
+
+/* settings */
+.settings { max-width: 720px; }
+.field { margin-bottom: 18px; }
+.field > label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 4px; }
+.field input, .field textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px; }
+.field .ro { padding: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, monospace; font-size: 13px; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* list editor */
+.listeditor ul { list-style: none; padding: 0; margin: 0 0 6px; }
+.listeditor li { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; font-size: 13px; }
+.listeditor li.muted { background: transparent; border: none; }
+.listeditor .x { background: transparent; border: none; color: var(--muted); padding: 0 4px; }
+.listeditor .x:hover { color: #f85149; }
+.listeditor .addrow { display: flex; gap: 6px; }
+.listeditor .addrow input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+
+/* agents */
+.agentgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.agentcard { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; cursor: pointer; }
+.agentcard:hover { border-color: var(--accent); }
+.agentname { font-weight: 600; margin-bottom: 4px; }
+.agentrules { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 12px; }
+.agentrules ul { list-style: none; padding: 0; margin: 4px 0 0; color: var(--muted); }
+.agentrules li { padding: 1px 0; }
+
+/* modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 6vh; z-index: 50; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: min(680px, 92vw); max-height: 86vh; overflow-y: auto; }
+.modal h3 { margin-top: 0; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 16px; }
+.modal label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 0 4px; }
+.modal input, .modal textarea, .modal select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px; }
+.modal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+.warn { background: #3a2e14; border: 1px solid #5e4e2e; color: #e3b341; padding: 8px; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }

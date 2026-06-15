@@ -7,6 +7,8 @@ export interface Project {
   integrationBranch: string;
   baseBranch: string;
   specPath: string | null;
+  expectations: string;
+  groundRules: string[];
   status: string;
   createdAt: number;
 }
@@ -61,6 +63,16 @@ export interface Role {
   allowed: string[];
   forbidden: string[];
   backendId: string;
+  model?: string;
+}
+
+export interface RoleInput {
+  name: string;
+  description: string;
+  allowed: string[];
+  forbidden: string[];
+  backendId: string;
+  model?: string;
 }
 
 export interface AppState {
@@ -79,11 +91,11 @@ export const api = {
   state: () => fetch("/api/state").then((r) => json<AppState>(r)),
   projects: () => fetch("/api/projects").then((r) => json<Project[]>(r)),
   project: (id: string) => fetch(`/api/projects/${id}`).then((r) => json<ProjectDetail>(r)),
-  createProject: (repoUrl: string, specText?: string) =>
+  createProject: (repoUrl: string, specText?: string, baseBranch?: string) =>
     fetch("/api/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repoUrl, specText }),
+      body: JSON.stringify({ repoUrl, specText, baseBranch }),
     }).then((r) => json<Project>(r)),
   provideSpec: (id: string, specText: string) =>
     fetch(`/api/projects/${id}/spec`, {
@@ -91,12 +103,43 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ specText }),
     }).then((r) => json(r)),
-  addTicket: (id: string, t: { title: string; body: string; priority?: number }) =>
+  updateProject: (
+    id: string,
+    patch: { baseBranch?: string; expectations?: string; groundRules?: string[] },
+  ) =>
+    fetch(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => json<Project>(r)),
+  addTicket: (id: string, t: { title: string; body: string; roleName?: string; priority?: number }) =>
     fetch(`/api/projects/${id}/tickets`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(t),
     }).then((r) => json(r)),
+  updateTicket: (
+    id: string,
+    ticketId: string,
+    patch: { title?: string; body?: string; roleName?: string; priority?: number; reopen?: boolean },
+  ) =>
+    fetch(`/api/projects/${id}/tickets/${ticketId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => json(r)),
+  deleteTicket: (id: string, ticketId: string) =>
+    fetch(`/api/projects/${id}/tickets/${ticketId}`, { method: "DELETE" }).then((r) => json(r)),
+  upsertRole: (id: string, role: RoleInput) =>
+    fetch(`/api/projects/${id}/roles`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(role),
+    }).then((r) => json<Role>(r)),
+  deleteRole: (id: string, name: string) =>
+    fetch(`/api/projects/${id}/roles/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
+      json(r),
+    ),
   approve: (id: string) =>
     fetch(`/api/projects/${id}/approve`, { method: "POST" }).then((r) =>
       json<{ ok: boolean; message: string }>(r),
