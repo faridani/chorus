@@ -20,11 +20,11 @@ export function ToolPermissionEditor({
   onChange: (allowed: string[], forbidden: string[]) => void;
 }) {
   const stateOf = (id: string): State =>
-    allowed.includes(id) ? "allowed" : forbidden.includes(id) ? "disallowed" : "unspecified";
+    (allowed ?? []).includes(id) ? "allowed" : (forbidden ?? []).includes(id) ? "disallowed" : "unspecified";
 
   const set = (id: string, next: State) => {
-    const a = new Set(allowed);
-    const f = new Set(forbidden);
+    const a = new Set(allowed ?? []);
+    const f = new Set(forbidden ?? []);
     a.delete(id);
     f.delete(id);
     if (next === "allowed") a.add(id);
