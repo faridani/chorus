@@ -38,14 +38,16 @@ async function main(): Promise<void> {
     backoffStartMs: config.quota.backoffStartMs,
     backoffMaxMs: config.quota.backoffMaxMs,
   });
+  const autoUpdate = config.agent.autoUpdateCli;
   backends.register(
     new CodexBackend({
       quotaPolicy,
       defaultModel: config.agent.model,
       reasoningSummary: config.agent.reasoningSummary,
+      autoUpdate,
     }),
   );
-  backends.register(new ClaudeBackend({ quotaPolicy }));
+  backends.register(new ClaudeBackend({ quotaPolicy, autoUpdate }));
   backends.register(new GeminiBackend({ quotaPolicy }));
 
   // Notifier.

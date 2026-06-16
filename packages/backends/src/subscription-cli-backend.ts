@@ -14,6 +14,7 @@ import {
 } from "@chorus/core";
 import { StreamingProcess } from "@chorus/proc";
 import { AsyncQueue } from "./async-queue.js";
+import { runCliUpdate } from "./cli-update.js";
 import { extractUsage } from "./codex/events.js";
 import { AGENT_RESULT_INSTRUCTIONS, AGENT_RESULT_SCHEMA } from "./result-schema.js";
 
@@ -23,6 +24,8 @@ export interface SubscriptionCliBackendOptions {
   defaultModel?: string;
   /** Override the binary (tests/custom installs). */
   bin?: string;
+  /** Self-update the CLI once per process before first use (default true). */
+  autoUpdate?: boolean;
 }
 
 export class ClaudeBackend implements AIBackend {
@@ -33,7 +36,15 @@ export class ClaudeBackend implements AIBackend {
     resume: false,
   };
 
+  private prepared?: Promise<string | null>;
+
   constructor(private readonly opts: SubscriptionCliBackendOptions) {}
+
+  prepare(): Promise<string | null> {
+    if (this.opts.autoUpdate === false) return Promise.resolve(null);
+    this.prepared ??= runCliUpdate(this.opts.bin ?? "claude", ["update"], "claude", 120_000);
+    return this.prepared;
+  }
 
   startRun(spec: AgentRunSpec): AgentRunHandle {
     const model = spec.model ?? this.opts.defaultModel;

@@ -32,6 +32,8 @@ button:disabled { opacity: .5; cursor: default; }
 .quota-exhausted { color: #f85149; }
 .body { display: grid; grid-template-columns: 280px 1fr 320px; flex: 1; overflow: hidden; }
 .sidebar, .events { background: var(--panel); border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
+.sidebar { overflow-x: hidden; min-width: 0; }
+.sidebar code { overflow-wrap: anywhere; }
 .events { border-right: none; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
 .prs-pane { flex: 0 0 auto; max-height: 30%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
 .models-pane { flex: 0 0 auto; max-height: 35%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
@@ -133,10 +135,10 @@ h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
 .newproj textarea { min-height: 50px; }
 .newproj-btn { width: 100%; margin-bottom: 12px; }
 .projlist { list-style: none; padding: 0; margin: 0; }
-.projlist li { padding: 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.projlist li { padding: 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
 .projlist li:hover { background: var(--panel2); }
 .projlist li.active { background: var(--panel2); border: 1px solid var(--accent); }
-.repo { font-weight: 600; font-size: 13px; }
+.repo { font-weight: 600; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .projrow { display: flex; align-items: center; gap: 6px; }
 .runctl { display: inline-flex; gap: 2px; margin-left: auto; }
 .runbtn {
@@ -193,7 +195,7 @@ button.primary { background: #1e3a5f; border-color: var(--accent); }
 button.danger { background: #3d1f24; border-color: #5e2e34; color: #f8a39a; }
 
 /* tabs */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 16px 0; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin: 16px 0; }
 .tabbtn { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; color: var(--muted); }
 .tabbtn.active { color: var(--text); border-bottom-color: var(--accent); }
 .tabbody { padding-top: 4px; }

@@ -110,6 +110,14 @@ export interface AIBackend {
   readonly id: string;
   readonly capabilities: BackendCapabilities;
   startRun(spec: AgentRunSpec): AgentRunHandle;
+  /**
+   * Optional one-time-per-process setup (e.g. CLI self-update). Memoized by
+   * the backend, so it is safe to call before every run — only the first call
+   * does work. Resolves to a short status line to record in the trail on the
+   * run that actually performed the update, or null when it was cached / a
+   * no-op. Must never reject.
+   */
+  prepare?(): Promise<string | null>;
 }
 
 /** Inputs available when classifying how a run ended. */
