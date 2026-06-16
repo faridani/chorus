@@ -6,6 +6,7 @@
     { "path": "packages/db" },
     { "path": "packages/git-service" },
     { "path": "packages/backends" },
+    { "path": "packages/agent-mcp" },
     { "path": "packages/notifier" },
     { "path": "packages/spec-ingest" },
     { "path": "packages/orchestrator" },
