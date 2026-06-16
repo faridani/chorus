@@ -54,8 +54,22 @@ export class Orchestrator {
   private static readonly PR_POLL_INTERVAL_MS = 30_000;
   /** ticketId → the most recent worker attempt's metadata (for the journal). */
   private readonly lastAttempt = new Map<string, { taskId: string; attempt: number; promptHash: string }>();
+  /** Tickets a human just reopened: re-attempt the PR rather than re-triaging stale failures. */
+  private readonly reattemptPr = new Set<string>();
 
   constructor(private readonly deps: OrchestratorDeps) {}
+
+  /**
+   * Mark a ticket (just reopened by a human) to re-attempt the PR on its next
+   * pass. A ticket parked for an *environmental* blocker (failed push, broken
+   * hook, tooling error) otherwise re-triages against a failure-heavy trail and
+   * re-parks itself without retrying — so reopening alone never unsticks it once
+   * the environment is fixed. This makes reopen deterministically re-run the
+   * gate + PR path instead.
+   */
+  requestReattempt(ticketId: string): void {
+    this.reattemptPr.add(ticketId);
+  }
 
   getState(): OrchestratorState {
     return this.state;
@@ -174,6 +188,28 @@ export class Orchestrator {
 
   // ---- orchestrator (triage / review) ----
   private async runOrchestratorDecision(project: Project, ticket: Ticket): Promise<void> {
+    // A human just reopened this ticket and it has committed work: re-attempt
+    // the PR path directly. This bypasses LLM triage (which would re-read the
+    // failure-heavy trail and re-park an environmentally-blocked ticket without
+    // retrying). finishTicket re-runs the gate, so incomplete work still loops
+    // back to a worker; a now-resolved environmental blocker lets the PR open.
+    if (this.reattemptPr.delete(ticket.id) && ticket.branch) {
+      const hasCommits = await this.deps.git
+        .hasNewCommits(project.localPath, this.baseRef(project), ticket.branch)
+        .catch(() => false);
+      if (hasCommits) {
+        this.trail(
+          project.id,
+          ticket.id,
+          ORCHESTRATOR_ROLE,
+          "triage",
+          "Reopened — re-attempting the PR (a prior environmental blocker may now be resolved).",
+        );
+        await this.finishTicket(project, ticket);
+        return;
+      }
+    }
+
     const workers = this.deps.db
       .listRoles(project.id)
       .filter((r) => r.name !== ORCHESTRATOR_ROLE);
