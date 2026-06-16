@@ -27,6 +27,12 @@ export const ConfigSchema = z.object({
       reasoningSummary: z.enum(["auto", "concise", "detailed", "none"]).default("auto"),
     })
     .default({}),
+  diagnostics: z
+    .object({
+      /** Model for the read-only Debug Traces diagnostician (empty = CLI default). */
+      model: z.string().optional(),
+    })
+    .default({}),
   quota: z
     .object({
       /** Regexes (source strings) that indicate quota/rate-limit exhaustion. */

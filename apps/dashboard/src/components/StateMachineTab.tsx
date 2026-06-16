@@ -11,10 +11,12 @@ export function StateMachineTab({
   tickets,
   events,
   runningTaskIds,
+  onDebugTicket,
 }: {
   tickets: Ticket[];
   events: TicketEvent[];
   runningTaskIds: string[];
+  onDebugTicket: (ticketId: string, ticketTitle: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (id: string) =>
@@ -50,6 +52,15 @@ export function StateMachineTab({
           <div key={t.id} className="sm-ticket">
             <div className="sm-title">
               {t.title} <span className={`tag status-${t.status}`}>{t.status}</span>
+              {isWorking && <span className="tag running"> running</span>}
+              <button
+                type="button"
+                className="debugbtn"
+                title="Diagnose this ticket's recent activity"
+                onClick={() => onDebugTicket(t.id, t.title)}
+              >
+                Debug Traces
+              </button>
             </div>
             <div className="sm-flow">
               {steps.map((s) => (

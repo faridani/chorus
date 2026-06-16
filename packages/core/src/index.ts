@@ -7,4 +7,5 @@ export * from "./config.js";
 export * from "./backend-info.js";
 export * from "./control.js";
 export * from "./tools.js";
+export * from "./diagnostics.js";
 export * from "./ids.js";

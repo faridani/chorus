@@ -10,6 +10,7 @@ import {
   type ControlApi,
   type CreateProjectInput,
   type CreateTicketInput,
+  type DiagnosisResult,
   newId,
   ORCHESTRATOR_ROLE,
   type Project,
@@ -28,9 +29,12 @@ import {
 import type { ChorusDb } from "@chorus/db";
 import type { GitService } from "@chorus/git-service";
 import type { Notifier } from "@chorus/core";
-import type { Orchestrator } from "@chorus/orchestrator";
+import { buildDiagnosticPrompt, type DiagnosticsArgs, runDiagnostics, type Orchestrator } from "@chorus/orchestrator";
 import { findSpec, SpecIngestor } from "@chorus/spec-ingest";
 import { detectBackends } from "./backend-detect.js";
+
+/** Injectable for tests: the function that runs the read-only diagnosis. */
+export type DiagnoseFn = (args: DiagnosticsArgs) => Promise<DiagnosisResult>;
 
 export interface ControllerDeps {
   db: ChorusDb;
@@ -42,6 +46,8 @@ export interface ControllerDeps {
   config: Config;
   /** Backends/models detected on the host at startup. */
   detectedBackends: BackendInfo[];
+  /** Override the diagnosis runner (tests inject a mock; defaults to runDiagnostics). */
+  diagnose?: DiagnoseFn;
 }
 
 const DEFAULT_GROUND_RULES = [
@@ -106,14 +112,53 @@ export function detectCommands(localPath: string): {
   }
 }
 
+interface SafeEvent {
+  type?: string;
+  at?: number;
+  projectId?: string;
+  ticketId?: string;
+  taskId?: string;
+  role?: string;
+  state?: string;
+  ticketTitle?: string;
+  title?: string;
+  event?: { kind?: string; text?: string };
+}
+
+/** Reduce an untrusted live-event to a small set of safe fields (no secrets/env). */
+function sanitizeEvent(e: unknown): SafeEvent {
+  if (!e || typeof e !== "object") return {};
+  const r = e as Record<string, unknown>;
+  const out: SafeEvent = {};
+  if (typeof r.type === "string") out.type = r.type;
+  if (typeof r.at === "number") out.at = r.at;
+  if (typeof r.projectId === "string") out.projectId = r.projectId;
+  if (typeof r.ticketId === "string") out.ticketId = r.ticketId;
+  if (typeof r.taskId === "string") out.taskId = r.taskId;
+  if (typeof r.role === "string") out.role = r.role;
+  if (typeof r.state === "string") out.state = r.state;
+  if (typeof r.ticketTitle === "string") out.ticketTitle = r.ticketTitle.slice(0, 200);
+  if (typeof r.title === "string") out.title = r.title.slice(0, 200);
+  const ev = r.event as Record<string, unknown> | undefined;
+  if (ev && typeof ev === "object") {
+    out.event = {
+      kind: typeof ev.kind === "string" ? ev.kind : undefined,
+      text: typeof ev.text === "string" ? ev.text.slice(0, 500) : undefined,
+    };
+  }
+  return out;
+}
+
 /** Implements the commands the web layer issues. Owns project initialization. */
 export class AppController implements ControlApi {
   private readonly ingestor: SpecIngestor;
   private backends: BackendInfo[];
+  private readonly diagnose: DiagnoseFn;
 
   constructor(private readonly deps: ControllerDeps) {
     this.ingestor = new SpecIngestor(deps.db);
     this.backends = deps.detectedBackends;
+    this.diagnose = deps.diagnose ?? runDiagnostics;
   }
 
   listBackends(): BackendInfo[] {
@@ -340,14 +385,19 @@ export class AppController implements ControlApi {
 
   addTicket(projectId: string, input: CreateTicketInput): Promise<Ticket> {
     const now = Date.now();
+    // Honor an explicitly-proposed role only if it's a real project role;
+    // otherwise the orchestrator triages it (the default for manual tickets).
+    const roleName =
+      input.roleName && this.deps.db.getRole(projectId, input.roleName)
+        ? input.roleName
+        : ORCHESTRATOR_ROLE;
     const ticket: Ticket = {
       id: newId("tkt"),
       projectId,
       title: input.title,
       body: input.body,
       status: "open",
-      // Every ticket first goes to the orchestrator agent, which triages it.
-      roleName: ORCHESTRATOR_ROLE,
+      roleName,
       priority: input.priority ?? 0,
       source: "manual",
       branch: null,
@@ -358,6 +408,18 @@ export class AppController implements ControlApi {
       updatedAt: now,
     };
     this.deps.db.insertTicket(ticket);
+    if (input.fromDiagnostic) {
+      // Audit trail: record that this ticket was filed from a Debug Traces diagnosis.
+      this.deps.db.insertTicketEvent({
+        id: newId("te"),
+        projectId,
+        ticketId: ticket.id,
+        actor: "system",
+        kind: "note",
+        message: "Filed from Trace Diagnosis.",
+        createdAt: now,
+      });
+    }
     this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId: ticket.id, at: now });
     void this.deps.orchestrator.tick();
     return Promise.resolve(ticket);
@@ -463,6 +525,154 @@ export class AppController implements ControlApi {
     this.deps.db.setSuggestionStatus(suggestionId, "dismissed");
     this.emitProject(projectId);
     return Promise.resolve();
+  }
+
+  // ---- Debug Traces (read-only diagnostics) ----
+  async runDebugTraces(
+    projectId: string,
+    ticketId: string | null,
+    liveEvents: unknown[],
+  ): Promise<DiagnosisResult> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project) throw Object.assign(new Error(`No such project: ${projectId}`), { statusCode: 404 });
+    const context = this.buildTraceContext(project, ticketId, liveEvents);
+    const workerRoleNames = this.deps.db
+      .listRoles(projectId)
+      .filter((r) => r.name !== ORCHESTRATOR_ROLE)
+      .map((r) => r.name);
+    const prompt = buildDiagnosticPrompt({
+      scope: ticketId ? "ticket" : "project",
+      context,
+      workerRoleNames,
+    });
+    const ticket = ticketId ? this.deps.db.getTicket(ticketId) : undefined;
+    const cwd =
+      ticket?.worktreePath && existsSync(ticket.worktreePath) ? ticket.worktreePath : project.localPath;
+    const artifactsDir = join(
+      this.deps.config.dataDir,
+      "diagnostics",
+      projectId,
+      ticketId ?? "project",
+      newId("d"),
+    );
+    return this.diagnose({
+      cwd,
+      artifactsDir,
+      prompt,
+      model: this.deps.config.diagnostics?.model ?? this.deps.config.agent.model,
+      maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+      idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+    });
+  }
+
+  /** Bounded, sanitized trace context for the diagnostician (no secrets/env/raw logs). */
+  private buildTraceContext(project: Project, ticketId: string | null, liveEvents: unknown[]): unknown {
+    const events = (Array.isArray(liveEvents) ? liveEvents : [])
+      .slice(0, 200)
+      .map((raw) => sanitizeEvent((raw as { e?: unknown })?.e ?? raw));
+    const meta = {
+      id: project.id,
+      repoUrl: project.repoUrl,
+      baseBranch: project.baseBranch,
+      status: project.status,
+      runState: project.runState,
+      setupCommand: project.setupCommand,
+      verifyCommands: project.verifyCommands,
+      expectations: project.expectations.slice(0, 2000),
+      groundRules: project.groundRules,
+    };
+    const running = this.deps.orchestrator.runningTaskIds();
+
+    if (ticketId) {
+      const ticket = this.deps.db.getTicket(ticketId);
+      const ticketEvents = this.deps.db
+        .listTicketEvents(ticketId)
+        .slice(-100)
+        .map((e) => ({ actor: e.actor, kind: e.kind, message: e.message.slice(0, 500), createdAt: e.createdAt }));
+      const tasks = this.deps.db.listTasksForTicket(ticketId).map((t) => ({
+        id: t.id,
+        state: t.state,
+        attempt: t.attempt,
+        branch: t.branch,
+        startedAt: t.startedAt,
+        endedAt: t.endedAt,
+      }));
+      const taskIds = new Set(tasks.map((t) => t.id));
+      const journal = this.deps.db
+        .listAttemptJournal(ticketId)
+        .slice(-20)
+        .map((j) => ({
+          attempt: j.attempt,
+          verifyPassed: j.verifyPassed,
+          diagnosis: j.diagnosis?.slice(0, 500) ?? null,
+          nextAction: j.nextAction,
+          proof: j.proof?.slice(0, 200) ?? null,
+        }));
+      const prs = this.deps.db
+        .listPullRequests(project.id)
+        .filter((p) => p.ticketId === ticketId)
+        .map((p) => ({ number: p.number, state: p.state, url: p.url }));
+      const relevant = events.filter(
+        (e) => !e.ticketId || e.ticketId === ticketId || (e.taskId != null && taskIds.has(e.taskId)),
+      );
+      return {
+        scope: "ticket",
+        project: meta,
+        runningTaskIds: running,
+        ticket: ticket
+          ? {
+              id: ticket.id,
+              title: ticket.title,
+              status: ticket.status,
+              roleName: ticket.roleName,
+              priority: ticket.priority,
+              branch: ticket.branch,
+              prUrl: ticket.prUrl,
+              body: ticket.body.slice(0, 1000),
+            }
+          : null,
+        tasks,
+        ticketEvents,
+        attemptJournal: journal,
+        pullRequests: prs,
+        liveEvents: relevant,
+      };
+    }
+
+    const tickets = this.deps.db
+      .listTickets(project.id)
+      .map((t) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, roleName: t.roleName }));
+    const ticketEvents = this.deps.db
+      .listProjectTicketEvents(project.id, 100)
+      .map((e) => ({
+        ticketId: e.ticketId,
+        actor: e.actor,
+        kind: e.kind,
+        message: e.message.slice(0, 400),
+        createdAt: e.createdAt,
+      }));
+    const journal = this.deps.db
+      .listProjectAttemptJournal(project.id, 30)
+      .map((j) => ({
+        ticketId: j.ticketId,
+        attempt: j.attempt,
+        verifyPassed: j.verifyPassed,
+        diagnosis: j.diagnosis?.slice(0, 300) ?? null,
+        nextAction: j.nextAction,
+      }));
+    const prs = this.deps.db
+      .listPullRequests(project.id, 20)
+      .map((p) => ({ ticketId: p.ticketId, number: p.number, state: p.state }));
+    return {
+      scope: "project",
+      project: meta,
+      runningTaskIds: running,
+      tickets,
+      ticketEvents,
+      attemptJournal: journal,
+      pullRequests: prs,
+      liveEvents: events,
+    };
   }
 
   private seedRole(projectId: string, input: UpsertRoleInput): Role {
