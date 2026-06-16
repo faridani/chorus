@@ -1,5 +1,6 @@
 import { getTool, type Project, type Role, type Ticket, type TicketEvent } from "@chorus/core";
 import { type TaskManifest, renderManifestMarkdown } from "./manifest.js";
+import { PROSE_NARRATION_RULE } from "./structured-run.js";
 
 /**
  * Render the "Chorus tools" section: which catalog tools the agent is granted
@@ -130,6 +131,8 @@ export function buildOrchestratorPrompt(args: {
   lines.push(
     "If the trail shows you have already assigned the same or similar work before and the worker keeps reporting success WITHOUT delivering the missing piece (or made no new commits), do NOT assign it again. That usually means the remaining work is impossible in this repository (e.g. the required surface/stack doesn't exist here). In that case either `open_pr` for what's committed (if it's a coherent improvement), `close` the ticket, or `needs_human` with a `suggestion` describing what's needed (e.g. an agent/stack that can do it). When you `assign`, your `message` MUST describe the SPECIFIC remaining change — it is passed verbatim to the worker as its instruction.",
   );
+  lines.push("");
+  lines.push(PROSE_NARRATION_RULE);
 
   return lines.join("\n");
 }

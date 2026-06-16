@@ -25,6 +25,7 @@ import { type EvaluatorVerdict, runEvaluator } from "./evaluate.js";
 import { buildManifest, type TaskManifest } from "./manifest.js";
 import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
 import { type ReviewerVerdict, runReviewer } from "./review.js";
+import { PROSE_NARRATION_RULE } from "./structured-run.js";
 import { runTriage } from "./triage.js";
 
 export interface OrchestratorDeps {
@@ -775,6 +776,7 @@ export class Orchestrator {
     L.push(
       "Set `passed` true ONLY if every command succeeds and the ticket is genuinely satisfied. If not, give a precise `diagnosis` of the SPECIFIC next change needed.",
     );
+    L.push(PROSE_NARRATION_RULE);
     return L.join("\n");
   }
 
@@ -793,6 +795,7 @@ export class Orchestrator {
     L.push(
       "Return `approved`, a one-paragraph `summary`, concrete `risks`, a `rollback` plan, and any `uncertainties`.",
     );
+    L.push(PROSE_NARRATION_RULE);
     return L.join("\n");
   }
 
