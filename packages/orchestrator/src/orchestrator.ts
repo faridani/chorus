@@ -25,7 +25,7 @@ import { type EvaluatorVerdict, runEvaluator } from "./evaluate.js";
 import { buildManifest, type TaskManifest } from "./manifest.js";
 import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
 import { type ReviewerVerdict, runReviewer } from "./review.js";
-import { PROSE_NARRATION_RULE } from "./structured-run.js";
+import { PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
 import { runTriage } from "./triage.js";
 
 export interface OrchestratorDeps {
@@ -842,6 +842,8 @@ export class Orchestrator {
       `Review the diff of branch \`${ticket.branch}\` vs \`origin/${project.baseBranch}\` (run \`git diff origin/${project.baseBranch}..${ticket.branch}\`).`,
     );
     L.push("Judge whether it correctly and completely satisfies the ticket and is safe to open as a PR.");
+    L.push("");
+    L.push(READ_ONLY_RULE);
     L.push("");
     L.push("## Ticket");
     L.push(`${ticket.title}`);
