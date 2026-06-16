@@ -230,6 +230,14 @@ export function App() {
               >
                 Debug Traces
               </button>
+              <button
+                className="debugbtn"
+                disabled={feed.length === 0}
+                title="Clear the on-screen Live events buffer (does not touch the database; new activity repopulates it)"
+                onClick={() => setFeed([])}
+              >
+                Clear
+              </button>
             </h3>
             <EventFeed
               entries={
