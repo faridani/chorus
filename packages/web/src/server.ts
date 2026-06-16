@@ -22,6 +22,15 @@ export interface VersionInfo {
   startedAt: number;
 }
 
+/** Session-scoped internal API the MCP bridge calls (implemented by the Orchestrator). */
+export interface SessionApi {
+  sessionCall(
+    token: string,
+    action: string,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }>;
+}
+
 export interface WebDeps {
   db: ChorusDb;
   bus: ChorusBus;
@@ -30,6 +39,8 @@ export interface WebDeps {
   version: VersionInfo;
   /** Directory of the built dashboard SPA, if available. */
   dashboardDir?: string;
+  /** Backs the loopback-only MCP tool endpoints for autonomous orchestration. */
+  sessionApi?: SessionApi;
 }
 
 /** Build (but do not start) the Fastify app. */
@@ -63,6 +74,28 @@ export function createServer(deps: WebDeps): FastifyInstance {
 
   // ---- tool catalog (source-defined, read-only) ----
   app.get("/api/tools", () => TOOL_CATALOG);
+
+  // ---- internal MCP tool API (loopback only; called by the agent-mcp bridge) ----
+  // The autonomous orchestrator's codex process spawns the bridge, which calls
+  // these endpoints with its session token. Restricted to loopback since the
+  // bridge always runs on the daemon host.
+  if (deps.sessionApi) {
+    const sessionApi = deps.sessionApi;
+    const isLoopback = (ip: string) =>
+      ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+    const handle = async (
+      req: { params: unknown; body?: unknown; ip: string },
+      reply: { code: (n: number) => { send: (b: unknown) => unknown } },
+    ) => {
+      if (!isLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+      const { token, action } = req.params as { token: string; action: string };
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const { status, body: out } = await sessionApi.sessionCall(token, action, body);
+      return reply.code(status).send(out);
+    };
+    app.get("/api/internal/sessions/:token/:action", handle);
+    app.post("/api/internal/sessions/:token/:action", handle);
+  }
 
   // ---- agent gallery (global templates) ----
   app.get("/api/agent-templates", () => listAgentGalleryTemplates(db.listAgentTemplates()));

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import type { BackendRegistry } from "@chorus/backends";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { type BackendRegistry, mapCodexLine } from "@chorus/backends";
 import {
   type AgentEvent,
   type AgentResult,
@@ -20,11 +21,19 @@ import {
 } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import type { GitService } from "@chorus/git-service";
-import { runShell } from "@chorus/proc";
+import { runShell, StreamingProcess } from "@chorus/proc";
+import {
+  buildAutonomousPrompt,
+  buildCodexMcpArgs,
+  buildSpokeAgentPrompt,
+  type SessionState,
+  type SpokeAgentInfo,
+} from "./autonomous.js";
 import { type EvaluatorVerdict, runEvaluator } from "./evaluate.js";
 import { buildManifest, type TaskManifest } from "./manifest.js";
 import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
 import { type ReviewerVerdict, runReviewer } from "./review.js";
+import { runAgentProcess } from "./spoke-runner.js";
 import { EVIDENCE_SCOPE_RULE, PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
 import { runTriage } from "./triage.js";
 
@@ -61,6 +70,8 @@ export class Orchestrator {
   private readonly gateRetries = new Map<string, { attempt: number; retries: number }>();
   /** Max consecutive gate interruptions before parking the ticket for a human. */
   private static readonly MAX_GATE_RETRIES = 3;
+  /** Live autonomous sessions, keyed by their (unguessable) MCP token. */
+  private readonly sessions = new Map<string, SessionState>();
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -177,7 +188,11 @@ export class Orchestrator {
     try {
       const isOrchestrator = !ticket.roleName || ticket.roleName === ORCHESTRATOR_ROLE;
       if (isOrchestrator) {
-        await this.runOrchestratorDecision(project, ticket);
+        if (this.deps.config.orchestrator.mode === "autonomous") {
+          await this.runAutonomousSession(project, ticket);
+        } else {
+          await this.runOrchestratorDecision(project, ticket);
+        }
       } else {
         await this.runWorker(project, ticket, resumeTaskId);
       }
@@ -340,6 +355,527 @@ export class Orchestrator {
     }
   }
 
+  // ---- autonomous session (fully LLM-driven orchestration) ----
+  /**
+   * Run the orchestrator as an autonomous `codex exec` agent that calls spoke
+   * agents (and verify / diff / merge / PR actions) as MCP tools, deciding
+   * turn-by-turn. The codex process drives everything; this method just spawns
+   * it (with the Chorus MCP bridge attached over a session token), streams its
+   * events, and cleans up when it exits.
+   */
+  private async runAutonomousSession(project: Project, ticket: Ticket): Promise<void> {
+    if (this.workerAttempts(ticket.id) >= this.deps.config.maxAttemptsPerTicket) {
+      this.addSuggestion(project, ticket.id, `Ticket reached ${this.deps.config.maxAttemptsPerTicket} attempts without completion.`);
+      this.blockTicket(project, ticket, "Max attempts reached.");
+      return;
+    }
+
+    const token = newId("ses");
+    const session: SessionState = {
+      token,
+      projectId: project.id,
+      ticketId: ticket.id,
+      ticketTitle: ticket.title,
+      worktrees: new Map(),
+      spokeCount: 0,
+      running: 0,
+      createdAt: Date.now(),
+      finished: null,
+      prUrl: null,
+      handles: new Set(),
+    };
+    this.sessions.set(token, session);
+
+    const agents: SpokeAgentInfo[] = this.deps.db
+      .listRoles(project.id)
+      .filter((r) => r.name !== ORCHESTRATOR_ROLE)
+      .map((r) => ({ name: r.name, description: r.description, backendId: r.backendId }));
+
+    const prompt = buildAutonomousPrompt({
+      project,
+      ticket,
+      agents,
+      maxSpokeAgents: this.deps.config.orchestrator.maxSpokeAgentsPerSession,
+      maxParallel: this.deps.config.orchestrator.maxParallelSpokeAgents,
+    });
+
+    const artifactsDir = join(this.deps.config.dataDir, "autonomous", ticket.id, newId("a"));
+    mkdirSync(artifactsDir, { recursive: true });
+    const mcpArgs = buildCodexMcpArgs(
+      this.bridgeBinPath(),
+      `http://127.0.0.1:${this.deps.config.port}`,
+      token,
+    );
+    const args = [
+      "exec",
+      "--json",
+      // Bypass codex's own sandbox: the MCP bridge (a codex subprocess) must
+      // reach the loopback daemon, and a read-only sandbox blocks that egress.
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--skip-git-repo-check",
+      ...mcpArgs,
+      "-C",
+      project.localPath,
+      prompt,
+    ];
+
+    this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, {
+      kind: "message",
+      text: "Orchestrator session starting…",
+      at: Date.now(),
+    });
+
+    const proc = new StreamingProcess("codex", args, {
+      cwd: project.localPath,
+      rawLogPath: join(artifactsDir, "orchestrator.log"),
+      maxWallClockMs: this.deps.config.orchestrator.sessionWallClockMs,
+      // The orchestrator is silent while awaiting a tool result that may take
+      // minutes (a spoke agent run) — never treat that as idle.
+      idleTimeoutMs: undefined,
+    });
+    const slot = this.active.get(ticket.id);
+    if (slot)
+      slot.stop = async () => {
+        await proc.stop();
+        await Promise.allSettled([...session.handles].map((h) => h.stop("killed")));
+      };
+    proc.onLine((line) => {
+      for (const ev of mapCodexLine(line, project.localPath)) {
+        this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, ev);
+      }
+    });
+
+    let exitOutcome = "";
+    let stderrTail = "";
+    try {
+      const exit = await proc.exit;
+      exitOutcome = exit.outcome;
+      stderrTail = exit.stderrTail;
+    } catch (err) {
+      stderrTail = String(err);
+    } finally {
+      this.sessions.delete(token);
+    }
+
+    // Quota mid-session: back off and leave the ticket for a later retry.
+    if (this.looksLikeQuota(stderrTail)) {
+      this.enterQuotaBackoff();
+      await this.cleanupSessionWorktrees(project, session, null);
+      this.deps.db.updateTicket(ticket.id, { status: "open", roleName: ORCHESTRATOR_ROLE });
+      return;
+    }
+
+    if (session.finished) {
+      // A terminal action already moved the ticket (pr_open / closed / blocked).
+      // Keep the PR branch; drop every other scratch worktree.
+      await this.cleanupSessionWorktrees(project, session, session.prUrl ? "keep-pr" : null);
+      this.trail(
+        project.id,
+        ticket.id,
+        ORCHESTRATOR_ROLE,
+        "triage",
+        `Session ${session.finished.outcome}: ${session.finished.message}`,
+      );
+      return;
+    }
+
+    // Session ended without a terminal action (model gave up, crashed, or hit
+    // the wall clock). Clean up and hand back so a later tick retries.
+    await this.cleanupSessionWorktrees(project, session, null);
+    this.trail(
+      project.id,
+      ticket.id,
+      ORCHESTRATOR_ROLE,
+      "note",
+      `Orchestrator session ended without a terminal action (${exitOutcome || "exited"}). Will retry.`,
+    );
+    this.handBackToOrchestrator(project.id, ticket.id);
+  }
+
+  /** Absolute path to the compiled MCP bridge codex launches. */
+  private bridgeBinPath(): string {
+    if (process.env.CHORUS_MCP_BRIDGE) return process.env.CHORUS_MCP_BRIDGE;
+    const here = dirname(fileURLToPath(import.meta.url)); // packages/orchestrator/{src|dist}
+    return join(here, "..", "..", "agent-mcp", "dist", "bin.js");
+  }
+
+  private async cleanupSessionWorktrees(
+    project: Project,
+    session: SessionState,
+    keep: "keep-pr" | null,
+  ): Promise<void> {
+    const ticket = this.deps.db.getTicket(session.ticketId);
+    const keepBranch = keep === "keep-pr" ? ticket?.branch : null;
+    for (const wt of session.worktrees.values()) {
+      if (keepBranch && wt.branch === keepBranch) continue;
+      try {
+        await this.deps.git.removeWorktree(project.localPath, wt.path);
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  /**
+   * Entry point for the daemon's internal MCP API. Dispatches a tool call from
+   * the bridge (scoped by session token) to the matching session action. Always
+   * resolves to a {status, body}; never throws.
+   */
+  async sessionCall(
+    token: string,
+    action: string,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }> {
+    const session = this.sessions.get(token);
+    if (!session) return { status: 404, body: { error: "unknown or expired session" } };
+    const project = this.deps.db.getProject(session.projectId);
+    const ticket = this.deps.db.getTicket(session.ticketId);
+    if (!project || !ticket) return { status: 410, body: { error: "session target gone" } };
+    try {
+      switch (action) {
+        case "context":
+          return { status: 200, body: this.sessionContext(project, ticket, session) };
+        case "agents":
+          return { status: 200, body: this.sessionAgents(project) };
+        case "run-agent":
+          return await this.runAgentInSession(session, project, ticket, body);
+        case "verify":
+          return await this.sessionVerify(session, project, body);
+        case "diff":
+          return await this.sessionDiff(session, project, body);
+        case "merge":
+          return await this.sessionMerge(session, project, body);
+        case "open-pr":
+          return await this.sessionOpenPr(session, project, ticket, body);
+        case "close":
+          await this.closeTicket(project, ticket, "closed");
+          session.finished = { outcome: "closed", message: String(body.reason ?? "") };
+          return { status: 200, body: { ok: true } };
+        case "needs-human":
+          this.blockTicket(project, ticket, String(body.reason ?? "needs human"));
+          session.finished = { outcome: "blocked", message: String(body.reason ?? "") };
+          return { status: 200, body: { ok: true } };
+        case "create-ticket":
+          this.createFollowUpTicket(project.id, {
+            title: String(body.title ?? "Untitled"),
+            body: String(body.body ?? ""),
+            priority: typeof body.priority === "number" ? body.priority : undefined,
+          });
+          return { status: 200, body: { ok: true } };
+        case "suggest":
+          this.addSuggestion(project, ticket.id, String(body.text ?? ""));
+          return { status: 200, body: { ok: true } };
+        case "activity":
+          this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, {
+            kind: "message",
+            text: String(body.message ?? ""),
+            at: Date.now(),
+          });
+          return { status: 200, body: { ok: true } };
+        case "finish":
+          session.finished = session.finished ?? {
+            outcome: String(body.outcome ?? "abandoned"),
+            message: String(body.message ?? ""),
+          };
+          return { status: 200, body: { ok: true } };
+        default:
+          return { status: 404, body: { error: `unknown action: ${action}` } };
+      }
+    } catch (err) {
+      return { status: 500, body: { error: String(err) } };
+    }
+  }
+
+  private sessionAgents(project: Project): SpokeAgentInfo[] {
+    return this.deps.db
+      .listRoles(project.id)
+      .filter((r) => r.name !== ORCHESTRATOR_ROLE)
+      .map((r) => ({ name: r.name, description: r.description, backendId: r.backendId }));
+  }
+
+  private sessionContext(project: Project, ticket: Ticket, session: SessionState): unknown {
+    return {
+      ticket: { id: ticket.id, title: ticket.title, body: ticket.body, status: ticket.status },
+      project: {
+        repoUrl: project.repoUrl,
+        baseBranch: project.baseBranch,
+        expectations: project.expectations,
+        groundRules: project.groundRules,
+        setupCommand: project.setupCommand,
+        verifyCommands: project.verifyCommands,
+      },
+      agents: this.sessionAgents(project),
+      trail: this.deps.db
+        .listTicketEvents(ticket.id)
+        .slice(-20)
+        .map((e) => ({ actor: e.actor, kind: e.kind, message: e.message })),
+      latestJournal: this.deps.db.latestAttemptJournal(ticket.id),
+      worktrees: [...session.worktrees.values()].map((w) => ({ id: w.id, branch: w.branch })),
+      budget: {
+        spokeAgentsUsed: session.spokeCount,
+        spokeAgentsMax: this.deps.config.orchestrator.maxSpokeAgentsPerSession,
+      },
+    };
+  }
+
+  private async runAgentInSession(
+    session: SessionState,
+    project: Project,
+    ticket: Ticket,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }> {
+    const agentName = String(body.agent ?? "");
+    const instruction = String(body.instruction ?? "");
+    const baseWorktreeId = body.baseWorktreeId ? String(body.baseWorktreeId) : null;
+
+    if (session.spokeCount >= this.deps.config.orchestrator.maxSpokeAgentsPerSession) {
+      return {
+        status: 429,
+        body: { error: "spoke-agent budget exhausted for this ticket; wrap up and finish." },
+      };
+    }
+    const role = this.deps.db.getRole(project.id, agentName);
+    if (!role) {
+      return {
+        status: 400,
+        body: { error: `unknown agent "${agentName}". Available: ${this.sessionAgents(project).map((a) => a.name).join(", ")}` },
+      };
+    }
+    // Respect the parallelism cap; queue until a slot frees.
+    while (session.running >= this.deps.config.orchestrator.maxParallelSpokeAgents) {
+      await this.sleep(250);
+      if (!this.sessions.has(session.token)) return { status: 410, body: { error: "session ended" } };
+    }
+
+    session.running++;
+    session.spokeCount++;
+    try {
+      // Resolve (or create) the worktree for this run.
+      let wt = baseWorktreeId ? session.worktrees.get(baseWorktreeId) : undefined;
+      const resume = !!wt;
+      if (!wt) {
+        const id = newId("wt");
+        const branch = `chorus/${ticket.id}/${id}`;
+        const path = join(this.deps.config.dataDir, "worktrees", project.id, ticket.id, id);
+        await this.deps.git.addWorktree(project.localPath, path, branch, project.baseBranch);
+        wt = { id, path, branch };
+        session.worktrees.set(id, wt);
+        await this.runSetup(project, ticket, path);
+      }
+
+      const backend = this.deps.backends.has(role.backendId)
+        ? this.deps.backends.get(role.backendId)
+        : this.deps.backends.get("codex");
+      const taskId = newId("task");
+      const runId = newId("run");
+      const now = Date.now();
+      const baseCommit = await this.deps.git.headCommit(project.localPath, this.baseRef(project));
+      this.deps.db.insertTask({
+        id: taskId,
+        ticketId: ticket.id,
+        projectId: project.id,
+        backendId: role.backendId,
+        worktreePath: wt.path,
+        branch: wt.branch,
+        baseCommit,
+        state: "running",
+        attempt: session.spokeCount,
+        resumeAt: null,
+        startedAt: now,
+        endedAt: null,
+      });
+      this.deps.db.insertRun({
+        id: runId,
+        taskId,
+        pid: null,
+        pgid: null,
+        startedAt: now,
+        endedAt: null,
+        exitCode: null,
+        exitSignal: null,
+        terminalReason: null,
+        rawLogPath: null,
+        outputFilePath: null,
+      });
+      const commitsBefore = (
+        await this.deps.git.branchSummary(project.localPath, this.baseRef(project), wt.branch).catch(() => ({ commits: [] as string[] }))
+      ).commits.length;
+
+      const updateNote = await backend.prepare?.();
+      if (updateNote) this.trail(project.id, ticket.id, role.name, "note", updateNote);
+      const prompt = buildSpokeAgentPrompt({
+        project,
+        ticket,
+        role,
+        instruction,
+        resume,
+        trail: this.deps.db.listTicketEvents(ticket.id),
+      });
+
+      let result: AgentResult;
+      try {
+        result = await runAgentProcess({
+          backend,
+          spec: {
+            taskId,
+            prompt,
+            worktreePath: wt.path,
+            model: role.model,
+            resume,
+            maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+            idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+            artifactsDir: join(this.deps.config.dataDir, "runs", taskId, runId),
+          },
+          bus: this.deps.bus,
+          projectId: project.id,
+          ticketId: ticket.id,
+          ticketTitle: ticket.title,
+          roleName: role.name,
+          onHandle: (handle) => {
+            this.deps.db.updateRun(runId, { pid: handle.pid ?? null, pgid: handle.pgid ?? null });
+            session.handles.add(handle);
+          },
+        });
+      } catch (err) {
+        this.deps.db.updateTask(taskId, { state: "failed", endedAt: Date.now() });
+        this.deps.db.updateRun(runId, { endedAt: Date.now(), terminalReason: "failed" });
+        this.trail(project.id, ticket.id, role.name, "work", `Run errored: ${String(err)}`);
+        return { status: 200, body: { worktreeId: wt.id, terminalReason: "failed", error: String(err) } };
+      }
+
+      this.deps.db.updateRun(runId, {
+        endedAt: Date.now(),
+        exitCode: result.exitCode,
+        exitSignal: result.signal,
+        terminalReason: result.terminalReason,
+        rawLogPath: result.rawLogPath,
+        outputFilePath: result.outputFilePath,
+      });
+      this.recordUsage(runId, project, result);
+
+      if (result.terminalReason === "quota_exhausted") {
+        this.deps.db.updateTask(taskId, { state: "paused-quota", endedAt: Date.now() });
+        return {
+          status: 200,
+          body: { worktreeId: wt.id, terminalReason: "quota_exhausted", error: "quota exhausted; pause and finish." },
+        };
+      }
+
+      // Capture anything the agent left uncommitted (invisible to diff/PR otherwise).
+      if (!(await this.deps.git.isWorktreeClean(wt.path))) {
+        try {
+          await this.deps.git.commitAll(wt.path, `${ticket.title}\n\n[chorus] auto-committed leftover changes`);
+        } catch {
+          /* best-effort */
+        }
+      }
+      this.deps.db.updateTask(taskId, { state: "done-pending-merge", endedAt: Date.now() });
+
+      const after = await this.deps.git
+        .branchSummary(project.localPath, this.baseRef(project), wt.branch)
+        .catch(() => ({ commits: [] as string[], files: [] as string[] }));
+      const newCommits = Math.max(0, after.commits.length - commitsBefore);
+      const summary = result.payload?.summary ?? `(${result.terminalReason})`;
+      this.trail(
+        project.id,
+        ticket.id,
+        role.name,
+        "work",
+        `[${wt.id}] ${result.payload?.status ?? result.terminalReason}: ${summary}${newCommits ? "" : " [no new commits]"}`,
+      );
+
+      return {
+        status: 200,
+        body: {
+          worktreeId: wt.id,
+          branch: wt.branch,
+          status: result.payload?.status ?? null,
+          summary: result.payload?.summary ?? null,
+          filesChanged: result.payload?.filesChanged ?? [],
+          notes: result.payload?.notes ?? null,
+          newCommits,
+          changedFiles: after.files,
+          terminalReason: result.terminalReason,
+        },
+      };
+    } finally {
+      session.running--;
+    }
+  }
+
+  private async sessionVerify(
+    session: SessionState,
+    project: Project,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }> {
+    const wt = session.worktrees.get(String(body.worktreeId ?? ""));
+    if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
+    const verify = await this.runVerify(project, wt.path);
+    return { status: 200, body: verify };
+  }
+
+  private async sessionDiff(
+    session: SessionState,
+    project: Project,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }> {
+    const wt = session.worktrees.get(String(body.worktreeId ?? ""));
+    if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
+    const diff = await this.deps.git
+      .diff(project.localPath, this.baseRef(project), wt.branch)
+      .catch(() => "");
+    return { status: 200, body: { diff: diff.slice(0, 60000), truncated: diff.length > 60000 } };
+  }
+
+  private async sessionMerge(
+    session: SessionState,
+    project: Project,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }> {
+    const from = session.worktrees.get(String(body.fromWorktreeId ?? ""));
+    const into = session.worktrees.get(String(body.intoWorktreeId ?? ""));
+    if (!from || !into) return { status: 400, body: { error: "unknown worktreeId(s)" } };
+    const r = await runShell(`git merge --no-ff --no-edit ${from.branch}`, into.path, {
+      timeoutMs: 5 * 60 * 1000,
+    });
+    if (!r.ok) {
+      await runShell("git merge --abort", into.path, { timeoutMs: 60 * 1000 }).catch(() => {});
+      return { status: 200, body: { ok: false, conflicts: true, output: r.combined.slice(-2000) } };
+    }
+    return { status: 200, body: { ok: true } };
+  }
+
+  private async sessionOpenPr(
+    session: SessionState,
+    project: Project,
+    ticket: Ticket,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }> {
+    const wt = session.worktrees.get(String(body.worktreeId ?? ""));
+    if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
+    const summary = String(body.summary ?? "");
+    if (!(await this.deps.git.hasNewCommits(project.localPath, this.baseRef(project), wt.branch))) {
+      return { status: 400, body: { error: "that worktree has no commits beyond the base branch" } };
+    }
+    // Point the ticket at the chosen worktree's branch so the PR opener and the
+    // merge poller operate on it, then reuse the standard PR path.
+    this.deps.db.updateTicket(ticket.id, { branch: wt.branch, worktreePath: wt.path });
+    const updated: Ticket = { ...ticket, branch: wt.branch, worktreePath: wt.path };
+    const url = await this.openPrForTicket(project, updated, {
+      taskId: null,
+      verify: { ran: false, results: [] },
+      reviewer: { approved: true, summary, risks: [], rollback: "", uncertainties: [] },
+    });
+    if (!url) return { status: 500, body: { error: "could not open PR (see ticket trail)" } };
+    session.finished = { outcome: "pr_opened", message: summary };
+    session.prUrl = url;
+    return { status: 200, body: { url } };
+  }
+
   // ---- worker run ----
   private async runWorker(project: Project, ticket: Ticket, resumeTaskId?: string): Promise<void> {
     const role = ticket.roleName ? this.deps.db.getRole(project.id, ticket.roleName) ?? null : null;
@@ -455,38 +991,32 @@ export class Orchestrator {
     // only the first run per backend; failures log-and-continue (returns null).
     const updateNote = await backend.prepare?.();
     if (updateNote) this.trail(project.id, ticket.id, role.name, "note", updateNote);
-    const handle = backend.startRun({
-      taskId,
-      prompt,
-      worktreePath,
-      model: role.model,
-      resume,
-      maxWallClockMs: this.deps.config.agent.maxWallClockMs,
-      idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
-      artifactsDir: join(this.deps.config.dataDir, "runs", taskId, runId),
-    });
-    this.deps.db.updateRun(runId, { pid: handle.pid ?? null, pgid: handle.pgid ?? null });
-    const slot = this.active.get(ticket.id);
-    if (slot) slot.stop = () => handle.stop("killed");
-
-    const drain = (async () => {
-      for await (const ev of handle.events) {
-        this.deps.bus.emit({
-          type: "agent_event",
-          projectId: project.id,
-          taskId,
-          role: role.name,
-          ticketId: ticket.id,
-          ticketTitle: ticket.title,
-          event: ev,
-          at: Date.now(),
-        });
-      }
-    })();
 
     let result: AgentResult;
     try {
-      [result] = await Promise.all([handle.result, drain]);
+      result = await runAgentProcess({
+        backend,
+        spec: {
+          taskId,
+          prompt,
+          worktreePath,
+          model: role.model,
+          resume,
+          maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+          idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+          artifactsDir: join(this.deps.config.dataDir, "runs", taskId, runId),
+        },
+        bus: this.deps.bus,
+        projectId: project.id,
+        ticketId: ticket.id,
+        ticketTitle: ticket.title,
+        roleName: role.name,
+        onHandle: (handle) => {
+          this.deps.db.updateRun(runId, { pid: handle.pid ?? null, pgid: handle.pgid ?? null });
+          const slot = this.active.get(ticket.id);
+          if (slot) slot.stop = () => handle.stop("killed");
+        },
+      });
     } catch (err) {
       this.deps.db.updateTask(taskId, { state: "failed", endedAt: Date.now() });
       this.deps.db.updateRun(runId, { endedAt: Date.now(), terminalReason: "failed" });
