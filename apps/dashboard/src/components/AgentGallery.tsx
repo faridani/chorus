@@ -19,11 +19,34 @@ export function AgentGallery({
 }) {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [editing, setEditing] = useState<AgentTemplate | "new" | null>(null);
+  const [customizingId, setCustomizingId] = useState<string | null>(null);
 
   const refresh = () => api.agentTemplates().then(setTemplates).catch(() => setTemplates([]));
   useEffect(() => {
     void refresh();
   }, []);
+
+  const customize = async (template: AgentTemplate) => {
+    setCustomizingId(template.id);
+    try {
+      const created = await api.upsertAgentTemplate({
+        name: nextCustomTemplateName(template.name, templates),
+        description: template.description,
+        allowed: [...template.allowed],
+        forbidden: [...template.forbidden],
+        allowedToolIds: [...(template.allowedToolIds ?? [])],
+        forbiddenToolIds: [...(template.forbiddenToolIds ?? [])],
+        backendId: template.backendId,
+        model: template.model,
+      });
+      await refresh();
+      setEditing(created);
+    } catch (err) {
+      alert(String(err));
+    } finally {
+      setCustomizingId(null);
+    }
+  };
 
   return (
     <div className="gallery">
@@ -33,20 +56,39 @@ export function AgentGallery({
       {templates.length === 0 && <p className="muted">No gallery agents yet.</p>}
       <ul className="gallery-list">
         {templates.map((t) => (
-          <li key={t.id} className="gallery-item">
-            <div className="gi-head" onClick={() => setEditing(t)}>
-              <strong>{t.name}</strong>
+          <li key={`${t.source}:${t.id}`} className={`gallery-item source-${t.source}`}>
+            <div className="gi-head">
+              <strong>{t.displayName || t.name}</strong>
+              <span className={`tag source-tag source-${t.source}`}>{t.source === "builtin" ? "Built-in" : "Custom"}</span>
               <span className="muted"> [{t.backendId}{t.model ? ` · ${t.model}` : ""}]</span>
             </div>
-            <div className="muted gi-desc" onClick={() => setEditing(t)}>
+            <div className="muted gi-meta">
+              <code>{t.name}</code> · {t.category}{t.version ? ` · v${t.version}` : ""}
+            </div>
+            <div className="muted gi-desc">
               {t.description || "—"}
             </div>
             {(t.allowedToolIds?.length || t.forbiddenToolIds?.length) && (
-              <div className="muted gi-tools" onClick={() => setEditing(t)}>
+              <div className="muted gi-tools">
                 {summarizeTools(t.allowedToolIds ?? [], t.forbiddenToolIds ?? [])}
               </div>
             )}
-            <UseInProject template={t} projects={projects} />
+            <div className="gi-actions">
+              <UseInProject template={t} projects={projects} />
+              {t.readOnly ? (
+                <button
+                  disabled={customizingId === t.id}
+                  onClick={() => void customize(t)}
+                  title="Create an editable custom gallery agent from this built-in agent."
+                >
+                  Customize
+                </button>
+              ) : (
+                <button onClick={() => setEditing(t)} title="Edit this custom gallery agent.">
+                  Edit
+                </button>
+              )}
+            </div>
           </li>
         ))}
       </ul>
@@ -67,6 +109,16 @@ export function AgentGallery({
   );
 }
 
+function nextCustomTemplateName(baseName: string, templates: AgentTemplate[]): string {
+  const existing = new Set(templates.map((t) => t.name));
+  const base = `${baseName}-custom`;
+  if (!existing.has(base)) return base;
+  for (let i = 2; ; i += 1) {
+    const candidate = `${base}-${i}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+}
+
 function UseInProject({ template, projects }: { template: AgentTemplate; projects: Project[] }) {
   const [projectId, setProjectId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -75,8 +127,8 @@ function UseInProject({ template, projects }: { template: AgentTemplate; project
     setBusy(true);
     try {
       // Server copies tool permissions from the template into the new role.
-      await api.applyTemplate(projectId, template.name);
-      alert(`Added "${template.name}" to the project.`);
+      await api.applyTemplate(projectId, template);
+      alert(`Added "${template.displayName || template.name}" to the project.`);
     } catch (err) {
       alert(String(err));
     } finally {
@@ -208,7 +260,7 @@ function TemplateEditor({
 
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
-          {template && (
+          {template && !template.readOnly && (
             <button
               className="danger"
               disabled={busy}

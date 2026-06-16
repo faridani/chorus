@@ -60,11 +60,17 @@ button:disabled { opacity: .5; cursor: default; }
 /* agent gallery */
 .gallery-list { list-style: none; padding: 0; margin: 8px 0 0; }
 .gallery-item { padding: 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; background: var(--panel); }
-.gi-head { cursor: pointer; font-size: 13px; }
-.gi-desc { cursor: pointer; margin: 2px 0 6px; }
-.gi-use { display: flex; gap: 4px; }
+.gallery-item.source-builtin { border-left: 3px solid #7ee787; }
+.gi-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.gi-meta { margin: 1px 0 4px; }
+.gi-meta code, .chooser-list code { font-family: ui-monospace, monospace; font-size: 11px; }
+.gi-desc { margin: 2px 0 6px; }
+.gi-actions { display: flex; align-items: center; gap: 6px; }
+.gi-use { display: flex; gap: 4px; flex: 1; min-width: 220px; }
 .gi-use select { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; font-size: 12px; }
 .gi-use button { font-size: 12px; padding: 2px 8px; }
+.source-tag.source-builtin { color: #7ee787; border-color: #2e5e40; }
+.source-tag.source-custom { color: #e3b341; border-color: #5e4e2e; }
 
 /* new-agent chooser */
 .chooser-list { list-style: none; padding: 0; margin: 6px 0 0; max-height: 320px; overflow-y: auto; }

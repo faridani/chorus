@@ -10,7 +10,7 @@ import {
   CodexQuotaPolicy,
   GeminiBackend,
 } from "@chorus/backends";
-import { ChorusBus, type Notifier } from "@chorus/core";
+import { ChorusBus, loadBuiltInAgentTemplates, type Notifier } from "@chorus/core";
 import { ChorusDb } from "@chorus/db";
 import { GitService } from "@chorus/git-service";
 import { CompositeNotifier, IMessageNotifier, NullNotifier } from "@chorus/notifier";
@@ -28,6 +28,8 @@ async function main(): Promise<void> {
   const db = new ChorusDb(join(config.dataDir, "chorus.db"));
   const bus = new ChorusBus();
   const git = new GitService();
+  const builtInAgents = loadBuiltInAgentTemplates();
+  console.log(`[chorus] built-in agents: ${builtInAgents.length}`);
 
   // Backends.
   const backends = new BackendRegistry();

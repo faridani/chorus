@@ -57,6 +57,31 @@ export interface AgentTemplate {
   createdAt: number;
 }
 
+export type AgentTemplateSource = "builtin" | "custom";
+
+/**
+ * What the Agent Gallery API returns. Built-ins are source-owned definitions
+ * loaded from repo files; custom entries are persisted user templates enriched
+ * with source metadata for the UI.
+ */
+export interface AgentGalleryTemplate {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  allowed: string[];
+  forbidden: string[];
+  allowedToolIds: string[];
+  forbiddenToolIds: string[];
+  backendId: string;
+  model?: string;
+  category: string;
+  version?: string;
+  source: AgentTemplateSource;
+  readOnly: boolean;
+  createdAt?: number;
+}
+
 /** A role defines an agent persona: its job and its guardrails. */
 export interface Role {
   id: string;

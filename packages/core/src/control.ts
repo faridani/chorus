@@ -41,6 +41,15 @@ export type UpsertRoleInput = Omit<Role, "id" | "projectId">;
 
 export type UpsertAgentTemplateInput = Omit<AgentTemplate, "id" | "createdAt">;
 
+export interface ApplyAgentTemplateInput {
+  /** Omitted means backward-compatible lookup: custom template first, then built-in. */
+  source?: "custom" | "builtin";
+  /** Template name, which becomes the project role name when applied. */
+  name?: string;
+  /** Stable built-in id. Custom templates are still addressed by name. */
+  id?: string;
+}
+
 /**
  * Commands the web layer issues to the daemon. The daemon implements this;
  * the web layer reads state directly from the DB and calls these for any
@@ -64,7 +73,7 @@ export interface ControlApi {
   upsertRole(projectId: string, input: UpsertRoleInput): Promise<Role>;
   deleteRole(projectId: string, name: string): Promise<void>;
   /** Create/update a project role from a gallery template, copying tool permissions. */
-  applyTemplate(projectId: string, templateName: string): Promise<Role>;
+  applyTemplate(projectId: string, template: string | ApplyAgentTemplateInput): Promise<Role>;
 
   startOrchestrator(): void;
   pauseOrchestrator(): void;
