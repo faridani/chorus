@@ -14,6 +14,7 @@ import {
 } from "@chorus/core";
 import { StreamingProcess } from "@chorus/proc";
 import { AsyncQueue } from "../async-queue.js";
+import { runCliUpdate } from "../cli-update.js";
 import { mapCodexLine } from "./events.js";
 import { CODEX_OUTPUT_SCHEMA } from "./result-schema.js";
 
@@ -25,6 +26,8 @@ export interface CodexBackendOptions {
   reasoningSummary?: string;
   /** Override the binary (tests). */
   bin?: string;
+  /** Self-update the CLI once per process before first use (default true). */
+  autoUpdate?: boolean;
 }
 
 /**
@@ -40,7 +43,16 @@ export class CodexBackend implements AIBackend {
     resume: false, // we resume by re-running in the same worktree, not via CLI session
   };
 
+  private prepared?: Promise<string | null>;
+
   constructor(private readonly opts: CodexBackendOptions) {}
+
+  prepare(): Promise<string | null> {
+    if (this.opts.autoUpdate === false) return Promise.resolve(null);
+    // Codex has no `codex update` subcommand; update via the npm global package.
+    this.prepared ??= runCliUpdate("npm", ["install", "-g", "@openai/codex@latest"], "codex", 180_000);
+    return this.prepared;
+  }
 
   startRun(spec: AgentRunSpec): AgentRunHandle {
     mkdirSync(spec.artifactsDir, { recursive: true });

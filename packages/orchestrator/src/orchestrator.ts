@@ -451,6 +451,10 @@ export class Orchestrator {
       attempt: attemptNo,
       promptHash: createHash("sha256").update(prompt).digest("hex").slice(0, 16),
     });
+    // One-time-per-process CLI self-update (memoized by the backend). Blocks
+    // only the first run per backend; failures log-and-continue (returns null).
+    const updateNote = await backend.prepare?.();
+    if (updateNote) this.trail(project.id, ticket.id, role.name, "note", updateNote);
     const handle = backend.startRun({
       taskId,
       prompt,
