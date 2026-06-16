@@ -399,12 +399,25 @@ export class Orchestrator {
       maxParallel: this.deps.config.orchestrator.maxParallelSpokeAgents,
     });
 
+    // Freshen the clone the orchestrator inspects: it's read-only context, and a
+    // clone left at its original checkout goes stale as the base branch advances
+    // (the orchestrator would then plan against outdated code). Spoke worktrees
+    // are already cut from the fetched base; this aligns the orchestrator's view.
+    await this.deps.git.syncToBase(project.localPath, project.baseBranch).catch((err) => {
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "note", `Could not refresh base checkout: ${String(err)}`);
+    });
+
     const artifactsDir = join(this.deps.config.dataDir, "autonomous", ticket.id, newId("a"));
     mkdirSync(artifactsDir, { recursive: true });
+    // A spoke run can take up to the agent wall-clock plus setup (npm install
+    // etc.); give the MCP tool call generous headroom beyond that so codex
+    // doesn't abandon a still-running delegation.
+    const toolTimeoutSec = Math.ceil(this.deps.config.agent.maxWallClockMs / 1000) + 30 * 60;
     const mcpArgs = buildCodexMcpArgs(
       this.bridgeBinPath(),
       `http://127.0.0.1:${this.deps.config.port}`,
       token,
+      toolTimeoutSec,
     );
     const args = [
       "exec",

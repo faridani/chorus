@@ -37,8 +37,19 @@ export interface SpokeAgentInfo {
  * We use `-c` (not a temp CODEX_HOME) so the user's existing Codex auth in
  * ~/.codex is preserved. Launch via `node` against the compiled bridge for fast
  * startup (npx/tsx cold-start can miss codex's MCP startup window).
+ *
+ * `tool_timeout_sec` is the critical knob: a `run_agent`/`run_verify` tool call
+ * is a full spoke run (minutes), but codex's default per-tool-call timeout is
+ * ~120s — without raising it, every delegation "times out" from the
+ * orchestrator's view while the spoke keeps running server-side. We set it to
+ * comfortably exceed a spoke's max wall-clock (plus setup headroom).
  */
-export function buildCodexMcpArgs(bridgeBin: string, daemonUrl: string, token: string): string[] {
+export function buildCodexMcpArgs(
+  bridgeBin: string,
+  daemonUrl: string,
+  token: string,
+  toolTimeoutSec: number,
+): string[] {
   return [
     "-c",
     `mcp_servers.chorus.command="node"`,
@@ -46,6 +57,10 @@ export function buildCodexMcpArgs(bridgeBin: string, daemonUrl: string, token: s
     `mcp_servers.chorus.args=["${bridgeBin}"]`,
     "-c",
     `mcp_servers.chorus.env={ CHORUS_SESSION_TOKEN = "${token}", CHORUS_DAEMON_URL = "${daemonUrl}" }`,
+    "-c",
+    `mcp_servers.chorus.startup_timeout_sec=30`,
+    "-c",
+    `mcp_servers.chorus.tool_timeout_sec=${Math.ceil(toolTimeoutSec)}`,
   ];
 }
 

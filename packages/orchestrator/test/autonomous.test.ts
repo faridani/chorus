@@ -28,15 +28,18 @@ const role = {
   backendId: "codex",
 } as unknown as Role;
 
-test("buildCodexMcpArgs registers a node-launched stdio server with session env", () => {
-  const args = buildCodexMcpArgs("/abs/agent-mcp/dist/bin.js", "http://127.0.0.1:7878", "tok-123");
+test("buildCodexMcpArgs registers a node-launched stdio server with session env and a long tool timeout", () => {
+  const args = buildCodexMcpArgs("/abs/agent-mcp/dist/bin.js", "http://127.0.0.1:7878", "tok-123", 4500);
   const joined = args.join(" ");
   assert.ok(joined.includes(`mcp_servers.chorus.command="node"`));
   assert.ok(joined.includes(`mcp_servers.chorus.args=["/abs/agent-mcp/dist/bin.js"]`));
   assert.ok(joined.includes(`CHORUS_SESSION_TOKEN = "tok-123"`));
   assert.ok(joined.includes(`CHORUS_DAEMON_URL = "http://127.0.0.1:7878"`));
-  // -c override pairs
-  assert.equal(args.filter((a) => a === "-c").length, 3);
+  // Long per-tool-call timeout so a multi-minute run_agent isn't abandoned at ~120s.
+  assert.ok(joined.includes(`mcp_servers.chorus.tool_timeout_sec=4500`));
+  assert.ok(joined.includes(`mcp_servers.chorus.startup_timeout_sec=30`));
+  // -c override pairs (command, args, env, startup_timeout, tool_timeout)
+  assert.equal(args.filter((a) => a === "-c").length, 5);
 });
 
 test("buildAutonomousPrompt lists the agent, the tools, and the parallel budget", () => {
