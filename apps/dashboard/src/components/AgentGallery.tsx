@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type AgentTemplate, api, type BackendInfo, type Project, type ToolDef } from "../api.js";
+import { backendChoices } from "../backendChoices.js";
 import { StringListEditor } from "./StringListEditor.js";
 import { summarizeTools, ToolPermissionEditor } from "./ToolPermissionEditor.js";
 
@@ -243,25 +244,4 @@ function TemplateEditor({
       </div>
     </div>
   );
-}
-
-function backendChoices(backends: BackendInfo[], selectedId: string, selectedModel: string): BackendInfo[] {
-  const choices = backends.filter((b) => b.available || b.id === selectedId);
-  if (!choices.some((b) => b.id === selectedId)) {
-    choices.push(fallbackBackend(selectedId, selectedModel));
-  }
-  return choices.length ? choices : [fallbackBackend("codex", "")];
-}
-
-function fallbackBackend(id: string, model: string): BackendInfo {
-  return {
-    id,
-    label: id,
-    bin: id,
-    available: true,
-    version: null,
-    models: model ? [model] : [],
-    defaultModel: null,
-    implemented: true,
-  };
 }
