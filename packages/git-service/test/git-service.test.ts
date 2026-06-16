@@ -50,6 +50,32 @@ test("worktree add (from origin/base) + new commit detection + clean check", asy
   assert.equal(await gs.hasNewCommits(repo, baseRef, "chorus/ticket-1"), true);
 });
 
+test("commitAll captures uncommitted tracked + untracked changes; no-op when clean", async () => {
+  const gs = new GitService();
+  const { repo, base } = await makeRepo();
+  const wt = join(repo, "..", `wt-commitall-${Date.now()}`);
+  await gs.addWorktree(repo, wt, "chorus/ticket-commitall", base);
+  const baseRef = `origin/${base}`;
+
+  // Clean worktree → no-op (null), no new commit.
+  assert.equal(await gs.commitAll(wt, "nothing"), null);
+  assert.equal(await gs.hasNewCommits(repo, baseRef, "chorus/ticket-commitall"), false);
+
+  // Edit a tracked file + add an untracked one, leaving both uncommitted.
+  writeFileSync(join(wt, "file.txt"), "changed\n");
+  writeFileSync(join(wt, "added.txt"), "brand new\n");
+  assert.equal(await gs.isWorktreeClean(wt), false);
+
+  const head = await gs.commitAll(wt, "salvage worker changes");
+  assert.ok(head && head.length >= 7);
+  assert.equal(await gs.isWorktreeClean(wt), true);
+  assert.equal(await gs.hasNewCommits(repo, baseRef, "chorus/ticket-commitall"), true);
+  // Both files are in the commit.
+  const files = await git(wt, "show", "--name-only", "--format=", "HEAD");
+  assert.match(files, /added\.txt/);
+  assert.match(files, /file\.txt/);
+});
+
 test("pushBranch publishes a ticket branch to origin", async () => {
   const gs = new GitService();
   const { repo, origin, base } = await makeRepo();

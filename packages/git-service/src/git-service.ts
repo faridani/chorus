@@ -119,6 +119,29 @@ export class GitService {
     return r.code === 0 && r.stdout.trim() === "";
   }
 
+  /**
+   * Stage and commit ALL changes in a worktree (tracked + untracked). A backstop
+   * for when an agent edits files but forgets to commit before returning — those
+   * changes are otherwise invisible to the acceptance gate (which judges the
+   * committed branch) and would be lost on the next reset. Returns the new HEAD,
+   * or null if there was nothing to commit. The worktree has its own HEAD/index,
+   * so this is safe to run without the shared main-checkout mutex.
+   */
+  async commitAll(worktreePath: string, message: string): Promise<string | null> {
+    const status = await this.git(["status", "--porcelain"], worktreePath, false);
+    if (status.code !== 0 || status.stdout.trim() === "") return null;
+    const add = await this.git(["add", "-A"], worktreePath, false);
+    if (add.code !== 0) {
+      throw new Error(`git add -A failed in ${worktreePath}: ${add.stderr.trim()}`);
+    }
+    const commit = await this.git(["commit", "-m", message], worktreePath, false);
+    if (commit.code !== 0) {
+      throw new Error(`git commit failed in ${worktreePath}: ${commit.stderr.trim()}`);
+    }
+    const head = await this.git(["rev-parse", "HEAD"], worktreePath, false);
+    return head.stdout.trim();
+  }
+
   /** Abort any half-finished merge left by a crash. */
   async abortMergeIfInProgress(localPath: string): Promise<void> {
     const mergeHead = join(localPath, ".git", "MERGE_HEAD");
