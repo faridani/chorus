@@ -76,10 +76,20 @@ export function getBuiltInAgentTemplate(
   );
 }
 
+// Built-in definitions are immutable source files baked into the deploy, so the
+// validated result for a given directory never changes at runtime. Memoize it
+// (keyed by resolved dir) to avoid re-reading + re-validating every file on each
+// gallery/apply request. main.ts loads once at startup, which warms this cache
+// and surfaces any validation error at boot. Only successful loads are cached —
+// a throw is never memoized, so a corrected file is picked up on the next call.
+const builtInCache = new Map<string, BuiltInAgentTemplate[]>();
+
 export function loadBuiltInAgentTemplates(
   options: BuiltInAgentLoadOptions = {},
 ): BuiltInAgentTemplate[] {
   const agentsDir = options.agentsDir ? resolve(options.agentsDir) : resolveBuiltInAgentsDir();
+  const cached = builtInCache.get(agentsDir);
+  if (cached) return cached;
   const files = readdirSync(agentsDir)
     .filter((file) => file.endsWith(".json"))
     .sort();
@@ -130,11 +140,13 @@ export function loadBuiltInAgentTemplates(
     throw new Error(`Built-in agent validation failed:\n- ${errors.join("\n- ")}`);
   }
 
-  return entries.map(({ data }) => ({
+  const templates: BuiltInAgentTemplate[] = entries.map(({ data }) => ({
     ...data,
     source: "builtin",
     readOnly: true,
   }));
+  builtInCache.set(agentsDir, templates);
+  return templates;
 }
 
 export function resolveBuiltInAgentsDir(): string {

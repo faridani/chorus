@@ -79,6 +79,20 @@ test("built-in loader rejects unknown tool ids", () => {
   );
 });
 
+test("built-in loader memoizes success per dir but never caches a failure", () => {
+  const dir = mkdtempSync(join(tmpdir(), "chorus-agents-"));
+  // First load is invalid → throws, and must NOT be cached.
+  writeDefinition(dir, "agent.json", validDefinition({ allowedToolIds: ["not.a.tool"] }));
+  assert.throws(() => loadBuiltInAgentTemplates({ agentsDir: dir }), /Unknown tool id/);
+
+  // Fixing the file and reloading the same dir must pick up the correction.
+  writeDefinition(dir, "agent.json", validDefinition());
+  const first = loadBuiltInAgentTemplates({ agentsDir: dir });
+  assert.equal(first.length, 1);
+  // A repeat load returns the same memoized array (no re-read).
+  assert.strictEqual(loadBuiltInAgentTemplates({ agentsDir: dir }), first);
+});
+
 test("built-in loader rejects duplicate ids and names", () => {
   const dir = mkdtempSync(join(tmpdir(), "chorus-agents-"));
   writeDefinition(dir, "one.json", validDefinition());
