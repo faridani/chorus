@@ -122,8 +122,8 @@ function TemplateEditor({
   const [model, setModel] = useState(template?.model ?? "");
   const [busy, setBusy] = useState(false);
 
-  const selectable = backends.filter((b) => b.available);
-  const current = backends.find((b) => b.id === backendId);
+  const selectable = backendChoices(backends, backendId, model);
+  const current = selectable.find((b) => b.id === backendId);
   const modelOptions = current?.models ?? [];
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -167,11 +167,10 @@ function TemplateEditor({
                 setModel("");
               }}
             >
-              {selectable.length === 0 && <option value="codex">codex</option>}
               {selectable.map((b) => (
-                <option key={b.id} value={b.id} disabled={!b.implemented}>
+                <option key={b.id} value={b.id} disabled={!b.available || !b.implemented}>
                   {b.label}
-                  {b.implemented ? "" : " (detected — not wired yet)"}
+                  {!b.available ? " (not installed)" : b.implemented ? "" : " (detected — not wired yet)"}
                 </option>
               ))}
             </select>
@@ -244,4 +243,25 @@ function TemplateEditor({
       </div>
     </div>
   );
+}
+
+function backendChoices(backends: BackendInfo[], selectedId: string, selectedModel: string): BackendInfo[] {
+  const choices = backends.filter((b) => b.available || b.id === selectedId);
+  if (!choices.some((b) => b.id === selectedId)) {
+    choices.push(fallbackBackend(selectedId, selectedModel));
+  }
+  return choices.length ? choices : [fallbackBackend("codex", "")];
+}
+
+function fallbackBackend(id: string, model: string): BackendInfo {
+  return {
+    id,
+    label: id,
+    bin: id,
+    available: true,
+    version: null,
+    models: model ? [model] : [],
+    defaultModel: null,
+    implemented: true,
+  };
 }

@@ -49,7 +49,8 @@ test("templateToRoleInput copies tool permissions", () => {
     forbidden: ["delete data"],
     allowedToolIds: ["repo.read", "verify.run"],
     forbiddenToolIds: ["prs.open.request"],
-    backendId: "codex",
+    backendId: "gemini",
+    model: "gemini-2.5-pro",
     createdAt: 0,
   };
   const input = templateToRoleInput(tmpl);
@@ -57,4 +58,6 @@ test("templateToRoleInput copies tool permissions", () => {
   assert.deepEqual(input.forbiddenToolIds, ["prs.open.request"]);
   assert.deepEqual(input.allowed, ["run tests"]);
   assert.equal(input.name, "qa");
+  assert.equal(input.backendId, "gemini");
+  assert.equal(input.model, "gemini-2.5-pro");
 });

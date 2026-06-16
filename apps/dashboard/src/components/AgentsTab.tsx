@@ -201,11 +201,10 @@ function RoleEditor({
   const [model, setModel] = useState(role?.model ?? "");
   const [busy, setBusy] = useState(false);
 
-  // Backends to offer: detected + available; ensure the role's current backend
-  // is present even if not detected, and always keep codex as a fallback.
-  const known = backends.length ? backends : [];
-  const selectable = known.filter((b) => b.available);
-  const currentBackend = known.find((b) => b.id === backendId);
+  // Offer installed backends for new selections, while preserving the saved
+  // backend/model when editing a role whose CLI is temporarily unavailable.
+  const selectable = backendChoices(backends, backendId, model);
+  const currentBackend = selectable.find((b) => b.id === backendId);
   const modelOptions = currentBackend?.models ?? [];
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -249,11 +248,10 @@ function RoleEditor({
                 setModel(""); // reset model when backend changes
               }}
             >
-              {selectable.length === 0 && <option value="codex">codex</option>}
               {selectable.map((b) => (
-                <option key={b.id} value={b.id} disabled={!b.implemented}>
+                <option key={b.id} value={b.id} disabled={!b.available || !b.implemented}>
                   {b.label}
-                  {b.implemented ? "" : " (detected — not wired yet)"}
+                  {!b.available ? " (not installed)" : b.implemented ? "" : " (detected — not wired yet)"}
                 </option>
               ))}
             </select>
@@ -335,4 +333,25 @@ function RoleEditor({
       </div>
     </div>
   );
+}
+
+function backendChoices(backends: BackendInfo[], selectedId: string, selectedModel: string): BackendInfo[] {
+  const choices = backends.filter((b) => b.available || b.id === selectedId);
+  if (!choices.some((b) => b.id === selectedId)) {
+    choices.push(fallbackBackend(selectedId, selectedModel));
+  }
+  return choices.length ? choices : [fallbackBackend("codex", "")];
+}
+
+function fallbackBackend(id: string, model: string): BackendInfo {
+  return {
+    id,
+    label: id,
+    bin: id,
+    available: true,
+    version: null,
+    models: model ? [model] : [],
+    defaultModel: null,
+    implemented: true,
+  };
 }

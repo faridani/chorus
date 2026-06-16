@@ -3,7 +3,13 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { VersionInfo } from "@chorus/web";
-import { BackendRegistry, CodexBackend, CodexQuotaPolicy } from "@chorus/backends";
+import {
+  BackendRegistry,
+  ClaudeBackend,
+  CodexBackend,
+  CodexQuotaPolicy,
+  GeminiBackend,
+} from "@chorus/backends";
 import { ChorusBus, type Notifier } from "@chorus/core";
 import { ChorusDb } from "@chorus/db";
 import { GitService } from "@chorus/git-service";
@@ -25,17 +31,20 @@ async function main(): Promise<void> {
 
   // Backends.
   const backends = new BackendRegistry();
+  const quotaPolicy = new CodexQuotaPolicy({
+    exhaustionPatterns: config.quota.exhaustionPatterns,
+    backoffStartMs: config.quota.backoffStartMs,
+    backoffMaxMs: config.quota.backoffMaxMs,
+  });
   backends.register(
     new CodexBackend({
-      quotaPolicy: new CodexQuotaPolicy({
-        exhaustionPatterns: config.quota.exhaustionPatterns,
-        backoffStartMs: config.quota.backoffStartMs,
-        backoffMaxMs: config.quota.backoffMaxMs,
-      }),
+      quotaPolicy,
       defaultModel: config.agent.model,
       reasoningSummary: config.agent.reasoningSummary,
     }),
   );
+  backends.register(new ClaudeBackend({ quotaPolicy }));
+  backends.register(new GeminiBackend({ quotaPolicy }));
 
   // Notifier.
   const notifier = buildNotifier(config);
