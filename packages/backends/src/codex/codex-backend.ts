@@ -48,7 +48,9 @@ export class CodexBackend implements AIBackend {
   constructor(private readonly opts: CodexBackendOptions) {}
 
   prepare(): Promise<string | null> {
-    if (this.opts.autoUpdate === false) return Promise.resolve(null);
+    // Skip when a custom bin is set: the npm update can't target it and would
+    // fire a real global install (e.g. in tests / custom environments).
+    if (this.opts.autoUpdate === false || this.opts.bin) return Promise.resolve(null);
     // Codex has no `codex update` subcommand; update via the npm global package.
     this.prepared ??= runCliUpdate("npm", ["install", "-g", "@openai/codex@latest"], "codex", 180_000);
     return this.prepared;

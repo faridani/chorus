@@ -26,7 +26,7 @@ export async function runCliUpdate(
       console.error(`[backend:${label}] ${msg} (\`${cmd} ${args.join(" ")}\`)`);
       return msg;
     }
-    const tail = (r.stderr || r.stdout).trim().split("\n").slice(-3).join("\n");
+    const tail = (r.stderr || r.stdout || "").trim().split("\n").slice(-3).join("\n");
     console.error(
       `[backend:${label}] update exited ${r.code}; continuing with installed version.\n${tail}`,
     );
