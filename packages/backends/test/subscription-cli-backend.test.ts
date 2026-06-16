@@ -69,6 +69,7 @@ test("Gemini backend launches the selected model and parses JSON response payloa
   assert.equal(argv[argv.indexOf("-m") + 1], "gemini-2.5-pro");
   assert.equal(argv[argv.indexOf("--output-format") + 1], "json");
   assert.equal(argv[argv.indexOf("--approval-mode") + 1], "yolo");
+  assert.ok(argv.includes("--skip-trust"));
 });
 
 function fakeCli(t: TestContext, kind: "claude" | "gemini") {
