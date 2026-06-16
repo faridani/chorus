@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { z } from "zod";
-import { parseStructuredOutput } from "../src/structured-run.js";
+import { looksLikeJsonObject, parseStructuredOutput } from "../src/structured-run.js";
 
 const Schema = z.object({ ok: z.boolean(), note: z.string().optional().default("") });
 
@@ -36,4 +36,23 @@ test("schema mismatch → not ok", () => {
   const r = parseStructuredOutput(tmpFile('{"ok":"nope"}'), Schema);
   assert.equal(r.ok, false);
   if (!r.ok) assert.match(r.error, /schema validation/);
+});
+
+test("looksLikeJsonObject: suppresses schema-shaped interim emissions", () => {
+  // The premature evaluator artifacts seen in the wild — must be dropped from the feed.
+  assert.equal(looksLikeJsonObject('{"passed":false,"failures":["commentary channel constrained"]}'), true);
+  assert.equal(looksLikeJsonObject('  {"approved": true}  '), true);
+});
+
+test("looksLikeJsonObject: keeps prose narration", () => {
+  assert.equal(looksLikeJsonObject("I'm going to inspect the branch diff, read-only."), false);
+  assert.equal(looksLikeJsonObject(""), false);
+  // A summary that merely mentions JSON is still prose, not an object literal.
+  assert.equal(looksLikeJsonObject("Returned {ok} after checking the diff"), false);
+});
+
+test("looksLikeJsonObject: arrays and scalars are not objects (kept)", () => {
+  assert.equal(looksLikeJsonObject('["a","b"]'), false);
+  assert.equal(looksLikeJsonObject("42"), false);
+  assert.equal(looksLikeJsonObject('{ broken json'), false);
 });

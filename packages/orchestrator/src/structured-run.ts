@@ -23,6 +23,16 @@ export const PROSE_NARRATION_RULE =
 export const READ_ONLY_RULE =
   "You run in a READ-ONLY sandbox: you may read files and run read-only commands (e.g. `git diff`, `git log`, `cat`), but you CANNOT write files or run build/test/install commands such as `npm install`, `npm run build`, or `npm test` — they FAIL on sandbox write-denial, NOT because anything is broken. Do NOT attempt them. Chorus runs verification separately; treat its results as authoritative and base your judgment on the diff, the work summary, and the trail.";
 
+/**
+ * Appended to evaluator/reviewer prompts. Keeps judgments grounded in the diff +
+ * authoritative verify output and time-bounded, WITHOUT discouraging dependency
+ * investigation that an acceptance criterion genuinely depends on (e.g. checking
+ * a CLI's required flags). Exhaustive line-by-line audits of third-party/
+ * node_modules internals are slow and risk the idle timeout killing the run.
+ */
+export const EVIDENCE_SCOPE_RULE =
+  "Base your judgment primarily on the committed diff, the ticket's acceptance criteria, and the authoritative verify output. You MAY inspect external/dependency behavior (a CLI's flags, a library's docs) when an acceptance criterion genuinely depends on it — but do so purposefully and stop once you have the answer. Do NOT exhaustively audit third-party or node_modules internals line-by-line when the diff already settles the question; long inspections risk being interrupted before you can report.";
+
 export interface StructuredRunOptions {
   /** Working directory (the ticket's worktree). */
   cwd: string;
@@ -89,21 +99,50 @@ export async function runStructured<T>(
   opts.onStart?.(() => proc.stop());
   if (opts.onEvent) {
     proc.onLine((line) => {
-      for (const ev of mapCodexLine(line, opts.cwd)) opts.onEvent!(ev);
+      for (const ev of mapCodexLine(line, opts.cwd)) {
+        // Structured runs emit their AUTHORITATIVE result via the `-o` file, but
+        // codex ALSO streams schema-shaped JSON as agent messages — including
+        // premature "in progress" / "commentary channel constrained" emissions
+        // that flood the live feed and can look like a real verdict. Drop those
+        // raw-JSON message events; prose narration (and the recorded result via
+        // the output file) are unaffected. (events.ts already turns JSON with a
+        // `summary` field into prose, so only summary-less raw JSON is dropped.)
+        if (ev.kind === "message" && looksLikeJsonObject(ev.text)) continue;
+        opts.onEvent!(ev);
+      }
     });
   }
 
   const exit = await proc.exit;
-  // Prefer the structured output file: codex commonly writes the final result and
-  // then exits non-zero or lingers until we kill it. A valid result is success
-  // regardless of exit code — discarding it caused spurious evaluator/reviewer
-  // failures. Only when there's no usable output do we report a real failure.
+  // On INTERRUPTION (we killed it, or it hit a wall/idle timeout) the `-o` file may
+  // hold a PREMATURE emission the model wrote mid-inspection — not its final
+  // verdict. Trusting it would turn an interruption into a false rejection (and
+  // redo passing work), so only read the output file when the process ended on
+  // its own. A natural exit — even a non-zero "crashed" (codex commonly writes the
+  // final result then exits non-zero) — is authoritative regardless of exit code.
+  if (exit.outcome === "killed" || exit.outcome === "timeout" || exit.outcome === "idle_timeout") {
+    throw new Error(
+      `${label} run interrupted (${exit.outcome}, code=${exit.code}); ${cleanStderr(exit.stderrTail)}`,
+    );
+  }
   const result = parseStructuredOutput(outputPath, zodSchema);
   if (result.ok) return result.data;
 
   throw new Error(
     `${label} run failed (${exit.outcome}, code=${exit.code}): ${result.error}; ${cleanStderr(exit.stderrTail)}`,
   );
+}
+
+/** True if `text` is a JSON object literal (a structured emission, not prose). */
+export function looksLikeJsonObject(text: string): boolean {
+  const t = text.trim();
+  if (!t.startsWith("{")) return false;
+  try {
+    const v = JSON.parse(t);
+    return typeof v === "object" && v !== null && !Array.isArray(v);
+  } catch {
+    return false;
+  }
 }
 
 /** Codex prints this benign banner on every run; it is not a failure cause. */

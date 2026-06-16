@@ -25,7 +25,7 @@ import { type EvaluatorVerdict, runEvaluator } from "./evaluate.js";
 import { buildManifest, type TaskManifest } from "./manifest.js";
 import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
 import { type ReviewerVerdict, runReviewer } from "./review.js";
-import { PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
+import { EVIDENCE_SCOPE_RULE, PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
 import { runTriage } from "./triage.js";
 
 export interface OrchestratorDeps {
@@ -833,6 +833,8 @@ export class Orchestrator {
         "Set `passed` true ONLY if the ticket is genuinely satisfied; otherwise give a precise `diagnosis` of the SPECIFIC next change needed.",
       );
     }
+    L.push("");
+    L.push(EVIDENCE_SCOPE_RULE);
     L.push(PROSE_NARRATION_RULE);
     return L.join("\n");
   }
@@ -854,6 +856,8 @@ export class Orchestrator {
     L.push(
       "Return `approved`, a one-paragraph `summary`, concrete `risks`, a `rollback` plan, and any `uncertainties`.",
     );
+    L.push("");
+    L.push(EVIDENCE_SCOPE_RULE);
     L.push(PROSE_NARRATION_RULE);
     return L.join("\n");
   }
