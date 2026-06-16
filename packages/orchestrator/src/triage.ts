@@ -1,9 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { mapCodexLine } from "@chorus/backends";
 import type { AgentEvent, OrchestratorDecision } from "@chorus/core";
-import { StreamingProcess } from "@chorus/proc";
 import { z } from "zod";
+import { runStructured } from "./structured-run.js";
 
 const DecisionZ = z.object({
   action: z.enum(["assign", "open_pr", "close", "needs_human"]),
@@ -83,54 +80,20 @@ export interface TriageOptions {
  * Run the orchestrator agent (read-only) to produce a structured decision,
  * streaming its reasoning/commands to `onEvent` as they happen (so the live
  * feed shows the orchestrator "thinking" instead of going silent).
+ *
+ * Delegates to the shared `runStructured` so triage gets the same hardening as
+ * the evaluator/reviewer: the `-o` file is authoritative on a natural exit (incl.
+ * non-zero "crashed", where codex writes the result then exits non-zero), an
+ * interruption (killed/timeout) is NOT mistaken for a real decision, and raw-JSON
+ * agent messages (e.g. premature "needs_human" emissions) are kept out of the feed.
  */
 export async function runTriage(opts: TriageOptions): Promise<OrchestratorDecision> {
-  mkdirSync(opts.artifactsDir, { recursive: true });
-  const schemaPath = join(opts.artifactsDir, "decision-schema.json");
-  const outputPath = join(opts.artifactsDir, "decision.json");
-  const rawLogPath = join(opts.artifactsDir, "raw.log");
-  writeFileSync(schemaPath, JSON.stringify(DECISION_JSON_SCHEMA, null, 2), "utf8");
-
-  const proc = new StreamingProcess(
-    opts.bin ?? "codex",
-    [
-      "exec",
-      "--json",
-      "-s",
-      "read-only",
-      "--skip-git-repo-check",
-      "-C",
-      opts.cwd,
-      "--output-schema",
-      schemaPath,
-      "-o",
-      outputPath,
-      ...(opts.model ? ["-m", opts.model] : []),
-      opts.prompt,
-    ],
-    {
-      cwd: opts.cwd,
-      rawLogPath,
-      maxWallClockMs: opts.maxWallClockMs ?? 10 * 60 * 1000,
-      idleTimeoutMs: opts.idleTimeoutMs,
-    },
+  return runStructured<OrchestratorDecision>(
+    "decision",
+    { ...opts, sandbox: "read-only" },
+    DECISION_JSON_SCHEMA,
+    DecisionZ,
   );
-  opts.onStart?.(() => proc.stop());
-  if (opts.onEvent) {
-    proc.onLine((line) => {
-      for (const ev of mapCodexLine(line, opts.cwd)) opts.onEvent!(ev);
-    });
-  }
-
-  const exit = await proc.exit;
-  if (exit.code !== 0) {
-    throw new Error(`Orchestrator triage failed (${exit.code}): ${exit.stderrTail.slice(-500)}`);
-  }
-  const parsed = DecisionZ.safeParse(JSON.parse(readFileSync(outputPath, "utf8")));
-  if (!parsed.success) {
-    throw new Error(`Orchestrator triage produced invalid output: ${parsed.error.message}`);
-  }
-  return parsed.data;
 }
 
 export { DecisionZ, DECISION_JSON_SCHEMA };
