@@ -99,15 +99,27 @@ export function activeAgents(
 
 /**
  * The hub + spokes for a ticket: the orchestrator hub, the project's other
- * roles as spokes, plus any trail-only actors (e.g. hybrid-mode evaluator/
- * reviewer) so they still show — those are marked non-editable.
+ * roles as spokes, plus any actors that only appear in the trail or the live
+ * feed (e.g. hybrid-mode evaluator/reviewer, whose gate outcomes are journaled
+ * rather than written to the trail) so they still get a node + clickable log —
+ * those are marked non-editable.
  */
-export function spokeAgents(roles: Role[], events: TicketEvent[], ticketId: string): AgentBox[] {
+export function spokeAgents(
+  roles: Role[],
+  events: TicketEvent[],
+  ticketId: string,
+  feed: FeedItem[] = [],
+): AgentBox[] {
   const roleNames = new Set(roles.map((r) => r.name));
   const names = new Set<string>([ORCHESTRATOR]);
   for (const r of roles) names.add(r.name);
   for (const e of events) {
     if (e.ticketId === ticketId && e.actor && e.actor !== "system") names.add(e.actor);
+  }
+  for (const { e } of feed) {
+    if (e.type === "agent_event" && e.ticketId === ticketId && e.role && e.role !== "system") {
+      names.add(e.role);
+    }
   }
   return [...names]
     .map((name) => ({ name, editable: roleNames.has(name), isHub: name === ORCHESTRATOR }))
@@ -128,7 +140,7 @@ export function liveEventText(ev: { kind?: string; [k: string]: unknown }): stri
       const items = (Array.isArray(ev.items) ? ev.items : []) as { completed?: boolean; text?: string }[];
       const done = items.filter((i) => i.completed).length;
       const next = items.find((i) => !i.completed);
-      return `plan ${done}/${items.length}${next ? ` — ${next.text}` : ""}`;
+      return `plan ${done}/${items.length}${next?.text ? ` — ${next.text}` : ""}`;
     }
     case "quota_warning":
       return String(ev.message ?? "");
@@ -159,7 +171,9 @@ export function agentActivity(
   for (const { e } of feed) {
     if (e.type === "agent_event" && e.ticketId === ticketId && e.role === agent && e.event) {
       items.push({
-        at: typeof e.at === "number" ? e.at : 0,
+        // Fall back to "now" (not 0/epoch) so a timestamp-less live event sorts
+        // to the end of the log, not the start where the cap would drop it.
+        at: typeof e.at === "number" ? e.at : Date.now(),
         kind: String(e.event.kind ?? "log"),
         text: liveEventText(e.event),
         source: "live",

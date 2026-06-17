@@ -45,13 +45,20 @@ test("spokeAgents marks project roles editable, trail-only actors not, hub first
     { id: "2", name: "software-dev", description: "", allowed: [], forbidden: [], allowedToolIds: [], forbiddenToolIds: [], backendId: "codex" },
   ];
   const events: TicketEvent[] = [ev("software-dev", "work", "x", 1), ev("reviewer", "note", "y", 2)];
-  const boxes = spokeAgents(roles, events, "t1");
+  // A gate agent (evaluator) that only shows up in the live feed must still get
+  // a node, marked non-editable.
+  const feed: FeedItem[] = [
+    { e: { type: "agent_event", ticketId: "t1", role: "evaluator", at: 3, event: { kind: "command" } } },
+  ];
+  const boxes = spokeAgents(roles, events, "t1", feed);
   assert.equal(boxes[0]?.name, "orchestrator");
   assert.ok(boxes[0]?.isHub);
   const dev = boxes.find((b) => b.name === "software-dev");
   const rev = boxes.find((b) => b.name === "reviewer");
+  const evl = boxes.find((b) => b.name === "evaluator");
   assert.equal(dev?.editable, true);
   assert.equal(rev?.editable, false, "trail-only actor (reviewer) is not editable");
+  assert.equal(evl?.editable, false, "live-feed-only actor (evaluator) appears, non-editable");
 });
 
 test("agentActivity merges trail + live for one agent, time-ordered", () => {

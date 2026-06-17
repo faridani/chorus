@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { TicketEvent } from "../api.js";
 import { agentActivity, type FeedItem } from "../stateMachineModel.js";
 
@@ -32,10 +33,15 @@ export function AgentActivityLog({
   editable: boolean;
   onEdit: (name: string) => void;
 }) {
+  // Memoized so the parent's 3s tick doesn't re-merge/re-sort every render.
+  // Hook runs unconditionally (before the early return) per the rules of hooks.
+  const items = useMemo(
+    () => (agent ? agentActivity(events, feed, ticketId, agent) : []),
+    [events, feed, ticketId, agent],
+  );
   if (!agent) {
     return <p className="sm-log-empty">Click an agent above to see its activity.</p>;
   }
-  const items = agentActivity(events, feed, ticketId, agent);
   return (
     <div className="sm-log">
       <div className="sm-log-head">
@@ -50,8 +56,11 @@ export function AgentActivityLog({
         <p className="sm-log-empty">No activity recorded yet for {agent}.</p>
       ) : (
         <ul className="sm-log-list">
-          {items.map((it, i) => (
-            <li key={i} className={`sm-log-line src-${it.source}`}>
+          {items.map((it) => (
+            <li
+              key={`${it.source}-${it.at}-${it.kind}-${it.text}`}
+              className={`sm-log-line src-${it.source}`}
+            >
               <span className="ts">{new Date(it.at).toLocaleTimeString()}</span>
               <span className="ico">{ICON[it.kind] ?? "·"}</span>
               <span className="sm-log-text">{it.text}</span>

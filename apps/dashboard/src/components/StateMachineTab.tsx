@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Role, Ticket, TicketEvent } from "../api.js";
 import {
   activeAgents,
@@ -86,10 +86,13 @@ function TicketStateMachine({
   const [view, setView] = useState<"hub" | "dag">("hub");
   const [selected, setSelected] = useState<string | null>(null);
 
-  const agents = spokeAgents(roles, events, ticket.id);
-  const editable = new Set(agents.filter((a) => a.editable).map((a) => a.name));
+  // Memoized so the 3s ticking clock (which only changes `now`) doesn't re-run
+  // these filters/sorts over the (potentially large) events/feed arrays.
+  const agents = useMemo(() => spokeAgents(roles, events, ticket.id, feed), [roles, events, ticket.id, feed]);
+  const editable = useMemo(() => new Set(agents.filter((a) => a.editable).map((a) => a.name)), [agents]);
+  const dag = useMemo(() => buildDag(events, ticket.id), [events, ticket.id]);
+  // Depends on `now`, so recomputed each tick (cheap: a single pass over feed).
   const active = activeAgents(feed, ticket.id, runningTaskIds, now);
-  const dag = buildDag(events, ticket.id);
   const isWorking = runningTaskIds.includes(ticket.id);
 
   // Default the log to the most recent actor so it's useful before any click.
