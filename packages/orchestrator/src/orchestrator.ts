@@ -72,6 +72,8 @@ export class Orchestrator {
   private static readonly MAX_GATE_RETRIES = 3;
   /** Live autonomous sessions, keyed by their (unguessable) MCP token. */
   private readonly sessions = new Map<string, SessionState>();
+  /** ticketId → consecutive autonomous sessions that ended without resolving it. */
+  private readonly sessionFailures = new Map<string, number>();
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -413,9 +415,12 @@ export class Orchestrator {
     // etc.); give the MCP tool call generous headroom beyond that so codex
     // doesn't abandon a still-running delegation.
     const toolTimeoutSec = Math.ceil(this.deps.config.agent.maxWallClockMs / 1000) + 30 * 60;
+    // Reach the daemon on the interface it actually bound to: 0.0.0.0 is
+    // reachable via loopback, but a specific bind host is not.
+    const daemonHost = this.deps.config.host === "0.0.0.0" ? "127.0.0.1" : this.deps.config.host;
     const mcpArgs = buildCodexMcpArgs(
       this.bridgeBinPath(),
-      `http://127.0.0.1:${this.deps.config.port}`,
+      `http://${daemonHost}:${this.deps.config.port}`,
       token,
       toolTimeoutSec,
     );
@@ -478,8 +483,15 @@ export class Orchestrator {
       return;
     }
 
-    if (session.finished) {
-      // A terminal action already moved the ticket (pr_open / closed / blocked).
+    // A session counts as resolved only if a terminal tool action actually moved
+    // the ticket: open_pr → pr_open, close_ticket → closed, needs_human →
+    // blocked. A bare finish("abandoned"), a finish without a terminal action,
+    // or a crash before any tool call leaves the ticket "in_progress" — NOT
+    // resolved (otherwise it would silently strand, dropping out of dispatch).
+    const after = this.deps.db.getTicket(ticket.id);
+    const TERMINAL = new Set(["pr_open", "merged", "closed", "blocked"]);
+    if (after && TERMINAL.has(after.status)) {
+      this.sessionFailures.delete(ticket.id);
       // Keep the PR branch; drop every other scratch worktree.
       await this.cleanupSessionWorktrees(project, session, session.prUrl ? "keep-pr" : null);
       this.trail(
@@ -487,20 +499,31 @@ export class Orchestrator {
         ticket.id,
         ORCHESTRATOR_ROLE,
         "triage",
-        `Session ${session.finished.outcome}: ${session.finished.message}`,
+        `Session ${session.finished?.outcome ?? after.status}: ${session.finished?.message ?? ""}`,
       );
       return;
     }
 
-    // Session ended without a terminal action (model gave up, crashed, or hit
-    // the wall clock). Clean up and hand back so a later tick retries.
+    // Not resolved (crash, abandoned, or finish without a terminal action).
+    // Count failures per ticket so a persistently-failing session can't spin
+    // forever — the worker-attempt guard never trips when no spoke ever ran.
     await this.cleanupSessionWorktrees(project, session, null);
+    const failures = (this.sessionFailures.get(ticket.id) ?? 0) + 1;
+    this.sessionFailures.set(ticket.id, failures);
+    const reason = session.finished
+      ? `finished as "${session.finished.outcome}" without opening a PR, closing, or escalating`
+      : `ended without a terminal action (${exitOutcome || "exited"})`;
+    if (failures >= this.deps.config.maxAttemptsPerTicket) {
+      this.sessionFailures.delete(ticket.id);
+      this.blockTicket(project, ticket, `Autonomous orchestrator ${reason} ${failures}×. Parking for a human.`);
+      return;
+    }
     this.trail(
       project.id,
       ticket.id,
       ORCHESTRATOR_ROLE,
       "note",
-      `Orchestrator session ended without a terminal action (${exitOutcome || "exited"}). Will retry.`,
+      `Orchestrator session ${reason} (try ${failures}/${this.deps.config.maxAttemptsPerTicket}). Will retry.`,
     );
     this.handBackToOrchestrator(project.id, ticket.id);
   }
@@ -666,6 +689,9 @@ export class Orchestrator {
 
     session.running++;
     session.spokeCount++;
+    // Tracked so we can drop it from session.handles once this run exits (the
+    // set is only needed to kill in-flight runs on Stop).
+    let activeHandle: { stop: (r: "killed") => Promise<void> } | null = null;
     try {
       // Resolve (or create) the worktree for this run.
       let wt = baseWorktreeId ? session.worktrees.get(baseWorktreeId) : undefined;
@@ -750,6 +776,7 @@ export class Orchestrator {
           roleName: role.name,
           onHandle: (handle) => {
             this.deps.db.updateRun(runId, { pid: handle.pid ?? null, pgid: handle.pgid ?? null });
+            activeHandle = handle;
             session.handles.add(handle);
           },
         });
@@ -816,6 +843,7 @@ export class Orchestrator {
         },
       };
     } finally {
+      if (activeHandle) session.handles.delete(activeHandle);
       session.running--;
     }
   }
