@@ -21,6 +21,12 @@ import { z } from "zod";
 
 const DAEMON_URL = process.env.CHORUS_DAEMON_URL ?? "http://127.0.0.1:7878";
 const TOKEN = process.env.CHORUS_SESSION_TOKEN ?? "";
+if (!TOKEN) {
+  // Without a session token every tool call would 404; fail loudly so the
+  // misconfiguration surfaces at startup instead of as obscure routing errors.
+  process.stderr.write("[chorus-mcp] CHORUS_SESSION_TOKEN is required\n");
+  process.exit(1);
+}
 
 interface ToolSpec {
   name: string;

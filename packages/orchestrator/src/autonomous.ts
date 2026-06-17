@@ -50,11 +50,14 @@ export function buildCodexMcpArgs(
   token: string,
   toolTimeoutSec: number,
 ): string[] {
+  // The value is parsed as TOML; on Windows a backslash path would be read as
+  // escape sequences. Forward slashes work on every platform node accepts.
+  const normalizedBin = bridgeBin.replace(/\\/g, "/");
   return [
     "-c",
     `mcp_servers.chorus.command="node"`,
     "-c",
-    `mcp_servers.chorus.args=["${bridgeBin}"]`,
+    `mcp_servers.chorus.args=["${normalizedBin}"]`,
     "-c",
     `mcp_servers.chorus.env={ CHORUS_SESSION_TOKEN = "${token}", CHORUS_DAEMON_URL = "${daemonUrl}" }`,
     "-c",

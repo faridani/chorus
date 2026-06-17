@@ -81,8 +81,15 @@ export function createServer(deps: WebDeps): FastifyInstance {
   // bridge always runs on the daemon host.
   if (deps.sessionApi) {
     const sessionApi = deps.sessionApi;
+    // The bridge reaches the daemon on the host's configured address. Allow
+    // loopback always, plus the bound host IP when it's a specific interface
+    // (a remote client still fails: its source IP won't match config.host).
+    const boundHost = deps.config.host;
     const isLoopback = (ip: string) =>
-      ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+      ip === "127.0.0.1" ||
+      ip === "::1" ||
+      ip === "::ffff:127.0.0.1" ||
+      (boundHost !== "0.0.0.0" && (ip === boundHost || ip === `::ffff:${boundHost}`));
     const handle = async (
       req: { params: unknown; body?: unknown; ip: string },
       reply: { code: (n: number) => { send: (b: unknown) => unknown } },
