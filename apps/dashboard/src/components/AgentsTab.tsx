@@ -11,15 +11,29 @@ export function AgentsTab({
   backends,
   tools,
   onChange,
+  openRoleName,
+  onOpenConsumed,
 }: {
   projectId: string;
   roles: Role[];
   backends: BackendInfo[];
   tools: ToolDef[];
   onChange: () => void;
+  /** When set (e.g. from the state-machine "Edit agent" action), open this role's editor. */
+  openRoleName?: string | null;
+  onOpenConsumed?: () => void;
 }) {
   const [editing, setEditing] = useState<Role | "new" | null>(null);
   const [choosing, setChoosing] = useState(false);
+
+  // Honor a request to open a specific agent's editor (deep-link from the
+  // State Machine tab), then clear the intent so re-renders don't reopen it.
+  useEffect(() => {
+    if (!openRoleName) return;
+    const role = roles.find((r) => r.name === openRoleName);
+    if (role) setEditing(role);
+    onOpenConsumed?.();
+  }, [openRoleName, roles, onOpenConsumed]);
 
   return (
     <div>

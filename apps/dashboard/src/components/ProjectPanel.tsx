@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type BackendInfo, type ProjectDetail, type TicketEvent, type ToolDef } from "../api.js";
+import type { FeedItem } from "../stateMachineModel.js";
 import { ActivityTab } from "./ActivityTab.js";
 import { AgentsTab } from "./AgentsTab.js";
 import { SettingsTab } from "./SettingsTab.js";
@@ -15,6 +16,7 @@ export function ProjectPanel({
   backends,
   tools,
   events,
+  feed,
   runningTaskIds,
   onChange,
   onDebugTicket,
@@ -23,12 +25,16 @@ export function ProjectPanel({
   backends: BackendInfo[];
   tools: ToolDef[];
   events: TicketEvent[];
+  feed: FeedItem[];
   runningTaskIds: string[];
   onChange: () => void;
   onDebugTicket: (ticketId: string, ticketTitle: string) => void;
 }) {
   const { project, tickets, roles, pullRequests, attemptJournal, changelog, suggestions } = detail;
   const [tab, setTab] = useState<Tab>("tickets");
+  // When the state-machine view asks to edit an agent, switch to the Agents tab
+  // and tell it which role to open.
+  const [editRoleName, setEditRoleName] = useState<string | null>(null);
 
   const needsSpec = project.status === "needs_spec";
 
@@ -73,14 +79,22 @@ export function ProjectPanel({
             backends={backends}
             tools={tools}
             onChange={onChange}
+            openRoleName={editRoleName}
+            onOpenConsumed={() => setEditRoleName(null)}
           />
         )}
         {tab === "state" && (
           <StateMachineTab
             tickets={tickets}
             events={events}
+            feed={feed}
+            roles={roles}
             runningTaskIds={runningTaskIds}
             onDebugTicket={onDebugTicket}
+            onEditAgent={(name) => {
+              setTab("agents");
+              setEditRoleName(name);
+            }}
           />
         )}
         {tab === "settings" && <SettingsTab project={project} onSaved={onChange} />}

@@ -181,6 +181,7 @@ export function App() {
               backends={backends}
               tools={tools}
               events={projectEvents}
+              feed={feed}
               runningTaskIds={state?.runningTasks ?? []}
               onChange={() => selected && refreshDetail(selected)}
               onDebugTicket={(ticketId, ticketTitle) => setDebug({ ticketId, ticketTitle })}
