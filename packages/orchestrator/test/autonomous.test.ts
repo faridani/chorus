@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project, Role, Ticket } from "@chorus/core";
-import { buildAutonomousPrompt, buildCodexMcpArgs, buildSpokeAgentPrompt } from "../src/autonomous.js";
+import { buildAutonomousPrompt, buildCodexMcpArgs, buildSpokeAgentPrompt, isCodingRole } from "../src/autonomous.js";
 
 const project = {
   id: "p1",
@@ -25,6 +25,28 @@ const role = {
   description: "Implements features.",
   allowed: ["edit code"],
   forbidden: ["push to remote"],
+  allowedToolIds: ["repo.read", "repo.modify", "repo.commit", "verify.run"],
+  backendId: "codex",
+} as unknown as Role;
+
+const advisoryRole = {
+  name: "product-designer",
+  description: "Proposes feature ideas.",
+  allowed: ["read the repo"],
+  forbidden: ["edit code"],
+  allowedToolIds: ["repo.read", "tickets.suggest"],
+  forbiddenToolIds: [],
+  backendId: "codex",
+} as unknown as Role;
+
+// A role created before the tool-permission migration: both lists empty.
+const legacyRole = {
+  name: "software-dev",
+  description: "Implements features.",
+  allowed: ["edit code"],
+  forbidden: [],
+  allowedToolIds: [],
+  forbiddenToolIds: [],
   backendId: "codex",
 } as unknown as Role;
 
@@ -72,5 +94,48 @@ test("buildSpokeAgentPrompt embeds the instruction, role rules, and result contr
   assert.ok(p.includes("software-engineer"));
   assert.ok(p.includes("Add the /health route and a test."));
   assert.ok(p.includes("NEVER run `git push`"));
+  assert.ok(p.includes("run the project's checks before finishing"));
   assert.ok(p.includes('"status"') && p.includes("filesChanged"));
+});
+
+test("buildSpokeAgentPrompt gives advisory (non-coding) roles read-only, no-commit guidance", () => {
+  const p = buildSpokeAgentPrompt({
+    project,
+    ticket,
+    role: advisoryRole,
+    instruction: "Propose one new feature idea.",
+    resume: false,
+    trail: [],
+  });
+  // No commit/verify guidance for a role that can't modify the repo.
+  assert.ok(!p.includes("Commit ALL your changes"));
+  assert.ok(!p.includes("run the project's checks before finishing"));
+  // Read-only framing + advisory result contract instead.
+  assert.ok(/read-only, advisory task/i.test(p));
+  assert.ok(p.includes("leave `filesChanged` empty"));
+});
+
+test("buildSpokeAgentPrompt keeps coding guidance for legacy roles with empty tool lists", () => {
+  const p = buildSpokeAgentPrompt({
+    project,
+    ticket,
+    role: legacyRole,
+    instruction: "Implement the feature.",
+    resume: false,
+    trail: [],
+  });
+  // An unconfigured (legacy) role must NOT be downgraded to advisory, or
+  // upgraded installs would silently stop committing implementation work.
+  assert.ok(p.includes("Commit ALL your changes"));
+  assert.ok(p.includes("run the project's checks before finishing"));
+  assert.ok(!/read-only, advisory task/i.test(p));
+});
+
+test("isCodingRole: advisory only on explicit signal; empty lists stay coding", () => {
+  assert.equal(isCodingRole(role), true); // grants repo.modify/commit
+  assert.equal(isCodingRole(legacyRole), true); // empty lists → coding
+  assert.equal(isCodingRole(advisoryRole), false); // explicit non-empty, no write tools
+  // Explicit denial of write capability → advisory.
+  const forbidWrite = { ...role, allowedToolIds: [], forbiddenToolIds: ["repo.modify", "repo.commit"] } as Role;
+  assert.equal(isCodingRole(forbidWrite), false);
 });

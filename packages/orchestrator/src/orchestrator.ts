@@ -26,6 +26,7 @@ import {
   buildAutonomousPrompt,
   buildCodexMcpArgs,
   buildSpokeAgentPrompt,
+  isCodingRole,
   type SessionState,
   type SpokeAgentInfo,
 } from "./autonomous.js";
@@ -34,7 +35,12 @@ import { buildManifest, type TaskManifest } from "./manifest.js";
 import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
 import { type ReviewerVerdict, runReviewer } from "./review.js";
 import { runAgentProcess } from "./spoke-runner.js";
-import { EVIDENCE_SCOPE_RULE, PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
+import {
+  EVIDENCE_SCOPE_RULE,
+  looksLikeJsonObject,
+  PROSE_NARRATION_RULE,
+  READ_ONLY_RULE,
+} from "./structured-run.js";
 import { runTriage } from "./triage.js";
 
 export interface OrchestratorDeps {
@@ -459,6 +465,9 @@ export class Orchestrator {
       };
     proc.onLine((line) => {
       for (const ev of mapCodexLine(line, project.localPath)) {
+        // Drop schema-shaped JSON the model streams as interim "messages" (e.g.
+        // premature result emissions) so they don't flood the live feed.
+        if (ev.kind === "message" && looksLikeJsonObject(ev.text)) continue;
         this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, ev);
       }
     });
@@ -689,6 +698,11 @@ export class Orchestrator {
 
     session.running++;
     session.spokeCount++;
+    // Advisory (read-only) roles don't edit the repo, so their runs skip the
+    // setup command (which can mutate tracked files like lockfiles) and the
+    // leftover-changes autocommit — keeping the read-only contract real, not
+    // just prompt guidance.
+    const coding = isCodingRole(role);
     // Tracked so we can drop it from session.handles once this run exits (the
     // set is only needed to kill in-flight runs on Stop).
     let activeHandle: { stop: (r: "killed") => Promise<void> } | null = null;
@@ -703,7 +717,7 @@ export class Orchestrator {
         await this.deps.git.addWorktree(project.localPath, path, branch, project.baseBranch);
         wt = { id, path, branch };
         session.worktrees.set(id, wt);
-        await this.runSetup(project, ticket, path);
+        if (coding) await this.runSetup(project, ticket, path);
       }
 
       const backend = this.deps.backends.has(role.backendId)
@@ -805,8 +819,10 @@ export class Orchestrator {
         };
       }
 
-      // Capture anything the agent left uncommitted (invisible to diff/PR otherwise).
-      if (!(await this.deps.git.isWorktreeClean(wt.path))) {
+      // Capture anything a coding agent left uncommitted (invisible to diff/PR
+      // otherwise). Advisory runs are read-only: nothing should be committed,
+      // and any incidental dirt is left for the worktree teardown to discard.
+      if (coding && !(await this.deps.git.isWorktreeClean(wt.path))) {
         try {
           await this.deps.git.commitAll(wt.path, `${ticket.title}\n\n[chorus] auto-committed leftover changes`);
         } catch {

@@ -134,7 +134,8 @@ export async function runStructured<T>(
 }
 
 /** True if `text` is a JSON object literal (a structured emission, not prose). */
-export function looksLikeJsonObject(text: string): boolean {
+export function looksLikeJsonObject(text: unknown): boolean {
+  if (typeof text !== "string") return false;
   const t = text.trim();
   if (!t.startsWith("{")) return false;
   try {
