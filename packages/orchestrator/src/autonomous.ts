@@ -53,13 +53,18 @@ export function buildCodexMcpArgs(
   // The value is parsed as TOML; on Windows a backslash path would be read as
   // escape sequences. Forward slashes work on every platform node accepts.
   const normalizedBin = bridgeBin.replace(/\\/g, "/");
+  // The bridge's own daemon-call cap MUST exceed the spoke wall-clock, or it
+  // fires before the daemon-side worker finishes — exactly the premature
+  // `fetch failed` that spawned duplicate workers. Tie it to the same budget as
+  // codex's tool timeout so it can never be the first to give up.
+  const callTimeoutMs = Math.ceil(toolTimeoutSec) * 1000;
   return [
     "-c",
     `mcp_servers.chorus.command="node"`,
     "-c",
     `mcp_servers.chorus.args=["${normalizedBin}"]`,
     "-c",
-    `mcp_servers.chorus.env={ CHORUS_SESSION_TOKEN = "${token}", CHORUS_DAEMON_URL = "${daemonUrl}" }`,
+    `mcp_servers.chorus.env={ CHORUS_SESSION_TOKEN = "${token}", CHORUS_DAEMON_URL = "${daemonUrl}", CHORUS_DAEMON_CALL_TIMEOUT_MS = "${callTimeoutMs}" }`,
     "-c",
     `mcp_servers.chorus.startup_timeout_sec=30`,
     "-c",

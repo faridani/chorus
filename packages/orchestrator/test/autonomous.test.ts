@@ -57,6 +57,9 @@ test("buildCodexMcpArgs registers a node-launched stdio server with session env 
   assert.ok(joined.includes(`mcp_servers.chorus.args=["/abs/agent-mcp/dist/bin.js"]`));
   assert.ok(joined.includes(`CHORUS_SESSION_TOKEN = "tok-123"`));
   assert.ok(joined.includes(`CHORUS_DAEMON_URL = "http://127.0.0.1:7878"`));
+  // The bridge's own daemon-call cap is derived from the tool timeout (ms) so it
+  // always outlasts the spoke wall-clock and can't fire first.
+  assert.ok(joined.includes(`CHORUS_DAEMON_CALL_TIMEOUT_MS = "4500000"`));
   // Long per-tool-call timeout so a multi-minute run_agent isn't abandoned at ~120s.
   assert.ok(joined.includes(`mcp_servers.chorus.tool_timeout_sec=4500`));
   assert.ok(joined.includes(`mcp_servers.chorus.startup_timeout_sec=30`));

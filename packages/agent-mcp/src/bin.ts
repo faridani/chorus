@@ -18,6 +18,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ZodRawShape } from "zod";
 import { z } from "zod";
+import { callDaemon, DEFAULT_CALL_TIMEOUT_MS } from "./client.js";
 
 const DAEMON_URL = process.env.CHORUS_DAEMON_URL ?? "http://127.0.0.1:7878";
 const TOKEN = process.env.CHORUS_SESSION_TOKEN ?? "";
@@ -153,24 +154,15 @@ const TOOLS: ToolSpec[] = [
   },
 ];
 
-async function callDaemon(
-  method: "GET" | "POST",
-  path: string,
-  body: unknown,
-): Promise<{ ok: boolean; text: string }> {
-  const url = `${DAEMON_URL}/api/internal/sessions/${encodeURIComponent(TOKEN)}${path}`;
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
-    });
-    const text = await res.text();
-    return { ok: res.ok, text };
-  } catch (err) {
-    return { ok: false, text: `bridge could not reach daemon: ${String(err)}` };
-  }
-}
+// Allow the orchestrator to tune the per-call cap (it injects a value derived
+// from the spoke wall-clock budget). Standalone default is a generous 30 min so
+// a long delegation is never abandoned mid-flight — which would look like a
+// delegation failure and spawn a duplicate worker. `0` explicitly disables the
+// cap; a non-numeric value falls back to the default.
+const rawTimeout = process.env.CHORUS_DAEMON_CALL_TIMEOUT_MS;
+const parsedTimeout = rawTimeout !== undefined && rawTimeout !== "" ? Number(rawTimeout) : Number.NaN;
+const CALL_TIMEOUT_MS =
+  Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : DEFAULT_CALL_TIMEOUT_MS;
 
 const server = new McpServer({ name: "chorus", version: "0.1.0" });
 
@@ -179,7 +171,7 @@ for (const tool of TOOLS) {
     tool.name,
     { description: tool.description, inputSchema: tool.input },
     async (args: Record<string, unknown>) => {
-      const { ok, text } = await callDaemon(tool.method, tool.path, args);
+      const { ok, text } = await callDaemon(DAEMON_URL, TOKEN, tool.method, tool.path, args, CALL_TIMEOUT_MS);
       return { content: [{ type: "text", text }], isError: !ok };
     },
   );
