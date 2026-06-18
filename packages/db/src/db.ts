@@ -15,6 +15,7 @@ import type {
   TicketEvent,
   UsageEvent,
 } from "@chorus/core";
+import { normalizeToolIds } from "@chorus/core";
 import { runMigrations } from "./migrations.js";
 
 type Row = Record<string, unknown>;
@@ -526,8 +527,8 @@ function mapRole(r: Row): Role {
     description: r.description as string,
     allowed: JSON.parse(r.allowed as string),
     forbidden: JSON.parse(r.forbidden as string),
-    allowedToolIds: JSON.parse((r.allowed_tool_ids as string | null) ?? "[]"),
-    forbiddenToolIds: JSON.parse((r.forbidden_tool_ids as string | null) ?? "[]"),
+    allowedToolIds: parseToolIds(r.allowed_tool_ids),
+    forbiddenToolIds: parseToolIds(r.forbidden_tool_ids),
     backendId: r.backend_id as string,
     model: (r.model as string | null) ?? undefined,
   };
@@ -539,12 +540,21 @@ function mapAgentTemplate(r: Row): AgentTemplate {
     description: r.description as string,
     allowed: JSON.parse(r.allowed as string),
     forbidden: JSON.parse(r.forbidden as string),
-    allowedToolIds: JSON.parse((r.allowed_tool_ids as string | null) ?? "[]"),
-    forbiddenToolIds: JSON.parse((r.forbidden_tool_ids as string | null) ?? "[]"),
+    allowedToolIds: parseToolIds(r.allowed_tool_ids),
+    forbiddenToolIds: parseToolIds(r.forbidden_tool_ids),
     backendId: r.backend_id as string,
     model: (r.model as string | null) ?? undefined,
     createdAt: r.created_at as number,
   };
+}
+
+function parseToolIds(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  try {
+    return normalizeToolIds(JSON.parse(value));
+  } catch {
+    return [];
+  }
 }
 function mapTicket(r: Row): Ticket {
   return {

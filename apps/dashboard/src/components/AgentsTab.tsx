@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { type AgentTemplate, api, type BackendInfo, type Role, type ToolDef } from "../api.js";
 import { backendChoices } from "../backendChoices.js";
+import { normalizeToolIds } from "../toolPermissions.js";
 import { StringListEditor } from "./StringListEditor.js";
 import { summarizeTools, ToolPermissionEditor } from "./ToolPermissionEditor.js";
 
@@ -216,8 +217,8 @@ function RoleEditor({
   const [description, setDescription] = useState(role?.description ?? "");
   const [allowed, setAllowed] = useState<string[]>(role?.allowed ?? []);
   const [forbidden, setForbidden] = useState<string[]>(role?.forbidden ?? []);
-  const [allowedToolIds, setAllowedToolIds] = useState<string[]>(role?.allowedToolIds ?? []);
-  const [forbiddenToolIds, setForbiddenToolIds] = useState<string[]>(role?.forbiddenToolIds ?? []);
+  const [allowedToolIds, setAllowedToolIds] = useState<string[]>(normalizeToolIds(role?.allowedToolIds));
+  const [forbiddenToolIds, setForbiddenToolIds] = useState<string[]>(normalizeToolIds(role?.forbiddenToolIds));
   const [backendId, setBackendId] = useState(role?.backendId ?? "codex");
   const [model, setModel] = useState(role?.model ?? "");
   const [busy, setBusy] = useState(false);

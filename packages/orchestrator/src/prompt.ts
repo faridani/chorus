@@ -1,4 +1,10 @@
-import { getTool, type Project, type Role, type Ticket, type TicketEvent } from "@chorus/core";
+import {
+  resolveToolPermissions,
+  type Project,
+  type Role,
+  type Ticket,
+  type TicketEvent,
+} from "@chorus/core";
 import { type TaskManifest, renderManifestMarkdown } from "./manifest.js";
 import { PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
 
@@ -8,28 +14,36 @@ import { PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
  * callable in the sandbox; `planned` ones are Chorus-mediated permissions and
  * the model is told not to fabricate calls to them.
  */
-export function renderToolSection(allowedToolIds: string[], forbiddenToolIds: string[]): string[] {
+export function renderToolSection(allowedToolIds: unknown, forbiddenToolIds: unknown): string[] {
   const lines: string[] = ["", "## Chorus tools"];
-  if (allowedToolIds.length === 0) {
+  const permissions = resolveToolPermissions(allowedToolIds, forbiddenToolIds);
+  const allowed = permissions.filter((p) => p.state === "allowed");
+  const forbidden = permissions.filter((p) => p.state === "disallowed");
+  const unspecified = permissions.filter((p) => p.state === "unspecified");
+
+  if (allowed.length === 0) {
     lines.push(
       "No Chorus tools are explicitly granted; work within your sandbox and the guardrails above.",
     );
   } else {
     lines.push("Explicitly allowed capabilities:");
-    for (const id of allowedToolIds) {
-      const t = getTool(id);
-      const note = t ? t.usageNote : "";
-      const tag = t?.availability === "available" ? "[available]" : "[Chorus-mediated; not directly callable yet]";
-      lines.push(`- ${id}${note ? ` — ${note}` : ""} ${tag}`);
+    for (const { tool } of allowed) {
+      const tag = tool.availability === "available" ? "[available]" : "[Chorus-mediated; not directly callable yet]";
+      lines.push(`- ${tool.id} — ${tool.usageNote} ${tag}`);
     }
   }
-  if (forbiddenToolIds.length) {
+  if (forbidden.length) {
     lines.push("");
     lines.push("Explicitly forbidden — do NOT attempt these, even indirectly:");
-    for (const id of forbiddenToolIds) {
-      const t = getTool(id);
-      lines.push(`- ${id}${t ? ` — ${t.description}` : ""}`);
+    for (const { tool } of forbidden) {
+      lines.push(`- ${tool.id} — ${tool.description}`);
     }
+  }
+  if (unspecified.length) {
+    lines.push("");
+    lines.push("Unspecified capabilities (neither explicitly allowed nor forbidden):");
+    for (const { tool } of unspecified) lines.push(`- ${tool.id}`);
+    lines.push("Unspecified means no explicit grant or denial is configured for this role.");
   }
   lines.push("");
   lines.push(

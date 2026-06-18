@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { AgentGalleryTemplate, AgentTemplate } from "./domain.js";
-import { validateToolSelection } from "./tools.js";
+import { normalizeToolIds, validateToolSelection } from "./tools.js";
 
 const StableIdentifierSchema = z
   .string()
@@ -49,6 +49,8 @@ export interface BuiltInAgentLoadOptions {
 export function customAgentTemplateToGalleryTemplate(t: AgentTemplate): AgentGalleryTemplate {
   return {
     ...t,
+    allowedToolIds: normalizeToolIds(t.allowedToolIds),
+    forbiddenToolIds: normalizeToolIds(t.forbiddenToolIds),
     displayName: t.name,
     category: "Custom",
     source: "custom",

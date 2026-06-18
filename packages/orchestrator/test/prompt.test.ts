@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project, Role, Ticket, TicketEvent } from "@chorus/core";
-import { buildAgentPrompt, buildManifest } from "@chorus/orchestrator";
+import { buildAgentPrompt, buildManifest, renderToolSection } from "@chorus/orchestrator";
 
 const project: Project = {
   id: "p1",
@@ -138,6 +138,28 @@ test("prompt says no tools granted when the role has none", () => {
   const bare: Role = { ...role, allowedToolIds: [], forbiddenToolIds: [] };
   const p = buildAgentPrompt({ project, role: bare, ticket, specExcerpt: null, resume: false });
   assert.match(p, /No Chorus tools are explicitly granted/);
+});
+
+test("prompt displays catalog tools missing from role selections as unspecified", () => {
+  const p = buildAgentPrompt({
+    project,
+    role: { ...role, allowedToolIds: ["repo.modify"], forbiddenToolIds: ["prs.open.request"] },
+    ticket,
+    specExcerpt: null,
+    resume: false,
+  });
+
+  assert.match(p, /Unspecified capabilities/);
+  assert.match(p, /- repo\.read/);
+  assert.match(p, /- repo\.modify .* \[available\]/);
+  assert.match(p, /Explicitly forbidden[\s\S]*- prs\.open\.request/);
+});
+
+test("renderToolSection handles missing legacy tool arrays", () => {
+  const p = renderToolSection(null, undefined).join("\n");
+  assert.match(p, /No Chorus tools are explicitly granted/);
+  assert.match(p, /- repo\.read/);
+  assert.match(p, /Unspecified means no explicit grant or denial/);
 });
 
 test("a planned tool is annotated as not directly callable", () => {

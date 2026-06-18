@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   type AgentTemplate,
   getTool,
+  resolveToolPermissions,
   templateToRoleInput,
   TOOL_CATALOG,
   validateToolSelection,
@@ -40,6 +41,37 @@ test("validateToolSelection accepts a valid disjoint selection", () => {
   assert.deepEqual(validateToolSelection([], []), { ok: true });
 });
 
+test("resolveToolPermissions marks absent catalog tools unspecified", () => {
+  const catalog = [
+    getTool("repo.read")!,
+    getTool("repo.modify")!,
+    getTool("prs.open.request")!,
+  ];
+  const resolved = resolveToolPermissions(["repo.read"], ["prs.open.request"], catalog);
+
+  assert.deepEqual(
+    resolved.map((p) => [p.tool.id, p.state]),
+    [
+      ["repo.read", "allowed"],
+      ["repo.modify", "unspecified"],
+      ["prs.open.request", "disallowed"],
+    ],
+  );
+});
+
+test("resolveToolPermissions treats missing legacy selections as unspecified", () => {
+  const catalog = [getTool("repo.read")!, getTool("repo.commit")!];
+  const resolved = resolveToolPermissions(null, undefined, catalog);
+
+  assert.deepEqual(
+    resolved.map((p) => [p.tool.id, p.state]),
+    [
+      ["repo.read", "unspecified"],
+      ["repo.commit", "unspecified"],
+    ],
+  );
+});
+
 test("templateToRoleInput copies tool permissions", () => {
   const tmpl: AgentTemplate = {
     id: "t1",
@@ -60,4 +92,17 @@ test("templateToRoleInput copies tool permissions", () => {
   assert.equal(input.name, "qa");
   assert.equal(input.backendId, "gemini");
   assert.equal(input.model, "gemini-2.5-pro");
+});
+
+test("templateToRoleInput defaults missing legacy tool fields to unspecified", () => {
+  const input = templateToRoleInput({
+    name: "legacy",
+    description: "old template",
+    allowed: [],
+    forbidden: [],
+    backendId: "codex",
+  });
+
+  assert.deepEqual(input.allowedToolIds, []);
+  assert.deepEqual(input.forbiddenToolIds, []);
 });

@@ -1,6 +1,9 @@
 import type { ToolDef } from "../api.js";
-
-type State = "allowed" | "disallowed" | "unspecified";
+import {
+  normalizeToolIds,
+  resolveToolPermissionState,
+  type ToolPermissionState,
+} from "../toolPermissions.js";
 
 /**
  * Per-tool 3-state selector (Allowed / Disallowed / Unspecified), grouped by
@@ -19,12 +22,12 @@ export function ToolPermissionEditor({
   forbidden: string[];
   onChange: (allowed: string[], forbidden: string[]) => void;
 }) {
-  const stateOf = (id: string): State =>
-    (allowed ?? []).includes(id) ? "allowed" : (forbidden ?? []).includes(id) ? "disallowed" : "unspecified";
+  const stateOf = (id: string): ToolPermissionState =>
+    resolveToolPermissionState(id, allowed, forbidden);
 
-  const set = (id: string, next: State) => {
-    const a = new Set(allowed ?? []);
-    const f = new Set(forbidden ?? []);
+  const set = (id: string, next: ToolPermissionState) => {
+    const a = new Set(normalizeToolIds(allowed));
+    const f = new Set(normalizeToolIds(forbidden));
     a.delete(id);
     f.delete(id);
     if (next === "allowed") a.add(id);
@@ -51,7 +54,7 @@ export function ToolPermissionEditor({
                     {t.availability === "planned" && <span className="tag toolperm-planned">planned</span>}
                   </div>
                   <div className="toolperm-toggle">
-                    {(["allowed", "unspecified", "disallowed"] as State[]).map((opt) => (
+                    {(["allowed", "unspecified", "disallowed"] as ToolPermissionState[]).map((opt) => (
                       <button
                         key={opt}
                         type="button"
@@ -75,8 +78,10 @@ export function ToolPermissionEditor({
 /** Compact one-line summary of tool grants for agent cards. */
 export function summarizeTools(allowed: string[], forbidden: string[]): string {
   const parts: string[] = [];
-  if (allowed.length) parts.push(`tools: ${compactList(allowed)}`);
-  if (forbidden.length) parts.push(`blocked: ${compactList(forbidden)}`);
+  const allowedIds = normalizeToolIds(allowed);
+  const forbiddenIds = normalizeToolIds(forbidden);
+  if (allowedIds.length) parts.push(`tools: ${compactList(allowedIds)}`);
+  if (forbiddenIds.length) parts.push(`blocked: ${compactList(forbiddenIds)}`);
   return parts.join(" · ");
 }
 

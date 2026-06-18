@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { type AgentTemplate, api, type BackendInfo, type Project, type ToolDef } from "../api.js";
 import { backendChoices } from "../backendChoices.js";
+import { normalizeToolIds } from "../toolPermissions.js";
 import { StringListEditor } from "./StringListEditor.js";
 import { summarizeTools, ToolPermissionEditor } from "./ToolPermissionEditor.js";
 
@@ -34,8 +35,8 @@ export function AgentGallery({
         description: template.description,
         allowed: [...template.allowed],
         forbidden: [...template.forbidden],
-        allowedToolIds: [...(template.allowedToolIds ?? [])],
-        forbiddenToolIds: [...(template.forbiddenToolIds ?? [])],
+        allowedToolIds: normalizeToolIds(template.allowedToolIds),
+        forbiddenToolIds: normalizeToolIds(template.forbiddenToolIds),
         backendId: template.backendId,
         model: template.model,
       });
@@ -169,8 +170,8 @@ function TemplateEditor({
   const [description, setDescription] = useState(template?.description ?? "");
   const [allowed, setAllowed] = useState<string[]>(template?.allowed ?? []);
   const [forbidden, setForbidden] = useState<string[]>(template?.forbidden ?? []);
-  const [allowedToolIds, setAllowedToolIds] = useState<string[]>(template?.allowedToolIds ?? []);
-  const [forbiddenToolIds, setForbiddenToolIds] = useState<string[]>(template?.forbiddenToolIds ?? []);
+  const [allowedToolIds, setAllowedToolIds] = useState<string[]>(normalizeToolIds(template?.allowedToolIds));
+  const [forbiddenToolIds, setForbiddenToolIds] = useState<string[]>(normalizeToolIds(template?.forbiddenToolIds));
   const [backendId, setBackendId] = useState(template?.backendId ?? "codex");
   const [model, setModel] = useState(template?.model ?? "");
   const [busy, setBusy] = useState(false);
