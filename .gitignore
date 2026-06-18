@@ -1,0 +1,62 @@
+# ---- Go (core / orchestrator daemon) ----
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+chorus
+chorusd
+# Test binary / coverage
+*.test
+*.out
+coverage.*
+# Go workspace file
+go.work
+go.work.sum
+
+# ---- Node / TypeScript (dashboard) ----
+node_modules/
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ---- Env & secrets ----
+.env
+.env.*
+!.env.example
+*.local
+
+# ---- Chorus runtime data (don't commit local state) ----
+# Local DB / ticket store / changelog working copies
+*.db
+*.sqlite
+*.sqlite3
+/data/
+/state/
+/logs/
+*.log
+# Subscription CLI tokens / auth caches
+.codex/
+.claude/
+.gemini/
+# Agent work scratch dirs
+/tmp/
+/.chorus/
+
+# ---- Editor / OS ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
