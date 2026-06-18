@@ -12,6 +12,13 @@
 - Be reachable remotely over Tailscale (or similar overlay/VPN/tunnel tools) rather than requiring public exposure.
 - Run as a long-lived background service/daemon that survives restarts and resumes work.
 
+## Project initialization & GitHub integration
+
+- Assume the server always has authenticated access to GitHub via a preconfigured `gh` CLI; all agents act as the user's account set in `gh`.
+- Let the user start a new project from the web UI via a "New project" button, providing the URL of the target GitHub repo.
+- On project start, agents look for the specs and architecture files in the repo (e.g., `docs/SPEC.md`, `docs/ARCHITECTURE.md`); if absent, prompt the user to provide them.
+- Use `gh` for all GitHub operations (cloning, issues, pull requests, etc.), always under the user's configured account.
+
 ## Architecture (hub-and-spoke)
 
 - Use a single orchestrator (the hub) that coordinates all agents (the spokes).
