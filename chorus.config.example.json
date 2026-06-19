@@ -1,0 +1,21 @@
+{
+  "dataDir": "/Users/you/.chorus",
+  "port": 7878,
+  "host": "127.0.0.1",
+  "integrationBranch": "chorus/integration",
+  "maxConcurrentAgents": 2,
+  "agent": {
+    "maxWallClockMs": 2700000,
+    "idleTimeoutMs": 480000,
+    "model": ""
+  },
+  "quota": {
+    "exhaustionPatterns": ["rate.?limit", "quota", "usage limit", "\\b429\\b", "resets? at", "too many requests"],
+    "backoffStartMs": 900000,
+    "backoffMaxMs": 14400000
+  },
+  "notifications": {
+    "enabled": true,
+    "imessageTo": "+15551234567"
+  }
+}
