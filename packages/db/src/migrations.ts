@@ -241,6 +241,18 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE projects ADD COLUMN commands_detected INTEGER NOT NULL DEFAULT 0;
   `,
+
+  // 0010 — per-project "auto-ideate when idle" control. Off by default; existing
+  // rows stop auto-generating tickets until a user enables the toggle.
+  `
+  ALTER TABLE projects ADD COLUMN idle_ideation INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE projects ADD COLUMN idle_ideation_count INTEGER NOT NULL DEFAULT 1;
+  `,
+
+  // 0011 — user-settable "star" flag on tickets (display-only).
+  `
+  ALTER TABLE tickets ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {

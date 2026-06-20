@@ -41,6 +41,11 @@ import {
   PROSE_NARRATION_RULE,
   READ_ONLY_RULE,
 } from "./structured-run.js";
+import {
+  runIdleTicketGeneration,
+  type IdleTicketGenerationInput,
+  type IdleTicketGenerator,
+} from "./ticket-generation.js";
 import { runTriage } from "./triage.js";
 
 export interface OrchestratorDeps {
@@ -50,6 +55,7 @@ export interface OrchestratorDeps {
   notifier: Notifier;
   bus: ChorusBus;
   config: Config;
+  idleTicketGenerator?: IdleTicketGenerator;
 }
 
 /**
@@ -80,6 +86,26 @@ export class Orchestrator {
   private readonly sessions = new Map<string, SessionState>();
   /** ticketId → consecutive autonomous sessions that ended without resolving it. */
   private readonly sessionFailures = new Map<string, number>();
+  /** projectId set while an empty-queue ticket is being generated. */
+  private readonly idleTicketGenerations = new Set<string>();
+  /** projectId → retry timestamp after a non-quota ticket generation failure. */
+  private readonly idleTicketGenerationRetryAfter = new Map<string, number>();
+  private static readonly IDLE_TICKET_GENERATION_RETRY_MS = 60_000;
+  /**
+   * Statuses that represent actively-queued or in-flight work. The queue counts
+   * as "drained" (eligible for idle ideation) when no ticket is in one of these
+   * — i.e. nothing is waiting to be dispatched or running. Tickets in `pr_open`
+   * (awaiting a human merge) or `blocked` deliberately do NOT count as work in
+   * the queue, so a project whose only remaining tickets are open PRs / blocked
+   * still ideates new work when the toggle is on. (Trade-off: that new work is
+   * cut from the base branch, which won't yet include the open PRs; the ideation
+   * prompt feeds prior ticket titles to the model to avoid duplicating them.)
+   */
+  private static readonly QUEUED_OR_ACTIVE_TICKET_STATUSES = new Set<Ticket["status"]>([
+    "open",
+    "assigned",
+    "in_progress",
+  ]);
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -163,12 +189,120 @@ export class Orchestrator {
         if (project.status !== "ready" || project.runState !== "running") continue;
         if (this.projectBusy(project.id)) continue;
         const ticket = this.deps.db.nextOpenTicket(project.id);
-        if (!ticket) continue;
+        if (!ticket) {
+          this.maybeGenerateIdleTicket(project);
+          continue;
+        }
         void this.processTicket(ticket);
       }
     } finally {
       this.ticking = false;
     }
+  }
+
+  private maybeGenerateIdleTicket(project: Project): void {
+    if (this.idleTicketGenerations.has(project.id)) return;
+    // Opt-in per project: only ideate when the toggle is on and a positive count.
+    if (!project.idleIdeation) return;
+    const count = Math.min(10, Math.max(0, Math.floor(project.idleIdeationCount)));
+    if (count < 1) return;
+    const retryAt = this.idleTicketGenerationRetryAfter.get(project.id);
+    if (retryAt && retryAt > Date.now()) return;
+    if (!this.isTicketQueueDrained(project.id)) return;
+
+    this.idleTicketGenerations.add(project.id);
+    void this.generateIdleTickets(project.id, count)
+      .then(() => {
+        this.idleTicketGenerationRetryAfter.delete(project.id);
+      })
+      .catch((err) => {
+        if (this.looksLikeQuota(String(err))) {
+          this.enterQuotaBackoff();
+        } else {
+          console.error("[chorus] idle ticket generation error:", err);
+          this.idleTicketGenerationRetryAfter.set(
+            project.id,
+            Date.now() + Orchestrator.IDLE_TICKET_GENERATION_RETRY_MS,
+          );
+        }
+      })
+      .finally(() => {
+        this.idleTicketGenerations.delete(project.id);
+      });
+  }
+
+  /**
+   * Generate up to `count` follow-up tickets in one idle pass. Each ticket is
+   * created as it is produced, so the next iteration's prompt (which reads the
+   * ticket list fresh) sees it and avoids duplicating it. The pass stops early if
+   * the project leaves the running/ready state, the daemon stops, or *external*
+   * work appears in the queue (work we didn't create this pass).
+   */
+  private async generateIdleTickets(projectId: string, count: number): Promise<void> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project || project.status !== "ready" || project.runState !== "running") return;
+    if (this.state !== "running") return;
+    if (!this.isTicketQueueDrained(project.id)) return;
+
+    const generator = this.deps.idleTicketGenerator ?? runIdleTicketGeneration;
+    const createdIds = new Set<string>();
+    for (let i = 0; i < count; i++) {
+      const current = this.deps.db.getProject(projectId);
+      if (!current || current.status !== "ready" || current.runState !== "running") break;
+      if (this.state !== "running") break;
+      // A human (or another path) queued real work while we were generating.
+      if (this.hasExternalQueuedWork(projectId, createdIds)) break;
+
+      const draft = await generator(this.buildIdleTicketGenerationInput(current));
+      const title = draft.title.trim();
+      const body = draft.body.trim();
+      if (!title || !body) throw new Error("idle ticket generation returned an empty ticket");
+
+      // Re-check liveness after the (slow) model call before persisting.
+      const refreshed = this.deps.db.getProject(projectId);
+      if (!refreshed || refreshed.status !== "ready" || refreshed.runState !== "running") break;
+      if (this.state !== "running") break;
+
+      const ticket = this.createFollowUpTicket(projectId, { title, body, priority: 1 });
+      createdIds.add(ticket.id);
+      this.trail(
+        projectId,
+        ticket.id,
+        "system",
+        "note",
+        "Auto-generated after the project ticket queue became empty.",
+      );
+    }
+  }
+
+  private isTicketQueueDrained(projectId: string): boolean {
+    if (this.projectBusy(projectId)) return false;
+    const tickets = this.deps.db.listTickets(projectId);
+    if (tickets.length === 0) return false;
+    return !tickets.some((t) => Orchestrator.QUEUED_OR_ACTIVE_TICKET_STATUSES.has(t.status));
+  }
+
+  /** True if the queue holds queued/active work that wasn't created in this pass. */
+  private hasExternalQueuedWork(projectId: string, createdIds: Set<string>): boolean {
+    return this.deps.db
+      .listTickets(projectId)
+      .some((t) => Orchestrator.QUEUED_OR_ACTIVE_TICKET_STATUSES.has(t.status) && !createdIds.has(t.id));
+  }
+
+  private buildIdleTicketGenerationInput(project: Project): IdleTicketGenerationInput {
+    const orchRole = this.deps.db.getRole(project.id, ORCHESTRATOR_ROLE);
+    return {
+      project,
+      tickets: this.deps.db.listTickets(project.id),
+      recentEvents: this.deps.db.listProjectTicketEvents(project.id, 80),
+      attemptJournal: this.deps.db.listProjectAttemptJournal(project.id, 40),
+      changelog: this.deps.db.listChangelog(project.id, 40),
+      specExcerpt: this.readSpecExcerpt(project),
+      artifactsDir: join(this.deps.config.dataDir, "idle-ticket-generation", project.id, newId("itg")),
+      model: orchRole?.model,
+      maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+      idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+    };
   }
 
   private projectBusy(projectId: string): boolean {
@@ -1659,10 +1793,10 @@ export class Orchestrator {
     }
   }
 
-  private createFollowUpTicket(projectId: string, t: { title: string; body: string; priority?: number }): void {
+  private createFollowUpTicket(projectId: string, t: { title: string; body: string; priority?: number }): Ticket {
     const now = Date.now();
     const id = newId("tkt");
-    this.deps.db.insertTicket({
+    const ticket: Ticket = {
       id,
       projectId,
       title: t.title,
@@ -1675,10 +1809,13 @@ export class Orchestrator {
       worktreePath: null,
       prUrl: null,
       prNumber: null,
+      starred: false,
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    this.deps.db.insertTicket(ticket);
     this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId: id, at: now });
+    return ticket;
   }
 
   private addSuggestion(project: Project, ticketId: string | null, message: string): void {

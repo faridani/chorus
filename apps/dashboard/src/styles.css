@@ -204,6 +204,10 @@ table.tickets { width: 100%; border-collapse: collapse; }
 table.tickets th, table.tickets td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
 table.tickets td.drag-handle { width: 18px; cursor: grab; color: var(--muted); text-align: center; user-select: none; }
 table.tickets td.drag-handle:active { cursor: grabbing; }
+table.tickets td.star-cell { width: 22px; text-align: center; }
+.star-btn { background: none; border: none; padding: 0 2px; font-size: 15px; line-height: 1; color: var(--muted); cursor: pointer; }
+.star-btn:hover { color: #e3b341; border-color: transparent; }
+.star-btn.on { color: #e3b341; }
 table.tickets tr.dragging { opacity: 0.45; }
 table.tickets tr.dragover td { border-top: 2px solid var(--accent); }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -245,6 +249,19 @@ button.danger { background: #3d1f24; border-color: #5e2e34; color: #f8a39a; }
 .tabbtn.active { color: var(--text); border-bottom-color: var(--accent); }
 .tabbody { padding-top: 4px; }
 .tabhead { display: flex; align-items: center; justify-content: space-between; }
+.tabhead-actions { display: flex; align-items: center; gap: 8px; }
+
+/* idle-ideation control: a pill matching the button box, holding a switch + N input */
+.ideate-ctl { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel2); }
+.ideate-label { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.ideate-n { width: 42px; padding: 2px 4px; text-align: center; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
+.ideate-n:disabled { opacity: .5; }
+/* horizontal slide switch */
+.switch { position: relative; width: 32px; height: 18px; padding: 0; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); cursor: pointer; flex: none; }
+.switch:hover { border-color: var(--accent); }
+.switch.on { background: #1e3a5f; border-color: var(--accent); }
+.switch-knob { position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); transition: transform .12s ease, background .12s ease; }
+.switch.on .switch-knob { transform: translateX(14px); background: var(--accent); }
 .tag.running { color: #7ee787; border-color: #2e5e40; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--panel2); }

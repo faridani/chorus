@@ -18,6 +18,76 @@ test("migrations run and schema_version is set", () => {
   db.close();
 });
 
+test("project idle-ideation fields default and round-trip", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    runState: "running",
+    status: "ready",
+    createdAt: Date.now(),
+  });
+  // Defaults when not supplied: off, count 1.
+  assert.equal(db.getProject(projectId)?.idleIdeation, false);
+  assert.equal(db.getProject(projectId)?.idleIdeationCount, 1);
+
+  db.updateProject(projectId, { idleIdeation: true, idleIdeationCount: 5 });
+  assert.equal(db.getProject(projectId)?.idleIdeation, true);
+  assert.equal(db.getProject(projectId)?.idleIdeationCount, 5);
+
+  db.updateProject(projectId, { idleIdeation: false });
+  assert.equal(db.getProject(projectId)?.idleIdeation, false);
+  assert.equal(db.getProject(projectId)?.idleIdeationCount, 5, "count unchanged when only toggling");
+  db.close();
+});
+
+test("ticket starred flag defaults false and round-trips", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    runState: "running",
+    status: "ready",
+    createdAt: Date.now(),
+  });
+  const ticketId = newId("tkt");
+  db.insertTicket({
+    id: ticketId,
+    projectId,
+    title: "Star me",
+    body: "details",
+    status: "open",
+    roleName: null,
+    priority: 1,
+    source: "manual",
+    branch: null,
+    worktreePath: null,
+    prUrl: null,
+    prNumber: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  assert.equal(db.getTicket(ticketId)?.starred, false, "defaults to unstarred");
+
+  db.updateTicket(ticketId, { starred: true });
+  assert.equal(db.getTicket(ticketId)?.starred, true);
+  db.updateTicket(ticketId, { starred: false });
+  assert.equal(db.getTicket(ticketId)?.starred, false);
+  db.close();
+});
+
 test("project + ticket + task round-trip", () => {
   const db = freshDb();
   const projectId = newId("proj");

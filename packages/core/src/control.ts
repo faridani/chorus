@@ -35,6 +35,10 @@ export interface ProjectSettingsInput {
   groundRules?: string[];
   setupCommand?: string;
   verifyCommands?: string[];
+  /** Enable auto-generating follow-up tickets when the queue drains. */
+  idleIdeation?: boolean;
+  /** Tickets to ideate per idle pass (clamped to 1–10). */
+  idleIdeationCount?: number;
 }
 
 export type UpsertRoleInput = Omit<Role, "id" | "projectId">;
@@ -66,6 +70,8 @@ export interface ControlApi {
 
   addTicket(projectId: string, input: CreateTicketInput): Promise<Ticket>;
   updateTicket(projectId: string, ticketId: string, patch: UpdateTicketInput): Promise<Ticket>;
+  /** Star / unstar a ticket. Display-only flag; allowed at any time. */
+  setTicketStarred(projectId: string, ticketId: string, starred: boolean): Promise<Ticket>;
   deleteTicket(projectId: string, ticketId: string): Promise<void>;
   /** Reorder a project's tickets; `orderedIds` is top→bottom (top = highest priority). */
   reorderTickets(projectId: string, orderedIds: string[]): Promise<void>;

@@ -12,6 +12,8 @@ export interface Project {
   verifyCommands: string[];
   status: string;
   runState: "running" | "paused" | "stopped";
+  idleIdeation: boolean;
+  idleIdeationCount: number;
   createdAt: number;
 }
 
@@ -25,6 +27,7 @@ export interface Ticket {
   source: string;
   prUrl: string | null;
   prNumber: number | null;
+  starred: boolean;
   tasks: Task[];
 }
 
@@ -228,6 +231,8 @@ export const api = {
       groundRules?: string[];
       setupCommand?: string;
       verifyCommands?: string[];
+      idleIdeation?: boolean;
+      idleIdeationCount?: number;
     },
   ) =>
     fetch(`/api/projects/${id}`, {
@@ -274,6 +279,12 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ orderedIds }),
     }).then((r) => json(r)),
+  setTicketStarred: (id: string, ticketId: string, starred: boolean) =>
+    fetch(`/api/projects/${id}/tickets/${ticketId}/star`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ starred }),
+    }).then((r) => json<Ticket>(r)),
   upsertRole: (id: string, role: RoleInput) =>
     fetch(`/api/projects/${id}/roles`, {
       method: "POST",

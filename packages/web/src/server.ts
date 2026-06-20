@@ -214,6 +214,8 @@ export function createServer(deps: WebDeps): FastifyInstance {
       groundRules?: string[];
       setupCommand?: string;
       verifyCommands?: string[];
+      idleIdeation?: boolean;
+      idleIdeationCount?: number;
     };
     return api.updateProjectSettings(id, body ?? {});
   });
@@ -287,6 +289,12 @@ export function createServer(deps: WebDeps): FastifyInstance {
       reopen?: boolean;
     };
     return api.updateTicket(id, ticketId, body ?? {});
+  });
+
+  app.post("/api/projects/:id/tickets/:ticketId/star", async (req) => {
+    const { id, ticketId } = req.params as { id: string; ticketId: string };
+    const body = req.body as { starred?: boolean };
+    return api.setTicketStarred(id, ticketId, !!body?.starred);
   });
 
   app.post("/api/projects/:id/tickets/reorder", async (req, reply) => {

@@ -44,8 +44,8 @@ export class ChorusDb {
   insertProject(p: Project): void {
     this.raw
       .prepare(
-        `INSERT INTO projects (id, repo_url, local_path, base_branch, spec_path, expectations, ground_rules, setup_command, verify_commands, commands_detected, status, run_state, created_at)
-         VALUES (@id, @repoUrl, @localPath, @baseBranch, @specPath, @expectations, @groundRules, @setupCommand, @verifyCommands, @commandsDetected, @status, @runState, @createdAt)`,
+        `INSERT INTO projects (id, repo_url, local_path, base_branch, spec_path, expectations, ground_rules, setup_command, verify_commands, commands_detected, status, run_state, idle_ideation, idle_ideation_count, created_at)
+         VALUES (@id, @repoUrl, @localPath, @baseBranch, @specPath, @expectations, @groundRules, @setupCommand, @verifyCommands, @commandsDetected, @status, @runState, @idleIdeation, @idleIdeationCount, @createdAt)`,
       )
       .run({
         ...p,
@@ -53,6 +53,8 @@ export class ChorusDb {
         setupCommand: p.setupCommand ?? null,
         verifyCommands: JSON.stringify(p.verifyCommands ?? []),
         commandsDetected: p.commandsDetected ? 1 : 0,
+        idleIdeation: p.idleIdeation ? 1 : 0,
+        idleIdeationCount: p.idleIdeationCount ?? 1,
       });
   }
   updateProject(id: string, patch: Partial<Project>): void {
@@ -63,7 +65,8 @@ export class ChorusDb {
       .prepare(
         `UPDATE projects SET repo_url=@repoUrl, local_path=@localPath,
          base_branch=@baseBranch, spec_path=@specPath, expectations=@expectations, ground_rules=@groundRules,
-         setup_command=@setupCommand, verify_commands=@verifyCommands, commands_detected=@commandsDetected, status=@status, run_state=@runState WHERE id=@id`,
+         setup_command=@setupCommand, verify_commands=@verifyCommands, commands_detected=@commandsDetected, status=@status, run_state=@runState,
+         idle_ideation=@idleIdeation, idle_ideation_count=@idleIdeationCount WHERE id=@id`,
       )
       .run({
         ...next,
@@ -71,6 +74,8 @@ export class ChorusDb {
         setupCommand: next.setupCommand ?? null,
         verifyCommands: JSON.stringify(next.verifyCommands ?? []),
         commandsDetected: next.commandsDetected ? 1 : 0,
+        idleIdeation: next.idleIdeation ? 1 : 0,
+        idleIdeationCount: next.idleIdeationCount ?? 1,
       });
   }
   getProject(id: string): Project | undefined {
@@ -181,8 +186,8 @@ export class ChorusDb {
   insertTicket(t: Ticket): void {
     this.raw
       .prepare(
-        `INSERT INTO tickets (id, project_id, title, body, status, role_name, priority, source, branch, worktree_path, pr_url, pr_number, created_at, updated_at)
-         VALUES (@id, @projectId, @title, @body, @status, @roleName, @priority, @source, @branch, @worktreePath, @prUrl, @prNumber, @createdAt, @updatedAt)`,
+        `INSERT INTO tickets (id, project_id, title, body, status, role_name, priority, source, branch, worktree_path, pr_url, pr_number, starred, created_at, updated_at)
+         VALUES (@id, @projectId, @title, @body, @status, @roleName, @priority, @source, @branch, @worktreePath, @prUrl, @prNumber, @starred, @createdAt, @updatedAt)`,
       )
       .run({
         ...t,
@@ -191,6 +196,7 @@ export class ChorusDb {
         worktreePath: t.worktreePath ?? null,
         prUrl: t.prUrl ?? null,
         prNumber: t.prNumber ?? null,
+        starred: t.starred ? 1 : 0,
       });
   }
   updateTicket(id: string, patch: Partial<Ticket>): void {
@@ -200,7 +206,7 @@ export class ChorusDb {
     this.raw
       .prepare(
         `UPDATE tickets SET title=@title, body=@body, status=@status, role_name=@roleName,
-         priority=@priority, branch=@branch, worktree_path=@worktreePath, pr_url=@prUrl, pr_number=@prNumber, updated_at=@updatedAt WHERE id=@id`,
+         priority=@priority, branch=@branch, worktree_path=@worktreePath, pr_url=@prUrl, pr_number=@prNumber, starred=@starred, updated_at=@updatedAt WHERE id=@id`,
       )
       .run({
         ...next,
@@ -209,6 +215,7 @@ export class ChorusDb {
         worktreePath: next.worktreePath ?? null,
         prUrl: next.prUrl ?? null,
         prNumber: next.prNumber ?? null,
+        starred: next.starred ? 1 : 0,
       });
   }
   getTicket(id: string): Ticket | undefined {
@@ -516,6 +523,8 @@ function mapProject(r: Row): Project {
     commandsDetected: ((r.commands_detected as number | null) ?? 0) === 1,
     status: r.status as Project["status"],
     runState: (r.run_state as Project["runState"] | null) ?? "running",
+    idleIdeation: ((r.idle_ideation as number | null) ?? 0) === 1,
+    idleIdeationCount: (r.idle_ideation_count as number | null) ?? 1,
     createdAt: r.created_at as number,
   };
 }
@@ -570,6 +579,7 @@ function mapTicket(r: Row): Ticket {
     worktreePath: (r.worktree_path as string | null) ?? null,
     prUrl: (r.pr_url as string | null) ?? null,
     prNumber: (r.pr_number as number | null) ?? null,
+    starred: ((r.starred as number | null) ?? 0) === 1,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
   };
