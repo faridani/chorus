@@ -118,6 +118,26 @@ test("deleteBranch removes local and remote ticket branches", async () => {
   assert.equal(await gs.deleteBranch(repo, branch), false);
 });
 
+test("deleteBranch removes a branch still checked out in a worktree", async () => {
+  const gs = new GitService();
+  const { repo, origin, base } = await makeRepo();
+  const branch = "chorus/ticket-tkt_abc-a1";
+  const wt = join(repo, "..", `wt-checkedout-${Date.now()}`);
+  await gs.addWorktree(repo, wt, branch, base);
+  writeFileSync(join(wt, "wip.txt"), "work in progress\n");
+  await git(wt, "add", ".");
+  await git(wt, "commit", "-qm", "wip");
+  await gs.pushBranch(repo, branch);
+
+  // The worktree is intentionally NOT removed first — this is the cleanup-button
+  // bug: `git branch -D` errors on a branch checked out in a worktree.
+  assert.equal(await gitCode(repo, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+
+  assert.equal(await gs.deleteBranch(repo, branch), true);
+  assert.notEqual(await gitCode(repo, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+  assert.notEqual(await gitCode(origin, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+});
+
 test("deleteBranch refuses non-Chorus branch names without deleting refs", async () => {
   const gs = new GitService();
   const { repo, origin } = await makeRepo();
