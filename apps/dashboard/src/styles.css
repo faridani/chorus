@@ -248,7 +248,7 @@ h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
 .projlist li:hover { background: var(--panel2); }
 .projlist li.active { background: var(--panel2); border: 1px solid var(--accent); }
 .repo { font-weight: 600; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.projrow { display: flex; align-items: center; gap: 6px; position: relative; }
+.projrow { display: flex; align-items: center; gap: 6px; }
 .runctl { display: inline-flex; gap: 2px; margin-left: auto; }
 .runbtn {
   padding: 1px 5px; font-size: 11px; line-height: 1.4; border-radius: 4px;
@@ -259,7 +259,7 @@ h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
 .runbtn.on.pause { color: #e3b341; border-color: #5e4e2e; background: #2a2412; }
 .runbtn.on.stop { color: #f85149; border-color: #5e2e34; background: #2a1517; }
 .tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--panel2); border: 1px solid var(--border); }
-.status-tip { display: inline-flex; }
+.status-tip { display: inline-flex; position: relative; }
 .status-tip .tag { cursor: help; }
 .status-tip .tag:focus-visible {
   outline: 2px solid var(--accent);
@@ -269,7 +269,7 @@ h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
   position: absolute;
   z-index: 20;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   width: 220px;
   padding: 8px 10px;
   border: 1px solid var(--border);
