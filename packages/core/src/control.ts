@@ -91,6 +91,12 @@ export interface ControlApi {
   updateTicket(projectId: string, ticketId: string, patch: UpdateTicketInput): Promise<Ticket>;
   /** Star / unstar a ticket. Display-only flag; allowed at any time. */
   setTicketStarred(projectId: string, ticketId: string, starred: boolean): Promise<Ticket>;
+  /**
+   * Launch an agent that studies the ticket's open-PR review comments, edits the
+   * code to address the ones it agrees with, and posts a summary PR comment
+   * (including reasons for any it disagrees with). Runs in the background.
+   */
+  addressPrComments(projectId: string, ticketId: string): Promise<{ started: boolean }>;
   deleteTicket(projectId: string, ticketId: string): Promise<void>;
   /** Destructively remove every ticket in a project, with optional branch/PR cleanup. */
   cleanupTickets(projectId: string, input: CleanupTicketsInput): Promise<CleanupTicketsResult>;

@@ -302,6 +302,16 @@ export function createServer(deps: WebDeps): FastifyInstance {
     return api.setTicketStarred(id, ticketId, !!body?.starred);
   });
 
+  app.post("/api/projects/:id/tickets/:ticketId/address-pr-comments", async (req, reply) => {
+    const { id, ticketId } = req.params as { id: string; ticketId: string };
+    try {
+      return await api.addressPrComments(id, ticketId);
+    } catch (err) {
+      const code = (err as { statusCode?: number }).statusCode ?? 500;
+      return reply.code(code).send({ error: (err as Error).message });
+    }
+  });
+
   app.post("/api/projects/:id/tickets/reorder", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = req.body as { orderedIds?: string[] };
