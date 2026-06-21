@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../core" }, { "path": "../db" }]
+  "references": [{ "path": "../core" }, { "path": "../db" }, { "path": "../git-service" }, { "path": "../proc" }]
 }

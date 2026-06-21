@@ -13,6 +13,7 @@ import type { ChorusDb } from "@chorus/db";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
+import { TerminalError, TerminalSessionManager } from "./terminal.js";
 
 export interface VersionInfo {
   number: string;
@@ -49,6 +50,14 @@ export function createServer(deps: WebDeps): FastifyInstance {
   const { db, bus, api } = deps;
 
   app.register(fastifyWebsocket);
+  const terminalSessions = new TerminalSessionManager({
+    db,
+    config: deps.config,
+    listBackends: () => {
+      const maybeApi = api as Partial<ControlApi>;
+      return maybeApi.listBackends ? maybeApi.listBackends() : [];
+    },
+  });
 
   // ---- live event feed ----
   app.register(async (instance) => {
@@ -103,6 +112,64 @@ export function createServer(deps: WebDeps): FastifyInstance {
     app.get("/api/internal/sessions/:token/:action", handle);
     app.post("/api/internal/sessions/:token/:action", handle);
   }
+
+  // ---- AI a la carte terminal (loopback-only, project-scoped sessions) ----
+  app.register(async (instance) => {
+    instance.get("/ws/terminal/:token", { websocket: true }, (socket, req) => {
+      if (!isStrictLoopback(req.ip)) {
+        socket.close(1008, "loopback only");
+        return;
+      }
+      const { token } = req.params as { token: string };
+      if (!terminalSessions.attachSocket(token, socket)) {
+        socket.close(1008, "unknown terminal session");
+      }
+    });
+  });
+
+  app.get("/api/projects/:id/terminal/worktrees", async (req, reply) => {
+    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    const { id } = req.params as { id: string };
+    try {
+      return await terminalSessions.listWorktrees(id);
+    } catch (err) {
+      return sendTerminalError(reply, err);
+    }
+  });
+
+  app.post("/api/projects/:id/terminal/worktrees", async (req, reply) => {
+    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    const { id } = req.params as { id: string };
+    try {
+      return await terminalSessions.createScratchWorktree(id);
+    } catch (err) {
+      return sendTerminalError(reply, err);
+    }
+  });
+
+  app.post("/api/projects/:id/terminal/sessions", async (req, reply) => {
+    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { worktreeId?: string; backendId?: string | null };
+    if (!body.worktreeId) return reply.code(400).send({ error: "worktreeId required" });
+    try {
+      return await terminalSessions.createSession({
+        projectId: id,
+        worktreeId: body.worktreeId,
+        backendId: body.backendId ?? null,
+      });
+    } catch (err) {
+      return sendTerminalError(reply, err);
+    }
+  });
+
+  app.post("/api/projects/:id/terminal/sessions/:token/stop", async (req, reply) => {
+    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    const { id, token } = req.params as { id: string; token: string };
+    const stopped = await terminalSessions.stopSession(id, token);
+    if (!stopped) return reply.code(404).send({ error: "terminal session not found" });
+    return { ok: true };
+  });
 
   // ---- agent gallery (global templates) ----
   app.get("/api/agent-templates", () => listAgentGalleryTemplates(db.listAgentTemplates()));
@@ -438,4 +505,18 @@ export function createServer(deps: WebDeps): FastifyInstance {
   }
 
   return app;
+}
+
+function isStrictLoopback(ip: string): boolean {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
+function sendTerminalError(
+  reply: { code: (n: number) => { send: (b: unknown) => unknown } },
+  err: unknown,
+): unknown {
+  if (err instanceof TerminalError) {
+    return reply.code(err.statusCode).send({ error: err.message });
+  }
+  return reply.code(500).send({ error: (err as Error).message });
 }

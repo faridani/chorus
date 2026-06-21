@@ -14,6 +14,15 @@ export interface PrInfo {
   mergedAt: string | null;
 }
 
+export interface GitWorktreeInfo {
+  path: string;
+  branch: string | null;
+  head: string | null;
+  detached: boolean;
+  bare: boolean;
+  prunable: boolean;
+}
+
 /**
  * All git access funnels through here. A single mutex serializes every
  * operation that mutates shared refs/objects (clone, fetch, worktree add,
@@ -102,6 +111,15 @@ export class GitService {
 
   async pruneWorktrees(localPath: string): Promise<void> {
     await this.mutex.run(() => this.gitUnlocked(["worktree", "prune"], localPath, false).then(() => {}));
+  }
+
+  /** Registered git worktrees for a repository, parsed from porcelain output. */
+  async listWorktrees(localPath: string): Promise<GitWorktreeInfo[]> {
+    const r = await this.git(["worktree", "list", "--porcelain"], localPath, false);
+    if (r.code !== 0) {
+      throw new Error(`git worktree list failed in ${localPath}: ${r.stderr.trim() || r.stdout.trim()}`);
+    }
+    return parseWorktreeList(r.stdout);
   }
 
   /** Summarize a branch's work vs a base ref: commit subjects + changed files. */
@@ -502,4 +520,48 @@ export function worktreePathForBranch(porcelain: string, branch: string): string
     }
   }
   return null;
+}
+
+export function parseWorktreeList(porcelain: string): GitWorktreeInfo[] {
+  const out: GitWorktreeInfo[] = [];
+  let cur: GitWorktreeInfo | null = null;
+  const push = () => {
+    if (cur) out.push(cur);
+    cur = null;
+  };
+
+  for (const raw of porcelain.split("\n")) {
+    const line = raw.trim();
+    if (!line) {
+      push();
+      continue;
+    }
+    if (line.startsWith("worktree ")) {
+      push();
+      cur = {
+        path: line.slice("worktree ".length),
+        branch: null,
+        head: null,
+        detached: false,
+        bare: false,
+        prunable: false,
+      };
+      continue;
+    }
+    if (!cur) continue;
+    if (line.startsWith("HEAD ")) {
+      cur.head = line.slice("HEAD ".length);
+    } else if (line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length);
+      cur.branch = ref.replace(/^refs\/heads\//, "");
+    } else if (line === "detached") {
+      cur.detached = true;
+    } else if (line === "bare") {
+      cur.bare = true;
+    } else if (line.startsWith("prunable")) {
+      cur.prunable = true;
+    }
+  }
+  push();
+  return out;
 }

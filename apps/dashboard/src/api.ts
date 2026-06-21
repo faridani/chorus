@@ -210,6 +210,23 @@ export interface BackendInfo {
   implemented: boolean;
 }
 
+export interface TerminalWorktree {
+  id: string;
+  label: string;
+  branch: string;
+  kind: "base" | "ticket" | "scratch" | "worktree";
+  ticketId?: string;
+  ticketTitle?: string;
+}
+
+export interface TerminalSessionInfo {
+  sessionToken: string;
+  projectId: string;
+  worktreeId: string;
+  backendId: string | null;
+  mode: "shell" | "backend";
+}
+
 export interface AppState {
   orchestrator: string;
   runningTasks: string[];
@@ -365,6 +382,22 @@ export const api = {
   tools: () => fetch("/api/tools").then((r) => json<ToolDef[]>(r)),
   projectEvents: (id: string) =>
     fetch(`/api/projects/${id}/events`).then((r) => json<TicketEvent[]>(r)),
+  terminalWorktrees: (id: string) =>
+    fetch(`/api/projects/${id}/terminal/worktrees`).then((r) => json<TerminalWorktree[]>(r)),
+  createTerminalWorktree: (id: string) =>
+    fetch(`/api/projects/${id}/terminal/worktrees`, { method: "POST" }).then((r) =>
+      json<TerminalWorktree>(r),
+    ),
+  createTerminalSession: (id: string, input: { worktreeId: string; backendId?: string | null }) =>
+    fetch(`/api/projects/${id}/terminal/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }).then((r) => json<TerminalSessionInfo>(r)),
+  stopTerminalSession: (id: string, token: string) =>
+    fetch(`/api/projects/${id}/terminal/sessions/${encodeURIComponent(token)}/stop`, {
+      method: "POST",
+    }).then((r) => json<{ ok: true }>(r)),
   dismissSuggestion: (id: string, sid: string) =>
     fetch(`/api/projects/${id}/suggestions/${sid}/dismiss`, { method: "POST" }).then((r) => json(r)),
   agentTemplates: () => fetch("/api/agent-templates").then((r) => json<AgentTemplate[]>(r)),

@@ -3,13 +3,22 @@ import { api, type BackendInfo, type ProjectDetail, type TicketEvent, type ToolD
 import type { FeedItem } from "../stateMachineModel.js";
 import { ActivityTab } from "./ActivityTab.js";
 import { AgentsTab } from "./AgentsTab.js";
+import { AiALaCarteTab, AI_A_LA_CARTE_HELP } from "./AiALaCarteTab.js";
 import { GoalsTab } from "./GoalsTab.js";
 import { SettingsTab } from "./SettingsTab.js";
 import { StateMachineTab } from "./StateMachineTab.js";
 import { SuggestionsTab } from "./SuggestionsTab.js";
 import { TicketsTab } from "./TicketsTab.js";
 
-type Tab = "goals" | "tickets" | "agents" | "state" | "settings" | "activity" | "suggestions";
+type Tab =
+  | "goals"
+  | "tickets"
+  | "agents"
+  | "state"
+  | "settings"
+  | "activity"
+  | "suggestions"
+  | "ai-a-la-carte";
 
 /** The project control panel: header + tabbed sections. */
 export function ProjectPanel({
@@ -64,6 +73,14 @@ export function ProjectPanel({
           setTab={setTab}
           label={`Suggestions${suggestions.length ? ` (${suggestions.length})` : ""}`}
         />
+        <TabBtn
+          id="ai-a-la-carte"
+          tab={tab}
+          setTab={setTab}
+          label="AI a la carte"
+          icon=">_"
+          helpText={AI_A_LA_CARTE_HELP}
+        />
       </nav>
 
       <div className="tabbody">
@@ -117,6 +134,7 @@ export function ProjectPanel({
         {tab === "suggestions" && (
           <SuggestionsTab projectId={project.id} suggestions={suggestions} onChange={onChange} />
         )}
+        {tab === "ai-a-la-carte" && <AiALaCarteTab project={project} backends={backends} />}
       </div>
     </div>
   );
@@ -127,15 +145,36 @@ function TabBtn({
   tab,
   setTab,
   label,
+  icon,
+  helpText,
 }: {
   id: Tab;
   tab: Tab;
   setTab: (t: Tab) => void;
   label: string;
+  icon?: string;
+  helpText?: string;
 }) {
   return (
     <button className={`tabbtn ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>
+      {icon && <span className="tabicon">{icon}</span>}
       {label}
+      {helpText && (
+        <span className="tab-help" onClick={(e) => e.stopPropagation()} title={helpText}>
+          <span className="tab-help-mark" tabIndex={0} aria-label={helpText}>
+            (i)
+          </span>
+          <span className="tab-help-tooltip" role="tooltip">
+            <strong>AI a la carte</strong> — a hands-on terminal for this project. Pick any AI
+            installed on this machine (Codex, Claude Code, Gemini, ...) and chat with it directly
+            inside a worktree, or just run commands yourself. It's the AI <em>on the worktree</em>:
+            it can read and edit the checked-out branch, run builds and tests, and start services
+            from a chosen branch so you can try changes live. Use it to explore, debug, prototype,
+            or pair with an agent in real time — separate from the autonomous ticket pipeline, with
+            you in control of every command.
+          </span>
+        </span>
+      )}
     </button>
   );
 }
