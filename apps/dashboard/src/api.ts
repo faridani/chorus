@@ -75,6 +75,27 @@ export interface DiagnosisResult {
   confidence: number;
 }
 
+export interface SelfHealProposal {
+  id: string;
+  kind: "role" | "expectations" | "ground_rules";
+  title: string;
+  rationale: string;
+  roleName?: string;
+  description?: string;
+  allowed?: string[];
+  forbidden?: string[];
+  allowedToolIds?: string[];
+  forbiddenToolIds?: string[];
+  model?: string;
+  expectations?: string;
+  groundRules?: string[];
+}
+
+export interface SelfHealResult {
+  summary: string;
+  proposals: SelfHealProposal[];
+}
+
 export interface AttemptJournalEntry {
   id: string;
   taskId: string;
@@ -308,6 +329,18 @@ export const api = {
     fetch(`/api/projects/${id}/tickets/${ticketId}/address-pr-comments`, { method: "POST" }).then(
       (r) => json<{ started: boolean }>(r),
     ),
+  selfHeal: (id: string, ticketId: string, liveEvents: unknown[]) =>
+    fetch(`/api/projects/${id}/tickets/${ticketId}/self-heal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ liveEvents }),
+    }).then((r) => json<SelfHealResult>(r)),
+  applySelfHealProposal: (id: string, proposal: SelfHealProposal) =>
+    fetch(`/api/projects/${id}/self-heal/apply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ proposal }),
+    }).then((r) => json(r)),
   upsertRole: (id: string, role: RoleInput) =>
     fetch(`/api/projects/${id}/roles`, {
       method: "POST",

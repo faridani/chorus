@@ -21,6 +21,7 @@ export function ProjectPanel({
   runningTaskIds,
   onChange,
   onDebugTicket,
+  onSelfHeal,
 }: {
   detail: ProjectDetail;
   backends: BackendInfo[];
@@ -30,6 +31,7 @@ export function ProjectPanel({
   runningTaskIds: string[];
   onChange: () => void;
   onDebugTicket: (ticketId: string, ticketTitle: string) => void;
+  onSelfHeal: (ticketId: string, ticketTitle: string) => void;
 }) {
   const { project, tickets, roles, pullRequests, attemptJournal, changelog, suggestions } = detail;
   const [tab, setTab] = useState<Tab>("tickets");
@@ -75,6 +77,7 @@ export function ProjectPanel({
             idleIdeation={project.idleIdeation}
             idleIdeationCount={project.idleIdeationCount}
             onChange={onChange}
+            onSelfHeal={onSelfHeal}
           />
         )}
         {tab === "agents" && (
@@ -100,6 +103,7 @@ export function ProjectPanel({
               setTab("agents");
               setEditRoleName(name);
             }}
+            onSelfHeal={onSelfHeal}
           />
         )}
         {tab === "settings" && <SettingsTab project={project} onSaved={onChange} />}

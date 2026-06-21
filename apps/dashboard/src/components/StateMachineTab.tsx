@@ -26,6 +26,7 @@ export function StateMachineTab({
   runningTaskIds,
   onDebugTicket,
   onEditAgent,
+  onSelfHeal,
 }: {
   tickets: Ticket[];
   events: TicketEvent[];
@@ -34,6 +35,7 @@ export function StateMachineTab({
   runningTaskIds: string[];
   onDebugTicket: (ticketId: string, ticketTitle: string) => void;
   onEditAgent: (roleName: string) => void;
+  onSelfHeal: (ticketId: string, ticketTitle: string) => void;
 }) {
   // Ticking clock so "active" agents fade out a few seconds after their last event.
   const [now, setNow] = useState(() => Date.now());
@@ -60,6 +62,7 @@ export function StateMachineTab({
           now={now}
           onDebugTicket={onDebugTicket}
           onEditAgent={onEditAgent}
+          onSelfHeal={onSelfHeal}
         />
       ))}
     </div>
@@ -75,6 +78,7 @@ function TicketStateMachine({
   now,
   onDebugTicket,
   onEditAgent,
+  onSelfHeal,
 }: {
   ticket: Ticket;
   events: TicketEvent[];
@@ -84,6 +88,7 @@ function TicketStateMachine({
   now: number;
   onDebugTicket: (ticketId: string, ticketTitle: string) => void;
   onEditAgent: (roleName: string) => void;
+  onSelfHeal: (ticketId: string, ticketTitle: string) => void;
 }) {
   const [view, setView] = useState<"hub" | "dag">("hub");
   // Selection is per-view and uses different keys: the hub-and-spoke view
@@ -159,6 +164,14 @@ function TicketStateMachine({
           onClick={() => onDebugTicket(ticket.id, ticket.title)}
         >
           Debug Traces
+        </button>
+        <button
+          type="button"
+          className="debugbtn"
+          title="Study this ticket's traces and propose changes to the agents and goals"
+          onClick={() => onSelfHeal(ticket.id, ticket.title)}
+        >
+          Self Heal
         </button>
       </div>
 
