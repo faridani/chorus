@@ -25,6 +25,8 @@ export interface Ticket {
   roleName: string | null;
   priority: number;
   source: string;
+  branch: string | null;
+  worktreePath: string | null;
   prUrl: string | null;
   prNumber: number | null;
   starred: boolean;
@@ -48,6 +50,12 @@ export interface PullRequest {
   state: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface TicketCleanupResult {
+  deletedTickets: number;
+  closedPullRequests: number;
+  removedBranches: number;
 }
 
 export interface ChangelogEntry {
@@ -273,6 +281,15 @@ export const api = {
     }).then((r) => json(r)),
   deleteTicket: (id: string, ticketId: string) =>
     fetch(`/api/projects/${id}/tickets/${ticketId}`, { method: "DELETE" }).then((r) => json(r)),
+  cleanupTickets: (
+    id: string,
+    options: { confirmation: string; removeBranches: boolean; removePullRequests: boolean },
+  ) =>
+    fetch(`/api/projects/${id}/tickets/cleanup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(options),
+    }).then((r) => json<TicketCleanupResult>(r)),
   reorderTickets: (id: string, orderedIds: string[]) =>
     fetch(`/api/projects/${id}/tickets/reorder`, {
       method: "POST",

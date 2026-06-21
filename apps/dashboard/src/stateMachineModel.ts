@@ -17,14 +17,35 @@ export interface FeedItem {
   };
 }
 
-/** One collapsed run in the DAG (consecutive same-actor trail entries merged). */
+/**
+ * One step (turn) in the DAG: a contiguous run by a single actor between two
+ * hand-offs. Consecutive same-actor trail entries are merged into one step, but
+ * each *return* to an actor is its own step with its own `id` — the DAG is a
+ * timeline, not a deduplicated participant list.
+ *
+ * `firstAt`/`lastAt` are the step's first/last *trail* entries. The activity
+ * window is `[startAt, endAt)`, which is wider: it opens at the previous step's
+ * last trail entry (the hand-off point) — not at this step's trail entry —
+ * because agents stream their live events (commands, reasoning) *before* the
+ * caller writes the summarizing trail entry. Scoping from `firstAt` would drop
+ * that whole live stream; scoping from the prior hand-off captures it. Combined
+ * with the actor filter in `stepActivity`, overlapping windows don't double-count.
+ */
 export interface DagNode {
+  /** Stable per-step identity (position in the run sequence). NOT the actor. */
+  id: string;
   actor: string;
   kind: TicketEvent["kind"];
   lastMessage: string;
   firstAt: number;
   lastAt: number;
+  /** Inclusive lower bound of the activity window: the previous step's lastAt (or -Infinity). */
+  startAt: number;
+  /** Exclusive upper bound of the activity window: the next step's firstAt (or Infinity). */
+  endAt: number;
   count: number;
+  /** Whether this step's actor maps to a real, editable project Role. */
+  editable: boolean;
 }
 
 /** A spoke/hub agent box. */
@@ -42,8 +63,18 @@ export interface ActivityItem {
   source: "trail" | "live";
 }
 
-/** Ordered run sequence for a ticket, collapsing consecutive same-actor steps. */
-export function buildDag(events: TicketEvent[], ticketId: string): DagNode[] {
+/**
+ * Ordered run sequence for a ticket: one step per hand-off. Consecutive
+ * same-actor trail entries collapse into a single step, but every return to an
+ * actor (orchestrator → agent → orchestrator → …) is a new step with its own
+ * `id`. `roleNames` decides per-step editability — the DAG derives this itself
+ * rather than borrowing the hub-and-spoke participant set.
+ */
+export function buildDag(
+  events: TicketEvent[],
+  ticketId: string,
+  roleNames: Set<string> = new Set(),
+): DagNode[] {
   const steps = events
     .filter((e) => e.ticketId === ticketId && e.actor !== "system")
     .sort((a, b) => a.createdAt - b.createdAt);
@@ -57,16 +88,64 @@ export function buildDag(events: TicketEvent[], ticketId: string): DagNode[] {
       last.count += 1;
     } else {
       nodes.push({
+        id: String(nodes.length),
         actor: s.actor,
         kind: s.kind,
         lastMessage: s.message,
         firstAt: s.createdAt,
         lastAt: s.createdAt,
+        startAt: Number.NEGATIVE_INFINITY,
+        endAt: Number.POSITIVE_INFINITY,
         count: 1,
+        editable: roleNames.has(s.actor),
       });
     }
   }
+  // Activity window: a step opens at the previous step's hand-off (prev.lastAt)
+  // — so it captures live events streamed before this step's trail summary — and
+  // closes when the next step begins (next.firstAt). The last step stays open
+  // (Infinity) so a still-running turn keeps absorbing live events.
+  for (let i = 0; i < nodes.length; i++) {
+    nodes[i]!.startAt = i > 0 ? nodes[i - 1]!.lastAt : Number.NEGATIVE_INFINITY;
+    nodes[i]!.endAt = i < nodes.length - 1 ? nodes[i + 1]!.firstAt : Number.POSITIVE_INFINITY;
+  }
   return nodes;
+}
+
+/**
+ * Activity for a single DAG step: trail + live events by this step's actor that
+ * fall within the step's `[startAt, endAt)` window. The window opens at the
+ * prior hand-off (not this step's trail entry) so a turn's live stream — emitted
+ * before its summarizing trail entry — is included. The actor filter keeps the
+ * overlapping windows of adjacent (different-actor) steps from double-counting.
+ * Unlike `agentActivity` (which aggregates an agent's *entire* ticket history
+ * for the hub-and-spoke view), this is scoped to one turn — so two orchestrator
+ * steps show different logs.
+ */
+export function stepActivity(
+  events: TicketEvent[],
+  feed: FeedItem[],
+  ticketId: string,
+  node: DagNode,
+  cap = 200,
+): ActivityItem[] {
+  const inWindow = (at: number) => at >= node.startAt && at < node.endAt;
+  const items: ActivityItem[] = [];
+  for (const e of events) {
+    if (e.ticketId === ticketId && e.actor === node.actor && inWindow(e.createdAt)) {
+      items.push({ at: e.createdAt, kind: e.kind, text: e.message, source: "trail" });
+    }
+  }
+  for (const { e } of feed) {
+    if (e.type === "agent_event" && e.ticketId === ticketId && e.role === node.actor && e.event) {
+      const at = typeof e.at === "number" ? e.at : Date.now();
+      if (inWindow(at)) {
+        items.push({ at, kind: String(e.event.kind ?? "log"), text: liveEventText(e.event), source: "live" });
+      }
+    }
+  }
+  items.sort((a, b) => a.at - b.at);
+  return items.slice(-cap);
 }
 
 /**

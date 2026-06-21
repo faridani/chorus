@@ -11,6 +11,11 @@ async function git(cwd: string, ...args: string[]) {
   return r.stdout.trim();
 }
 
+async function gitCode(cwd: string, ...args: string[]) {
+  const r = await run("git", args, { cwd, throwOnError: false });
+  return r.code;
+}
+
 /**
  * Build a working clone backed by a bare `origin` remote (on `main`), the way
  * Chorus expects: ticket branches are cut from `origin/main` and pushed back.
@@ -90,4 +95,41 @@ test("pushBranch publishes a ticket branch to origin", async () => {
   // The branch ref now exists on the bare origin.
   const sha = await git(origin, "rev-parse", "refs/heads/chorus/ticket-push");
   assert.match(sha, /^[0-9a-f]{40}$/);
+});
+
+test("deleteBranch removes local and remote ticket branches", async () => {
+  const gs = new GitService();
+  const { repo, origin, base } = await makeRepo();
+  const branch = "chorus/ticket-delete";
+  const wt = join(repo, "..", `wt-delete-${Date.now()}`);
+  await gs.addWorktree(repo, wt, branch, base);
+  writeFileSync(join(wt, "delete-me.txt"), "delete branch\n");
+  await git(wt, "add", ".");
+  await git(wt, "commit", "-qm", "delete branch fixture");
+  await gs.pushBranch(repo, branch);
+  await gs.removeWorktree(repo, wt);
+
+  assert.equal(await gitCode(repo, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+  assert.equal(await gitCode(origin, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+
+  assert.equal(await gs.deleteBranch(repo, branch), true);
+  assert.notEqual(await gitCode(repo, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+  assert.notEqual(await gitCode(origin, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+  assert.equal(await gs.deleteBranch(repo, branch), false);
+});
+
+test("deleteBranch refuses non-Chorus branch names without deleting refs", async () => {
+  const gs = new GitService();
+  const { repo, origin } = await makeRepo();
+  const branch = "feature/delete";
+  await git(repo, "checkout", "-qb", branch);
+  writeFileSync(join(repo, "feature.txt"), "keep this branch\n");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-qm", "feature fixture");
+  await git(repo, "push", "-q", "-u", "origin", branch);
+  await git(repo, "checkout", "-q", "main");
+
+  await assert.rejects(() => gs.deleteBranch(repo, branch), /refusing to delete non-Chorus branch/);
+  assert.equal(await gitCode(repo, "show-ref", "--verify", `refs/heads/${branch}`), 0);
+  assert.equal(await gitCode(origin, "show-ref", "--verify", `refs/heads/${branch}`), 0);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Role, TicketEvent } from "../src/api.ts";
-import { activeAgents, agentActivity, buildDag, type FeedItem, spokeAgents } from "../src/stateMachineModel.ts";
+import { activeAgents, agentActivity, buildDag, type FeedItem, spokeAgents, stepActivity } from "../src/stateMachineModel.ts";
 
 function ev(actor: string, kind: TicketEvent["kind"], message: string, createdAt: number, ticketId = "t1"): TicketEvent {
   return { id: `${actor}-${createdAt}`, projectId: "p1", ticketId, actor, kind, message, createdAt };
@@ -20,6 +20,79 @@ test("buildDag collapses consecutive same-actor steps and keeps order", () => {
   assert.equal(dag[0]?.count, 2);
   assert.equal(dag[0]?.lastMessage, "delegating");
   assert.equal(dag[1]?.lastMessage, "patched tools.ts");
+});
+
+test("buildDag gives each hand-off its own step id and time window (a return to an actor is a new step)", () => {
+  const events: TicketEvent[] = [
+    ev("orchestrator", "triage", "starting", 1),
+    ev("orchestrator", "triage", "delegating", 2),
+    ev("software-dev", "work", "patched tools.ts", 3),
+    ev("orchestrator", "triage", "opening pr", 4),
+  ];
+  const dag = buildDag(events, "t1", new Set(["software-dev"]));
+  // Step ids are unique and positional, not the actor name — the two
+  // orchestrator turns are distinct, separately-addressable steps.
+  assert.deepEqual(dag.map((n) => n.id), ["0", "1", "2"]);
+  assert.equal(new Set(dag.map((n) => n.id)).size, 3);
+  assert.equal(dag[0]?.actor, "orchestrator");
+  assert.equal(dag[2]?.actor, "orchestrator");
+  assert.notEqual(dag[0]?.id, dag[2]?.id);
+  // Activity window is [prev.lastAt, next.firstAt): it opens at the prior
+  // hand-off (so a turn's pre-summary live stream is captured) and closes at the
+  // next step; the first opens at -Infinity and the last stays open.
+  assert.equal(dag[0]?.firstAt, 1);
+  assert.equal(dag[0]?.startAt, Number.NEGATIVE_INFINITY);
+  assert.equal(dag[0]?.endAt, 3);
+  assert.equal(dag[1]?.startAt, 2); // orchestrator step 0's lastAt
+  assert.equal(dag[1]?.endAt, 4);
+  assert.equal(dag[2]?.startAt, 3); // dev step 1's lastAt
+  assert.equal(dag[2]?.endAt, Number.POSITIVE_INFINITY);
+  // editable derives from roleNames, not the hub/spoke set.
+  assert.equal(dag[1]?.editable, true, "software-dev maps to a role");
+  assert.equal(dag[0]?.editable, false, "orchestrator not in the provided role set");
+});
+
+test("stepActivity scopes to one turn — two orchestrator steps show different logs", () => {
+  const events: TicketEvent[] = [
+    ev("orchestrator", "triage", "starting", 1),
+    ev("orchestrator", "triage", "delegating", 2),
+    ev("software-dev", "work", "patched tools.ts", 3),
+    ev("orchestrator", "triage", "opening pr", 4),
+  ];
+  const feed: FeedItem[] = [
+    { e: { type: "agent_event", ticketId: "t1", role: "orchestrator", at: 1, event: { kind: "message", text: "thinking" } } },
+    { e: { type: "agent_event", ticketId: "t1", role: "orchestrator", at: 4, event: { kind: "message", text: "done" } } },
+  ];
+  const dag = buildDag(events, "t1");
+  const first = stepActivity(events, feed, "t1", dag[0]!);
+  const last = stepActivity(events, feed, "t1", dag[2]!);
+  // First orchestrator turn: its trail entries + the live event in [1,3).
+  assert.deepEqual(first.map((i) => i.text).sort(), ["delegating", "starting", "thinking"].sort());
+  // Third step (orchestrator again): only its own slice, not the first turn's.
+  assert.deepEqual(last.map((i) => i.text).sort(), ["done", "opening pr"].sort());
+  assert.ok(!last.some((i) => i.text === "starting"), "second turn excludes the first turn's events");
+});
+
+test("stepActivity includes a turn's live stream emitted before its trail summary", () => {
+  // Worker live events stream during the run; the "work" trail entry is written
+  // afterwards (later timestamp). Scoping a step from its trail entry would drop
+  // the stream — the window must open at the prior hand-off instead.
+  const events: TicketEvent[] = [
+    ev("orchestrator", "triage", "delegating", 1),
+    ev("software-dev", "work", "committed fix", 5),
+  ];
+  const feed: FeedItem[] = [
+    { e: { type: "agent_event", ticketId: "t1", role: "software-dev", at: 2, event: { kind: "command", command: "npm test" } } },
+    { e: { type: "agent_event", ticketId: "t1", role: "software-dev", at: 3, event: { kind: "reasoning", text: "patching" } } },
+  ];
+  const dag = buildDag(events, "t1");
+  const devStep = dag.find((n) => n.actor === "software-dev")!;
+  const log = stepActivity(events, feed, "t1", devStep);
+  assert.deepEqual(
+    log.map((i) => i.text),
+    ["npm test", "patching", "committed fix"],
+    "pre-summary command + reasoning appear, ahead of the trail summary",
+  );
 });
 
 test("activeAgents lights only running tickets with a recent live event", () => {

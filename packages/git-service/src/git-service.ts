@@ -259,6 +259,53 @@ export class GitService {
     }
   }
 
+  /** Close an open PR addressed by number, URL, or head branch. No-ops when none is open. */
+  async closePullRequest(localPath: string, ref: string): Promise<boolean> {
+    const existing = await this.getPrState(localPath, ref);
+    if (!existing || existing.state !== "OPEN") return false;
+    const r = await run("gh", ["pr", "close", ref], { cwd: localPath, throwOnError: false });
+    if (r.code !== 0) {
+      throw new Error(`gh pr close failed for ${ref}: ${r.stderr.trim() || r.stdout.trim()}`);
+    }
+    return true;
+  }
+
+  /** Delete a local ticket branch and its remote origin branch when either exists. */
+  async deleteBranch(localPath: string, branch: string): Promise<boolean> {
+    const trimmed = branch.trim();
+    if (!trimmed) return false;
+    if (trimmed === "main" || trimmed === "master") {
+      throw new Error(`refusing to delete protected branch ${trimmed}`);
+    }
+    if (!trimmed.startsWith("chorus/")) {
+      throw new Error(`refusing to delete non-Chorus branch ${trimmed}`);
+    }
+    return this.mutex.run(async () => {
+      let deleted = false;
+      await this.gitUnlocked(["worktree", "prune"], localPath, false);
+
+      const local = await this.gitUnlocked(["show-ref", "--verify", `refs/heads/${trimmed}`], localPath, false);
+      if (local.code === 0) {
+        const r = await this.gitUnlocked(["branch", "-D", trimmed], localPath, false);
+        if (r.code !== 0) {
+          throw new Error(`git branch -D failed for ${trimmed}: ${r.stderr.trim() || r.stdout.trim()}`);
+        }
+        deleted = true;
+      }
+
+      const remote = await this.gitUnlocked(["ls-remote", "--exit-code", "--heads", "origin", trimmed], localPath, false);
+      if (remote.code === 0) {
+        const r = await this.gitUnlocked(["push", "origin", "--delete", trimmed], localPath, false);
+        if (r.code !== 0) {
+          throw new Error(`git push --delete failed for ${trimmed}: ${r.stderr.trim() || r.stdout.trim()}`);
+        }
+        deleted = true;
+      }
+
+      return deleted;
+    });
+  }
+
   /**
    * Write a file in the main checkout, commit it, return the commit. When
    * `branch` is given, check it out first so the commit can't land on whatever

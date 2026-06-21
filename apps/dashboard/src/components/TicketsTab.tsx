@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Ticket, type TicketEvent } from "../api.js";
+import {
+  TICKET_CLEANUP_CONFIRM_TEXT,
+  canConfirmTicketCleanup,
+  summarizeTicketCleanupTargets,
+} from "../ticketCleanup.js";
 
 /** Tickets table with a create/edit/delete editor + activity trail. */
 export function TicketsTab({
@@ -20,6 +25,7 @@ export function TicketsTab({
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState<Ticket | "new" | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const running = new Set(runningTaskIds); // ticket ids currently being acted on
   const isRunning = (t: Ticket) => running.has(t.id);
 
@@ -95,6 +101,9 @@ export function TicketsTab({
               tickets when idle
             </span>
           </div>
+          <button className="danger" disabled={tickets.length === 0} onClick={() => setCleanupOpen(true)}>
+            Clean up
+          </button>
           <button className="primary" onClick={() => setEditing("new")}>
             + New ticket
           </button>
@@ -191,7 +200,7 @@ export function TicketsTab({
           ))}
           {order.length === 0 && (
             <tr>
-              <td colSpan={6} className="muted">
+              <td colSpan={7} className="muted">
                 no tickets yet
               </td>
             </tr>
@@ -214,6 +223,103 @@ export function TicketsTab({
           }}
         />
       )}
+
+      {cleanupOpen && (
+        <TicketCleanupDialog
+          projectId={projectId}
+          tickets={tickets}
+          onClose={() => setCleanupOpen(false)}
+          onCleaned={() => {
+            setCleanupOpen(false);
+            onChange();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TicketCleanupDialog({
+  projectId,
+  tickets,
+  onClose,
+  onCleaned,
+}: {
+  projectId: string;
+  tickets: Ticket[];
+  onClose: () => void;
+  onCleaned: () => void;
+}) {
+  const summary = summarizeTicketCleanupTargets(tickets);
+  const [confirmText, setConfirmText] = useState("");
+  const [removeBranches, setRemoveBranches] = useState(false);
+  const [removePullRequests, setRemovePullRequests] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const canSubmit = canConfirmTicketCleanup(confirmText, tickets.length, busy);
+
+  const cleanup = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    try {
+      await api.cleanupTickets(projectId, {
+        confirmation: confirmText,
+        removeBranches: removeBranches && summary.branchTickets > 0,
+        removePullRequests: removePullRequests && summary.pullRequestTickets > 0,
+      });
+      setBusy(false);
+      onCleaned();
+    } catch (err) {
+      alert(String(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={() => !busy && onClose()}>
+      <div className="modal cleanup-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>Clean up tickets</h3>
+        <div className="warn">
+          This deletes all {summary.tickets} tickets from this project. Type{" "}
+          <code>{TICKET_CLEANUP_CONFIRM_TEXT}</code> to confirm.
+        </div>
+
+        <label className="checkrow">
+          <input
+            type="checkbox"
+            disabled={summary.branchTickets === 0 || busy}
+            checked={removeBranches && summary.branchTickets > 0}
+            onChange={(e) => setRemoveBranches(e.target.checked)}
+          />
+          <span>Remove branches for worked tickets ({summary.branchTickets})</span>
+        </label>
+        <label className="checkrow">
+          <input
+            type="checkbox"
+            disabled={summary.pullRequestTickets === 0 || busy}
+            checked={removePullRequests && summary.pullRequestTickets > 0}
+            onChange={(e) => setRemovePullRequests(e.target.checked)}
+          />
+          <span>Close pull requests for worked tickets ({summary.pullRequestTickets})</span>
+        </label>
+
+        <label>Confirmation</label>
+        <input
+          autoFocus
+          value={confirmText}
+          disabled={busy}
+          onChange={(e) => setConfirmText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void cleanup()}
+        />
+
+        <div className="modal-actions">
+          <button onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="danger" disabled={!canSubmit} onClick={() => void cleanup()}>
+            {busy ? "Cleaning..." : "Delete all tickets"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
