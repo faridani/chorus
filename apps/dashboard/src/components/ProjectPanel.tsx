@@ -3,12 +3,13 @@ import { api, type BackendInfo, type ProjectDetail, type TicketEvent, type ToolD
 import type { FeedItem } from "../stateMachineModel.js";
 import { ActivityTab } from "./ActivityTab.js";
 import { AgentsTab } from "./AgentsTab.js";
+import { GoalsTab } from "./GoalsTab.js";
 import { SettingsTab } from "./SettingsTab.js";
 import { StateMachineTab } from "./StateMachineTab.js";
 import { SuggestionsTab } from "./SuggestionsTab.js";
 import { TicketsTab } from "./TicketsTab.js";
 
-type Tab = "tickets" | "agents" | "state" | "settings" | "activity" | "suggestions";
+type Tab = "goals" | "tickets" | "agents" | "state" | "settings" | "activity" | "suggestions";
 
 /** The project control panel: header + tabbed sections. */
 export function ProjectPanel({
@@ -49,6 +50,7 @@ export function ProjectPanel({
       {needsSpec && <ProvideSpec id={project.id} onDone={onChange} />}
 
       <nav className="tabs">
+        <TabBtn id="goals" tab={tab} setTab={setTab} label="Goals" />
         <TabBtn id="tickets" tab={tab} setTab={setTab} label={`Tickets (${tickets.length})`} />
         <TabBtn id="agents" tab={tab} setTab={setTab} label={`Agents (${roles.length})`} />
         <TabBtn id="state" tab={tab} setTab={setTab} label="State Machine" />
@@ -63,6 +65,7 @@ export function ProjectPanel({
       </nav>
 
       <div className="tabbody">
+        {tab === "goals" && <GoalsTab project={project} onSaved={onChange} />}
         {tab === "tickets" && (
           <TicketsTab
             projectId={project.id}

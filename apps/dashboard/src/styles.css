@@ -273,6 +273,7 @@ tr.clickable:hover td { background: var(--panel2); }
 .field input, .field textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px; }
 .field .ro { padding: 7px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, monospace; font-size: 13px; }
 .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.spec-content { max-height: 480px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; padding: 10px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; }
 
 /* list editor */
 .listeditor ul { list-style: none; padding: 0; margin: 0 0 6px; }

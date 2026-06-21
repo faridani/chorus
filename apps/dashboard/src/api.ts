@@ -219,6 +219,8 @@ export const api = {
     fetch("/api/backends/refresh", { method: "POST" }).then((r) => json<BackendInfo[]>(r)),
   projects: () => fetch("/api/projects").then((r) => json<Project[]>(r)),
   project: (id: string) => fetch(`/api/projects/${id}`).then((r) => json<ProjectDetail>(r)),
+  projectSpec: (id: string) =>
+    fetch(`/api/projects/${id}/spec`).then((r) => json<{ path: string | null; content: string | null }>(r)),
   createProject: (repoUrl: string, specText?: string, baseBranch?: string) =>
     fetch("/api/projects", {
       method: "POST",
