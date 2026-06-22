@@ -53,6 +53,10 @@ export function createServer(deps: WebDeps): FastifyInstance {
   const { db, bus, api } = deps;
   const isDaemonRequest = (ip: string | undefined) =>
     isLocalDaemonRequest(ip, deps.config.host, deps.localInterfaceAddresses ?? readLocalInterfaceAddresses);
+  // The terminal may optionally be reachable wherever the dashboard is (the
+  // dashboard is itself unauthenticated); the MCP bridge below stays loopback-only.
+  const isTerminalRequest = (ip: string | undefined) =>
+    deps.config.terminal?.allowRemoteClients === true || isDaemonRequest(ip);
 
   app.register(fastifyWebsocket);
   const terminalSessions = new TerminalSessionManager({
@@ -117,7 +121,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   // ---- AI a la carte terminal (local-only, project-scoped sessions) ----
   app.register(async (instance) => {
     instance.get("/ws/terminal/:token", { websocket: true }, (socket, req) => {
-      if (!isDaemonRequest(req.ip)) {
+      if (!isTerminalRequest(req.ip)) {
         socket.close(1008, "loopback only");
         return;
       }
@@ -129,7 +133,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.get("/api/projects/:id/terminal/worktrees", async (req, reply) => {
-    if (!isDaemonRequest(req.ip)) {
+    if (!isTerminalRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id } = req.params as { id: string };
@@ -141,7 +145,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/worktrees", async (req, reply) => {
-    if (!isDaemonRequest(req.ip)) {
+    if (!isTerminalRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id } = req.params as { id: string };
@@ -153,7 +157,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/sessions", async (req, reply) => {
-    if (!isDaemonRequest(req.ip)) {
+    if (!isTerminalRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id } = req.params as { id: string };
@@ -178,7 +182,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/sessions/:token/stop", async (req, reply) => {
-    if (!isDaemonRequest(req.ip)) {
+    if (!isTerminalRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id, token } = req.params as { id: string; token: string };

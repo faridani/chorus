@@ -81,6 +81,19 @@ export const ConfigSchema = z.object({
       imessageTo: z.string().optional(),
     })
     .default({}),
+  terminal: z
+    .object({
+      /**
+       * Allow the in-app terminal ("AI Shell") to be used by any client that can
+       * reach the dashboard, not just loopback / local-interface clients. The
+       * dashboard is unauthenticated, so enabling this exposes an interactive,
+       * full-access shell to whatever network `host` is bound to. Enable only on
+       * trusted networks (e.g. a personal LAN/Tailscale). Set via config or the
+       * CHORUS_ALLOW_REMOTE_TERMINAL env var.
+       */
+      allowRemoteClients: z.boolean().default(false),
+    })
+    .default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
