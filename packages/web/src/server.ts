@@ -93,17 +93,13 @@ export function createServer(deps: WebDeps): FastifyInstance {
     // The bridge reaches the daemon on the host's configured address. Allow
     // loopback always, plus the bound host IP when it's a specific interface
     // (a remote client still fails: its source IP won't match config.host).
-    const boundHost = deps.config.host;
-    const isLoopback = (ip: string) =>
-      ip === "127.0.0.1" ||
-      ip === "::1" ||
-      ip === "::ffff:127.0.0.1" ||
-      (boundHost !== "0.0.0.0" && (ip === boundHost || ip === `::ffff:${boundHost}`));
     const handle = async (
       req: { params: unknown; body?: unknown; ip: string },
       reply: { code: (n: number) => { send: (b: unknown) => unknown } },
     ) => {
-      if (!isLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+      if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+        return reply.code(403).send({ error: "loopback only" });
+      }
       const { token, action } = req.params as { token: string; action: string };
       const body = (req.body ?? {}) as Record<string, unknown>;
       const { status, body: out } = await sessionApi.sessionCall(token, action, body);
@@ -113,10 +109,10 @@ export function createServer(deps: WebDeps): FastifyInstance {
     app.post("/api/internal/sessions/:token/:action", handle);
   }
 
-  // ---- AI a la carte terminal (loopback-only, project-scoped sessions) ----
+  // ---- AI a la carte terminal (local-only, project-scoped sessions) ----
   app.register(async (instance) => {
     instance.get("/ws/terminal/:token", { websocket: true }, (socket, req) => {
-      if (!isStrictLoopback(req.ip)) {
+      if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
         socket.close(1008, "loopback only");
         return;
       }
@@ -128,7 +124,9 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.get("/api/projects/:id/terminal/worktrees", async (req, reply) => {
-    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+      return reply.code(403).send({ error: "loopback only" });
+    }
     const { id } = req.params as { id: string };
     try {
       return await terminalSessions.listWorktrees(id);
@@ -138,7 +136,9 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/worktrees", async (req, reply) => {
-    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+      return reply.code(403).send({ error: "loopback only" });
+    }
     const { id } = req.params as { id: string };
     try {
       return await terminalSessions.createScratchWorktree(id);
@@ -148,7 +148,9 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/sessions", async (req, reply) => {
-    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+      return reply.code(403).send({ error: "loopback only" });
+    }
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { worktreeId?: string; backendId?: string | null };
     if (!body.worktreeId) return reply.code(400).send({ error: "worktreeId required" });
@@ -164,7 +166,9 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/sessions/:token/stop", async (req, reply) => {
-    if (!isStrictLoopback(req.ip)) return reply.code(403).send({ error: "loopback only" });
+    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+      return reply.code(403).send({ error: "loopback only" });
+    }
     const { id, token } = req.params as { id: string; token: string };
     const stopped = await terminalSessions.stopSession(id, token);
     if (!stopped) return reply.code(404).send({ error: "terminal session not found" });
@@ -510,6 +514,12 @@ export function createServer(deps: WebDeps): FastifyInstance {
 
 function isStrictLoopback(ip: string): boolean {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
+function isLocalDaemonRequest(ip: string, boundHost: string): boolean {
+  if (isStrictLoopback(ip)) return true;
+  if (boundHost === "0.0.0.0" || boundHost === "::") return false;
+  return ip === boundHost || ip === `::ffff:${boundHost}`;
 }
 
 function sendTerminalError(
