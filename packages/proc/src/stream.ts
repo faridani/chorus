@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, existsSync, type WriteStream } from "node:fs";
+import { delimiter, join } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 
@@ -10,7 +11,7 @@ export interface StreamSpawnOptions {
   rawLogPath?: string | null;
   /** Keep stdin open so callers can drive an interactive process. */
   stdin?: "ignore" | "pipe";
-  /** Wrap the command in the host `script` utility so the child sees a TTY. */
+  /** Wrap the command in a host PTY helper so the child sees a TTY. */
   pty?: boolean;
   /** Hard wall-clock cap (ms). */
   maxWallClockMs?: number;
@@ -234,12 +235,81 @@ function delay(ms: number): Promise<void> {
 }
 
 function ptyWrappedCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
+  const python = findExecutable("python3");
+  if (python) return { cmd: python, args: ["-c", PYTHON_PTY_BRIDGE, cmd, ...args] };
+  if (process.platform === "darwin" || process.platform === "freebsd") return { cmd, args };
   if (!existsSync("/usr/bin/script") && !existsSync("/bin/script")) return { cmd, args };
   const script = existsSync("/usr/bin/script") ? "/usr/bin/script" : "/bin/script";
-  if (process.platform === "darwin" || process.platform === "freebsd") {
-    return { cmd: script, args: ["-q", "/dev/null", cmd, ...args] };
-  }
   return { cmd: script, args: ["-q", "-f", "-c", [cmd, ...args].map(shellQuote).join(" "), "/dev/null"] };
+}
+
+const PYTHON_PTY_BRIDGE = `
+import os
+import pty
+import select
+import subprocess
+import sys
+
+master_fd, slave_fd = pty.openpty()
+child = subprocess.Popen(sys.argv[1:], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True)
+os.close(slave_fd)
+
+stdin_fd = sys.stdin.fileno()
+stdout_fd = sys.stdout.fileno()
+watch_stdin = True
+
+def copy_master():
+    try:
+        data = os.read(master_fd, 4096)
+    except OSError:
+        return False
+    if not data:
+        return False
+    os.write(stdout_fd, data)
+    return True
+
+try:
+    while child.poll() is None:
+        fds = [master_fd]
+        if watch_stdin:
+            fds.append(stdin_fd)
+        try:
+            ready, _, _ = select.select(fds, [], [], 0.1)
+        except OSError:
+            ready = []
+        if master_fd in ready and not copy_master():
+            break
+        if watch_stdin and stdin_fd in ready:
+            try:
+                data = os.read(stdin_fd, 4096)
+            except OSError:
+                data = b""
+            if data:
+                try:
+                    os.write(master_fd, data)
+                except OSError:
+                    pass
+            else:
+                watch_stdin = False
+finally:
+    while copy_master():
+        pass
+    try:
+        os.close(master_fd)
+    except OSError:
+        pass
+
+sys.exit(child.wait())
+`;
+
+function findExecutable(name: string): string | null {
+  if (name.includes("/") && existsSync(name)) return name;
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 function shellQuote(s: string): string {
