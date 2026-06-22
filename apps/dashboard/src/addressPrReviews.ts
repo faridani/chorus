@@ -3,6 +3,11 @@ import type { TicketEvent } from "./api.js";
 export const ADDRESS_PR_REVIEWS_ACTIVE_ICON = "⏳";
 export const ADDRESS_PR_REVIEWS_IDLE_ICON = "💬";
 
+export interface PendingAddressPrReviewRequest {
+  id: string;
+  requestedAt: number;
+}
+
 const TERMINAL_ADDRESS_PR_REVIEW_MESSAGES = [
   "Address PR comments failed:",
   "Addressed PR comments",
@@ -38,4 +43,11 @@ export function hasTerminalAddressPrReviewEvent(
       (since === undefined || event.createdAt >= since) &&
       TERMINAL_ADDRESS_PR_REVIEW_MESSAGES.some((message) => event.message.startsWith(message)),
   );
+}
+
+export function shouldClearPendingAddressPrReviewRequest(
+  events: readonly TicketEvent[],
+  request: PendingAddressPrReviewRequest | null,
+): boolean {
+  return request ? hasTerminalAddressPrReviewEvent(events, request.id, request.requestedAt) : false;
 }

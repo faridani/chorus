@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import {
   addressPrReviewsIcon,
-  hasTerminalAddressPrReviewEvent,
   isAddressingPrReviews,
+  shouldClearPendingAddressPrReviewRequest,
+  type PendingAddressPrReviewRequest,
 } from "../addressPrReviews.js";
 import { api, type Ticket, type TicketEvent } from "../api.js";
 import {
@@ -46,16 +47,13 @@ export function TicketsTab({
   const isRunning = (t: Ticket) => running.has(t.id);
 
   // Ticket whose "Address PR comments" request is being submitted.
-  const [addrPending, setAddrPending] = useState<{ id: string; requestedAt: number } | null>(null);
+  const [addrPending, setAddrPending] = useState<PendingAddressPrReviewRequest | null>(null);
   useEffect(() => {
     if (!addrPending) return;
-    if (
-      addressingPrTicketIds.includes(addrPending.id) ||
-      hasTerminalAddressPrReviewEvent(events, addrPending.id, addrPending.requestedAt)
-    ) {
+    if (shouldClearPendingAddressPrReviewRequest(events, addrPending)) {
       setAddrPending(null);
     }
-  }, [addrPending, addressingPrTicketIds, events]);
+  }, [addrPending, events]);
   const isAddressingReviewTicket = (ticketId: string) =>
     isAddressingPrReviews(ticketId, addressingPrTicketIds, addrPending?.id ?? null);
   const addressPrComments = (t: Ticket) => {
