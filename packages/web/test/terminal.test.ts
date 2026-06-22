@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { ChorusBus, type BackendInfo, type Project } from "@chorus/core";
 import { ChorusDb } from "@chorus/db";
@@ -85,6 +86,99 @@ test("terminal session creation validates worktrees and available backends", asy
   await fixture.close();
 });
 
+test("terminal worktrees must be git-registered and realpath scoped", async () => {
+  const fixture = setup();
+  const worktreesRoot = join(fixture.dataDir, "worktrees", fixture.project.id);
+  mkdirSync(worktreesRoot, { recursive: true });
+
+  const registered = join(worktreesRoot, "registered");
+  execFileSync("git", ["worktree", "add", "-b", "ticket-registered", registered, "main"], {
+    cwd: fixture.repoPath,
+  });
+  fixture.db.insertTicket({
+    id: "ticket_registered",
+    projectId: fixture.project.id,
+    title: "Registered ticket",
+    body: "",
+    status: "in_progress",
+    roleName: null,
+    priority: 1,
+    source: "manual",
+    branch: "ticket-registered",
+    worktreePath: registered,
+    prUrl: null,
+    prNumber: null,
+    starred: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  const stale = join(worktreesRoot, "stale-db-path");
+  mkdirSync(stale, { recursive: true });
+  fixture.db.insertTicket({
+    id: "ticket_stale",
+    projectId: fixture.project.id,
+    title: "Stale DB ticket",
+    body: "",
+    status: "in_progress",
+    roleName: null,
+    priority: 1,
+    source: "manual",
+    branch: "ticket-stale",
+    worktreePath: stale,
+    prUrl: null,
+    prNumber: null,
+    starred: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  if (process.platform !== "win32") {
+    const outside = join(fixture.root, "outside-worktree");
+    mkdirSync(outside, { recursive: true });
+    const symlink = join(worktreesRoot, "symlink-outside");
+    symlinkSync(outside, symlink, "dir");
+    fixture.db.insertTicket({
+      id: "ticket_symlink",
+      projectId: fixture.project.id,
+      title: "Symlink escape ticket",
+      body: "",
+      status: "in_progress",
+      roleName: null,
+      priority: 1,
+      source: "manual",
+      branch: "ticket-symlink",
+      worktreePath: symlink,
+      prUrl: null,
+      prNumber: null,
+      starred: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  }
+
+  const listed = await fixture.app.inject({
+    method: "GET",
+    url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
+  });
+  assert.equal(listed.statusCode, 200);
+  const body = listed.json() as Array<{ branch: string; kind: string; path?: string }>;
+  assert.equal(body.some((wt) => wt.branch === "ticket-registered" && wt.kind === "ticket"), true);
+  assert.equal(body.some((wt) => wt.branch === "ticket-stale"), false);
+  assert.equal(body.some((wt) => wt.branch === "ticket-symlink"), false);
+  assert.equal(JSON.stringify(body).includes(worktreesRoot), false);
+
+  const staleSession = await fixture.app.inject({
+    method: "POST",
+    url: `/api/projects/${fixture.project.id}/terminal/sessions`,
+    payload: { worktreeId: worktreeIdForPath(stale) },
+  });
+  assert.equal(staleSession.statusCode, 400);
+  assert.deepEqual(staleSession.json(), { error: "unknown worktree" });
+
+  await fixture.close();
+});
+
 function setup(opts: { backends?: BackendInfo[] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "chorus-web-terminal-"));
   const dataDir = join(root, "data");
@@ -128,10 +222,16 @@ function setup(opts: { backends?: BackendInfo[] } = {}) {
     app,
     db,
     project,
+    root,
+    dataDir,
     repoPath,
     close: async () => {
       await app.close();
       db.close();
     },
   };
+}
+
+function worktreeIdForPath(path: string): string {
+  return `wt_${createHash("sha256").update(resolve(path)).digest("hex").slice(0, 16)}`;
 }
