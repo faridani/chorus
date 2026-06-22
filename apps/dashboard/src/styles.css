@@ -32,16 +32,17 @@ button:disabled { opacity: .5; cursor: default; }
 .quota-available { color: #7ee787; }
 .quota-exhausted { color: #f85149; }
 .body {
+  --left-pane-width: clamp(320px, 24vw, 380px);
   --events-pane-width: 320px;
   --events-handle-width: 36px;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) var(--events-pane-width);
+  grid-template-columns: var(--left-pane-width) minmax(0, 1fr) var(--events-pane-width);
   flex: 1;
   overflow: hidden;
   transition: grid-template-columns .22s ease;
 }
 .body.right-pane-collapsed {
-  grid-template-columns: 280px minmax(0, 1fr) var(--events-handle-width);
+  grid-template-columns: var(--left-pane-width) minmax(0, 1fr) var(--events-handle-width);
 }
 .sidebar { background: var(--panel); border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
 .sidebar { overflow-x: hidden; min-width: 0; }
@@ -51,7 +52,7 @@ button:disabled { opacity: .5; cursor: default; }
   position: absolute;
   inset: 0 0 0 auto;
   width: var(--events-pane-width);
-  max-width: calc(100vw - 280px);
+  max-width: calc(100vw - var(--left-pane-width));
   background: var(--panel);
   border-left: 1px solid var(--border);
   display: flex;
