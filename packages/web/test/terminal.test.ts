@@ -31,6 +31,13 @@ test("terminal guard accepts the configured local bind address and rejects other
   });
   assert.equal(local.statusCode, 200);
 
+  const mappedLocal = await fixture.app.inject({
+    method: "GET",
+    url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
+    remoteAddress: "::ffff:192.0.2.10",
+  });
+  assert.equal(mappedLocal.statusCode, 200);
+
   const remote = await fixture.app.inject({
     method: "GET",
     url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
@@ -44,10 +51,35 @@ test("terminal guard accepts the configured local bind address and rejects other
     code: 1008,
     reason: "unknown terminal session",
   });
+  assert.deepEqual(await terminalSocketClose(fixture, "::ffff:192.0.2.10"), {
+    code: 1008,
+    reason: "unknown terminal session",
+  });
   assert.deepEqual(await terminalSocketClose(fixture, "10.0.0.8"), {
     code: 1008,
     reason: "loopback only",
   });
+
+  await fixture.close();
+});
+
+test("terminal guard normalizes IPv4-mapped configured bind addresses", async () => {
+  const fixture = setup({ host: "::ffff:192.0.2.10" });
+
+  const local = await fixture.app.inject({
+    method: "GET",
+    url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
+    remoteAddress: "192.0.2.10",
+  });
+  assert.equal(local.statusCode, 200);
+
+  const remote = await fixture.app.inject({
+    method: "GET",
+    url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
+    remoteAddress: "10.0.0.8",
+  });
+  assert.equal(remote.statusCode, 403);
+  assert.deepEqual(remote.json(), { error: "loopback only" });
 
   await fixture.close();
 });
