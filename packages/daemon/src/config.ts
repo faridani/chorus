@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type Config, ConfigSchema } from "@chorus/core";
 
 /**
@@ -30,13 +31,38 @@ export function loadConfig(): Config {
 }
 
 function readFileConfig(): Record<string, unknown> {
-  const path = process.env.CHORUS_CONFIG;
-  if (path && existsSync(path)) {
+  const path = resolveConfigPath();
+  if (path) {
     try {
+      console.log(`[config] loaded ${path}`);
       return JSON.parse(readFileSync(path, "utf8"));
     } catch (err) {
       console.warn(`[config] failed to read ${path}: ${String(err)}`);
     }
   }
   return {};
+}
+
+/**
+ * $CHORUS_CONFIG wins if set. Otherwise fall back to `chorus.config.json` at the
+ * repo root, so settings persist across restarts without having to export
+ * CHORUS_CONFIG on every launch.
+ */
+function resolveConfigPath(): string | undefined {
+  if (process.env.CHORUS_CONFIG) {
+    if (existsSync(process.env.CHORUS_CONFIG)) return process.env.CHORUS_CONFIG;
+    console.warn(
+      `[config] CHORUS_CONFIG is set to "${process.env.CHORUS_CONFIG}" but the file does not exist; using defaults.`,
+    );
+    return undefined;
+  }
+  const here = dirname(fileURLToPath(import.meta.url)); // packages/daemon/{src,dist}
+  for (const candidate of [
+    join(process.cwd(), "chorus.config.json"),
+    join(here, "..", "..", "..", "chorus.config.json"),
+    join(here, "..", "..", "..", "..", "chorus.config.json"),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }

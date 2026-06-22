@@ -28,8 +28,12 @@ Copy the example and edit it (or rely on defaults):
 
 ```bash
 cp chorus.config.example.json chorus.config.json
-export CHORUS_CONFIG=$PWD/chorus.config.json
 ```
+
+The daemon auto-loads `chorus.config.json` from the repo root on every start, so
+you do **not** need to export anything. (`chorus.config.json` is git-ignored.)
+Set `CHORUS_CONFIG=/path/to/file.json` only if you keep the config elsewhere; it
+takes precedence when set.
 
 Key fields (all optional; sensible defaults apply):
 
@@ -40,9 +44,10 @@ Key fields (all optional; sensible defaults apply):
 | `maxConcurrentAgents` | parallel agents (default 2) |
 | `quota.exhaustionPatterns` | regexes that mean "quota exhausted" — tune as you learn Codex's wording |
 | `notifications.imessageTo` | phone/Apple ID to iMessage when a PR is opened/merged |
+| `terminal.allowRemoteClients` | let the **AI Shell** terminal be used from any client that can reach the dashboard, not just loopback/local-interface ones (default `false`). Needed when you open the dashboard from another device over LAN/Tailscale. The dashboard is unauthenticated, so only enable on a trusted network. |
 
 Env overrides: `CHORUS_DATA_DIR`, `CHORUS_PORT`, `CHORUS_HOST`,
-`CHORUS_DASHBOARD_DIR`.
+`CHORUS_DASHBOARD_DIR`, `CHORUS_ALLOW_REMOTE_TERMINAL`.
 
 ## Run
 

@@ -16,5 +16,8 @@
   "notifications": {
     "enabled": true,
     "imessageTo": "+15551234567"
+  },
+  "terminal": {
+    "allowRemoteClients": false
   }
 }
