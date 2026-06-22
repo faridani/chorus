@@ -50,10 +50,15 @@ function readFileConfig(): Record<string, unknown> {
  */
 function resolveConfigPath(): string | undefined {
   if (process.env.CHORUS_CONFIG) {
-    return existsSync(process.env.CHORUS_CONFIG) ? process.env.CHORUS_CONFIG : undefined;
+    if (existsSync(process.env.CHORUS_CONFIG)) return process.env.CHORUS_CONFIG;
+    console.warn(
+      `[config] CHORUS_CONFIG is set to "${process.env.CHORUS_CONFIG}" but the file does not exist; using defaults.`,
+    );
+    return undefined;
   }
   const here = dirname(fileURLToPath(import.meta.url)); // packages/daemon/{src,dist}
   for (const candidate of [
+    join(process.cwd(), "chorus.config.json"),
     join(here, "..", "..", "..", "chorus.config.json"),
     join(here, "..", "..", "..", "..", "chorus.config.json"),
   ]) {
