@@ -96,6 +96,7 @@ export function App() {
   }, [rightPaneOpen]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
     const compactLayoutQuery = window.matchMedia("(max-width: 768px)");
     const collapseForCompactLayout = () => {
       if (compactLayoutQuery.matches) setRightPaneOpen(false);
