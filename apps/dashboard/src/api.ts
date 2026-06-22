@@ -389,7 +389,10 @@ export const api = {
     fetch(`/api/projects/${id}/terminal/worktrees`, { method: "POST" }).then((r) =>
       json<TerminalWorktree>(r),
     ),
-  createTerminalSession: (id: string, input: { worktreeId: string; backendId?: string | null }) =>
+  createTerminalSession: (
+    id: string,
+    input: { worktreeId: string; backendId?: string | null; cols?: number; rows?: number },
+  ) =>
     fetch(`/api/projects/${id}/terminal/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },

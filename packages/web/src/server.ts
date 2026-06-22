@@ -157,13 +157,20 @@ export function createServer(deps: WebDeps): FastifyInstance {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { worktreeId?: string; backendId?: string | null };
+    const body = (req.body ?? {}) as {
+      worktreeId?: string;
+      backendId?: string | null;
+      cols?: number;
+      rows?: number;
+    };
     if (!body.worktreeId) return reply.code(400).send({ error: "worktreeId required" });
     try {
       return await terminalSessions.createSession({
         projectId: id,
         worktreeId: body.worktreeId,
         backendId: body.backendId ?? null,
+        cols: body.cols,
+        rows: body.rows,
       });
     } catch (err) {
       return sendTerminalError(reply, err);

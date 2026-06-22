@@ -208,6 +208,27 @@ test("terminal session creation validates worktrees and available backends", asy
   await fixture.close();
 });
 
+test("terminal session creation accepts an initial cols/rows size", async () => {
+  const fixture = setup();
+  const res = await fixture.app.inject({
+    method: "POST",
+    url: `/api/projects/${fixture.project.id}/terminal/sessions`,
+    payload: { worktreeId: "base", cols: 132, rows: 50 },
+  });
+  assert.equal(res.statusCode, 200);
+  const session = res.json() as { sessionToken: string; backendId: string | null; mode: string };
+  assert.equal(typeof session.sessionToken, "string");
+  assert.equal(session.backendId, null);
+  assert.equal(session.mode, "shell");
+
+  const stop = await fixture.app.inject({
+    method: "POST",
+    url: `/api/projects/${fixture.project.id}/terminal/sessions/${session.sessionToken}/stop`,
+  });
+  assert.equal(stop.statusCode, 200);
+  await fixture.close();
+});
+
 test("terminal worktrees must be git-registered and realpath scoped", async () => {
   const fixture = setup();
   const worktreesRoot = join(fixture.dataDir, "worktrees", fixture.project.id);
