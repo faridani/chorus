@@ -98,6 +98,12 @@ export class StreamingProcess {
     this.pid = this.child.pid;
     this.pgid = this.child.pid; // leader of its own group
 
+    // Writing to stdin or the control pipe after the child has gone emits an
+    // 'error' (EPIPE/ECONNRESET). Without a listener that is an unhandled
+    // exception that crashes the daemon, so swallow it on these write streams.
+    this.child.stdin?.on("error", () => {});
+    (this.child.stdio[3] as NodeJS.EventEmitter | undefined)?.on("error", () => {});
+
     const stdoutDecoder = new StringDecoder("utf8");
     this.child.stdout!.on("data", (d: Buffer) => {
       this.bumpIdleTimer(opts.idleTimeoutMs);
@@ -182,7 +188,11 @@ export class StreamingProcess {
     if (!ctrl || !ctrl.writable) return false;
     const c = Math.max(1, Math.min(65535, Math.floor(cols) || 0));
     const r = Math.max(1, Math.min(65535, Math.floor(rows) || 0));
-    return ctrl.write(`${c} ${r}\n`);
+    try {
+      return ctrl.write(`${c} ${r}\n`);
+    } catch {
+      return false;
+    }
   }
 
   /** Graceful stop: SIGTERM the group, then SIGKILL after the grace period. */
@@ -329,23 +339,28 @@ os.close(slave_fd)
 # bridge's process group and StreamingProcess's group-kill cannot reach it.
 # When the daemon signals the bridge, tear down the child's group ourselves.
 def _terminate(signum, frame):
+    # Capture the shell's group up front (before it can exit).
     try:
         pgid = os.getpgid(child.pid)
     except OSError:
-        os._exit(0)
+        pgid = None
+    # Hang up the terminal by closing the master: the kernel SIGHUPs the session
+    # leader (the shell), which in turn HUPs its background jobs (e.g. a
+    # "npm run dev &") that live in their own process groups. Give the shell a
+    # brief moment to forward that hangup to its jobs before we kill it.
     try:
-        os.killpg(pgid, signal.SIGTERM)
+        os.close(master_fd)
     except OSError:
         pass
-    deadline = time.time() + 0.08
-    while time.time() < deadline:
-        if child.poll() is not None:
-            os._exit(0)
-        time.sleep(0.005)
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except OSError:
-        pass
+    time.sleep(0.12)
+    # Force-kill the shell's own process group too, to take down the shell and
+    # any foreground children that did not exit on the hangup (SIGHUP is not
+    # cascaded to a foreground child the way it is to background jobs).
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass
     os._exit(0)
 
 signal.signal(signal.SIGTERM, _terminate)

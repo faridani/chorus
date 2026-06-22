@@ -37,6 +37,11 @@ export function AiALaCarteTab({ project }: { project: Project }) {
     }, 80);
   }
 
+  // Load this project's worktrees, then auto-start a shell in a valid one.
+  // These are one effect (not two) so the session is created only AFTER the new
+  // project's worktrees load: starting from a separate effect would use the
+  // previous project's worktreeId on a project switch and the backend would
+  // reject it with "unknown worktree". Teardown lives here too.
   useEffect(() => {
     let cancelled = false;
     api
@@ -44,12 +49,22 @@ export function AiALaCarteTab({ project }: { project: Project }) {
       .then((rows) => {
         if (cancelled) return;
         setWorktrees(rows);
-        setWorktreeId((current) => (rows.some((wt) => wt.id === current) ? current : rows[0]?.id ?? "base"));
+        const nextId = rows.some((wt) => wt.id === worktreeId) ? worktreeId : rows[0]?.id ?? "base";
+        setWorktreeId(nextId);
+        void startSession(nextId);
       })
       .catch((err) => !cancelled && setStatus(String(err)));
     return () => {
       cancelled = true;
+      const token = activeTokenRef.current;
+      activeTokenRef.current = null;
+      // Invalidate any start still in flight so it stops the session it creates.
+      startGenRef.current++;
+      wsRef.current?.close();
+      wsRef.current = null;
+      if (token) void api.stopTerminalSession(project.id, token).catch(() => {});
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
   // Build the xterm instance once. Refs (not the closure) carry the live
@@ -123,21 +138,6 @@ export function AiALaCarteTab({ project }: { project: Project }) {
       fitRef.current = null;
     };
   }, []);
-
-  // Auto-start a shell on mount / project switch; tear it down on unmount.
-  useEffect(() => {
-    void startSession(worktreeId);
-    return () => {
-      const token = activeTokenRef.current;
-      activeTokenRef.current = null;
-      // Invalidate any start still in flight so it stops the session it creates.
-      startGenRef.current++;
-      wsRef.current?.close();
-      wsRef.current = null;
-      if (token) void api.stopTerminalSession(project.id, token).catch(() => {});
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id]);
 
   async function stopCurrent(): Promise<void> {
     const token = activeTokenRef.current;
