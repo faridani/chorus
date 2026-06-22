@@ -253,7 +253,11 @@ export function App() {
                     <span className="muted"> — {detail.project.baseBranch}</span>
                   ) : null}
                 </h3>
-                <OpenPrs tickets={detail?.tickets ?? []} hasProject={!!selected} />
+                <OpenPrs
+                  tickets={detail?.tickets ?? []}
+                  pullRequests={detail?.pullRequests ?? []}
+                  hasProject={!!selected}
+                />
               </section>
               <section className="models-pane">
                 <h3>

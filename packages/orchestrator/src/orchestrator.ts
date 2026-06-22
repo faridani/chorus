@@ -1747,14 +1747,23 @@ export class Orchestrator {
           continue;
         }
         if (!state) continue;
-        const merged = state.state === "MERGED" || state.mergedAt != null;
+        const ghState = state.state.toUpperCase();
+        const merged = ghState === "MERGED" || state.mergedAt != null;
         if (merged) {
+          this.deps.db.updatePullRequestStateForTicket(ticket.id, "MERGED", {
+            number: state.number,
+            url: state.url,
+          });
           this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", `PR merged on GitHub: ${state.url}`);
           await this.cleanupWorktree(project, ticket);
           this.deps.db.updateTicket(ticket.id, { status: "merged", branch: null, worktreePath: null });
           this.emitTicket(project.id, ticket.id);
           await this.notify("pr_merged", project, "PR merged", `${ticket.title}\n${state.url}`).catch(() => {});
-        } else if (state.state === "CLOSED") {
+        } else if (ghState === "CLOSED") {
+          this.deps.db.updatePullRequestStateForTicket(ticket.id, "CLOSED", {
+            number: state.number,
+            url: state.url,
+          });
           this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", `PR closed without merging: ${state.url}`);
           // The worktree was removed when the PR opened. Clear the branch too so
           // a future attempt starts fresh (a stale branch with no worktree makes
