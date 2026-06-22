@@ -21,6 +21,27 @@ test("terminal APIs reject non-loopback clients", async () => {
   await fixture.close();
 });
 
+test("terminal routes allow remote clients when allowRemoteClients is set (MCP bridge stays loopback)", async () => {
+  const fixture = setup({ host: "0.0.0.0", allowRemoteTerminal: true });
+
+  const worktrees = await fixture.app.inject({
+    method: "GET",
+    url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
+    remoteAddress: "10.0.0.8",
+  });
+  assert.equal(worktrees.statusCode, 200);
+
+  const session = await fixture.app.inject({
+    method: "POST",
+    url: `/api/projects/${fixture.project.id}/terminal/sessions`,
+    payload: { worktreeId: "base" },
+    remoteAddress: "10.0.0.8",
+  });
+  assert.equal(session.statusCode, 200);
+
+  await fixture.close();
+});
+
 test("terminal request guard handles uppercase and missing request addresses", () => {
   assert.equal(isLocalDaemonRequest("::FFFF:127.0.0.1", "127.0.0.1"), true);
   assert.equal(isLocalDaemonRequest("::FFFF:192.0.2.10", "::ffff:192.0.2.10"), true);
@@ -208,6 +229,27 @@ test("terminal session creation validates worktrees and available backends", asy
   await fixture.close();
 });
 
+test("terminal session creation accepts an initial cols/rows size", async () => {
+  const fixture = setup();
+  const res = await fixture.app.inject({
+    method: "POST",
+    url: `/api/projects/${fixture.project.id}/terminal/sessions`,
+    payload: { worktreeId: "base", cols: 132, rows: 50 },
+  });
+  assert.equal(res.statusCode, 200);
+  const session = res.json() as { sessionToken: string; backendId: string | null; mode: string };
+  assert.equal(typeof session.sessionToken, "string");
+  assert.equal(session.backendId, null);
+  assert.equal(session.mode, "shell");
+
+  const stop = await fixture.app.inject({
+    method: "POST",
+    url: `/api/projects/${fixture.project.id}/terminal/sessions/${session.sessionToken}/stop`,
+  });
+  assert.equal(stop.statusCode, 200);
+  await fixture.close();
+});
+
 test("terminal worktrees must be git-registered and realpath scoped", async () => {
   const fixture = setup();
   const worktreesRoot = join(fixture.dataDir, "worktrees", fixture.project.id);
@@ -301,7 +343,9 @@ test("terminal worktrees must be git-registered and realpath scoped", async () =
   await fixture.close();
 });
 
-function setup(opts: { backends?: BackendInfo[]; host?: string; localAddresses?: string[] } = {}) {
+function setup(
+  opts: { backends?: BackendInfo[]; host?: string; localAddresses?: string[]; allowRemoteTerminal?: boolean } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "chorus-web-terminal-"));
   const dataDir = join(root, "data");
   const repoPath = join(root, "repo");
@@ -337,7 +381,13 @@ function setup(opts: { backends?: BackendInfo[]; host?: string; localAddresses?:
     db,
     bus: new ChorusBus(),
     api: { listBackends: () => opts.backends ?? [] } as never,
-    config: { dataDir, host: opts.host ?? "127.0.0.1", port: 0, maxConcurrentAgents: 1 } as never,
+    config: {
+      dataDir,
+      host: opts.host ?? "127.0.0.1",
+      port: 0,
+      maxConcurrentAgents: 1,
+      terminal: { allowRemoteClients: opts.allowRemoteTerminal ?? false },
+    } as never,
     version: { number: "0.0.0", commit: "test", dirty: false, startedAt: 0 },
     localInterfaceAddresses: opts.localAddresses ? () => opts.localAddresses ?? [] : undefined,
   });

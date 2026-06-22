@@ -43,7 +43,7 @@ function declaration(rule: Rule, property: string) {
 
 test("dashboard layout uses a wider responsive left pane", () => {
   const body = topLevelRule(".body");
-  assert.equal(compact(declaration(body, "--left-pane-width")), "clamp(320px,24vw,380px)");
+  assert.equal(compact(declaration(body, "--left-pane-width")), "clamp(320px,26vw,460px)");
   assert.equal(
     compact(declaration(body, "grid-template-columns")),
     "var(--left-pane-width)minmax(0,1fr)var(--events-pane-width)",

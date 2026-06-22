@@ -37,6 +37,8 @@ interface TerminalSession extends TerminalSessionInfo {
   token: string;
   worktreePath: string;
   startedAt: number;
+  cols: number;
+  rows: number;
   proc?: StreamingProcess;
   socket?: TerminalSocket;
   attachTimer?: NodeJS.Timeout;
@@ -98,6 +100,8 @@ export class TerminalSessionManager {
     projectId: string;
     worktreeId: string;
     backendId?: string | null;
+    cols?: number;
+    rows?: number;
   }): Promise<TerminalSessionInfo> {
     const project = this.requireProject(input.projectId);
     const scope = await this.projectPathScope(project);
@@ -122,6 +126,8 @@ export class TerminalSessionManager {
       backendId,
       mode: backendId ? "backend" : "shell",
       startedAt: Date.now(),
+      cols: clampTermSize(input.cols, 80),
+      rows: clampTermSize(input.rows, 24),
       stopping: false,
     };
     session.attachTimer = setTimeout(() => void this.stopSession(project.id, token), 30_000);
@@ -177,9 +183,10 @@ export class TerminalSessionManager {
       const spec = this.commandForSession(session);
       const proc = new StreamingProcess(spec.cmd, spec.args, {
         cwd: session.worktreePath,
-        env: terminalEnv(),
+        env: terminalEnv(session.cols, session.rows),
         stdin: "pipe",
         pty: process.platform !== "win32",
+        ptyControl: process.platform !== "win32",
         rawLogPath: null,
         killGraceMs: 2_000,
       });
@@ -217,14 +224,18 @@ export class TerminalSessionManager {
   private handleSocketMessage(session: TerminalSession, raw: unknown): void {
     const text = socketText(raw);
     if (!text) return;
-    let msg: { type?: unknown; data?: unknown };
+    let msg: { type?: unknown; data?: unknown; cols?: unknown; rows?: unknown };
     try {
-      msg = JSON.parse(text) as { type?: unknown; data?: unknown };
+      msg = JSON.parse(text) as { type?: unknown; data?: unknown; cols?: unknown; rows?: unknown };
     } catch {
       return;
     }
     if (msg.type === "input" && typeof msg.data === "string") {
       session.proc?.writeStdin(msg.data);
+    } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+      session.cols = clampTermSize(msg.cols, session.cols);
+      session.rows = clampTermSize(msg.rows, session.rows);
+      session.proc?.resize(session.cols, session.rows);
     } else if (msg.type === "stop") {
       void this.stopSession(session.projectId, session.token);
     }
@@ -348,39 +359,23 @@ export class TerminalSessionManager {
   }
 }
 
-function terminalEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  const allow = [
-    "PATH",
-    "HOME",
-    "SHELL",
-    "USER",
-    "LOGNAME",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "COLORTERM",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "XDG_CONFIG_HOME",
-    "XDG_CACHE_HOME",
-    "XDG_DATA_HOME",
-    "APPDATA",
-    "LOCALAPPDATA",
-    "SystemRoot",
-    "ComSpec",
-    "WINDIR",
-  ];
-  for (const key of allow) {
-    if (process.env[key]) env[key] = process.env[key];
-  }
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith("LC_") && value) env[key] = value;
-  }
+// This terminal is loopback-only and runs on the user's own machine, so it
+// inherits the daemon's full environment for a true "full access" shell. A
+// login+interactive shell (see shellArgs) layers the user's own profile on top.
+function terminalEnv(cols: number, rows: number): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
   env.TERM = "xterm-256color";
+  env.COLORTERM = "truecolor";
   env.CHORUS_TERMINAL = "1";
+  // Seed the PTY size before the shell starts (read by the python PTY bridge).
+  env.CHORUS_PTY_COLS = String(cols);
+  env.CHORUS_PTY_ROWS = String(rows);
   return env;
+}
+
+function clampTermSize(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(65535, Math.floor(value)));
 }
 
 function pickShell(): string {
@@ -395,9 +390,9 @@ function pickShell(): string {
 function shellArgs(shell: string): string[] {
   const name = basename(shell);
   if (process.platform === "win32") return [];
-  if (name === "zsh") return ["-f", "-i"];
-  if (name === "bash") return ["--noprofile", "--norc", "-i"];
-  return ["-i"];
+  // Login + interactive so the user's full profile (PATH, aliases, prompt) loads.
+  if (name === "zsh" || name === "bash") return ["-l", "-i"];
+  return ["-l", "-i"];
 }
 
 function send(socket: TerminalSocket | undefined, msg: unknown): void {
