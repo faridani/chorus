@@ -157,6 +157,8 @@ export interface ControlApi {
   stopOrchestrator(): Promise<void>;
   orchestratorState(): OrchestratorState;
   runningTaskIds(): string[];
+  /** Ticket ids currently being handled by the background "Address PR Reviews" action. */
+  addressingPrTicketIds(): string[];
 
   /** Global "Agent Gallery" templates, reusable across projects. */
   upsertAgentTemplate(input: UpsertAgentTemplateInput): Promise<AgentTemplate>;

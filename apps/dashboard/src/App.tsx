@@ -201,6 +201,7 @@ export function App() {
               events={projectEvents}
               feed={feed}
               runningTaskIds={state?.runningTasks ?? []}
+              addressingPrTicketIds={state?.addressingPrTicketIds ?? []}
               onChange={() => selected && refreshDetail(selected)}
               onDebugTicket={(ticketId, ticketTitle) => setDebug({ ticketId, ticketTitle })}
               onSelfHeal={(ticketId, ticketTitle) => setSelfHeal({ ticketId, ticketTitle })}
