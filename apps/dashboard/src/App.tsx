@@ -10,6 +10,7 @@ import {
   useEvents,
 } from "./api.js";
 import { AgentGallery } from "./components/AgentGallery.js";
+import { AboutDialog } from "./components/AboutDialog.js";
 import { EventFeed, type FeedEntry } from "./components/EventFeed.js";
 import { GlobalSettings } from "./components/GlobalSettings.js";
 import { LoopGallery } from "./components/LoopGallery.js";
@@ -34,6 +35,7 @@ export function App() {
   const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [debug, setDebug] = useState<{ ticketId: string | null; ticketTitle?: string } | null>(null);
   const [selfHeal, setSelfHeal] = useState<{ ticketId: string; ticketTitle?: string } | null>(null);
   const [leftTab, setLeftTab] = useState<"projects" | "gallery" | "loops" | "tools">("projects");
@@ -69,6 +71,11 @@ export function App() {
   const refreshDetail = useCallback(async (id: string) => {
     setDetail(await api.project(id).catch(() => null));
     setProjectEvents(await api.projectEvents(id).catch(() => []));
+  }, []);
+
+  const openAbout = useCallback(() => {
+    setShowSettings(false);
+    setShowAbout(true);
   }, []);
 
   useEffect(() => {
@@ -322,7 +329,8 @@ export function App() {
         </div>
       </div>
 
-      {showSettings && <GlobalSettings onClose={() => setShowSettings(false)} />}
+      {showSettings && <GlobalSettings onClose={() => setShowSettings(false)} onAbout={openAbout} />}
+      {showAbout && <AboutDialog onClose={() => setShowAbout(false)} />}
 
       {debug && selected && (
         <DebugTracesModal
