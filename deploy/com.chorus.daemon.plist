@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd service for the Chorus daemon (macOS). Install with:
+    cp deploy/com.chorus.daemon.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.chorus.daemon.plist
+  Edit the paths below first. KeepAlive restarts the daemon if it exits, so it
+  survives crashes; boot reconciliation resumes in-flight work on restart.
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.chorus.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/node</string>
+      <string>/Users/you/chorus/packages/daemon/dist/main.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/you/chorus</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>CHORUS_CONFIG</key>
+      <string>/Users/you/chorus/chorus.config.json</string>
+      <key>PATH</key>
+      <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/you/.chorus/daemon.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/you/.chorus/daemon.err.log</string>
+  </dict>
+</plist>
