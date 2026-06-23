@@ -1,0 +1,29 @@
+{
+  "name": "chorus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted, 24/7 AI engineering team: a hub-and-spoke orchestrator for role-based agents driven by subscription CLI tools.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean && rimraf packages/*/dist apps/*/dist",
+    "typecheck": "tsc --build",
+    "test": "node --test --import tsx 'packages/**/test/**/*.test.ts'",
+    "daemon": "tsx packages/daemon/src/main.ts",
+    "dashboard:dev": "npm --workspace @chorus/dashboard run dev",
+    "dev": "tsx watch packages/daemon/src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
