@@ -16,8 +16,11 @@ import {
   type CreateProjectInput,
   type CreateTicketInput,
   type DiagnosisResult,
+  type NotificationEvent,
   newId,
+  type NotificationKind,
   ORCHESTRATOR_ROLE,
+  publishNotification,
   type Project,
   type ProjectRunState,
   type ProjectSettingsInput,
@@ -350,25 +353,23 @@ export class AppController implements ControlApi {
         await this.ingestProject({ ...project, specPath, baseBranch });
       } else {
         this.deps.db.updateProject(project.id, { status: "needs_spec" });
-        await this.deps.notifier.notify({
-          kind: "needs_review",
-          projectId: project.id,
-          title: "Project needs a spec",
-          body: `${project.repoUrl} has no docs/SPEC.md — provide one to start work.`,
-          at: Date.now(),
-        });
+        await this.notify(
+          "needs_review",
+          project.id,
+          "Project needs a spec",
+          `${project.repoUrl} has no docs/SPEC.md — provide one to start work.`,
+        );
       }
       this.emitProject(project.id);
     } catch (err) {
       this.deps.db.updateProject(project.id, { status: "error" });
       this.emitProject(project.id);
-      await this.deps.notifier.notify({
-        kind: "error",
-        projectId: project.id,
-        title: "Project init failed",
-        body: `${project.repoUrl}: ${String(err)}`,
-        at: Date.now(),
-      });
+      await this.notify(
+        "error",
+        project.id,
+        "Project init failed",
+        `${project.repoUrl}: ${String(err)}`,
+      );
     }
   }
 
@@ -551,15 +552,12 @@ export class AppController implements ControlApi {
     void this.runAddressPrComments(projectId, ticketId)
       .catch((err) => {
         this.trail(projectId, ticketId, `Address PR comments failed: ${String(err)}`);
-        void this.deps.notifier
-          .notify({
-            kind: "error",
-            projectId,
-            title: "Address PR comments failed",
-            body: `${this.deps.db.getTicket(ticketId)?.title ?? ticketId}: ${String(err)}`,
-            at: Date.now(),
-          })
-          .catch(() => {});
+        void this.notify(
+          "error",
+          projectId,
+          "Address PR comments failed",
+          `${this.deps.db.getTicket(ticketId)?.title ?? ticketId}: ${String(err)}`,
+        ).catch(() => {});
       })
       .finally(() => {
         this.addressingPr.delete(ticketId);
@@ -624,15 +622,9 @@ export class AppController implements ControlApi {
       ticketId,
       `Addressed PR comments${head ? " (pushed changes)" : " (no changes)"}: ${summary}`,
     );
-    await this.deps.notifier
-      .notify({
-        kind: "needs_review",
-        projectId,
-        title: "PR comments addressed",
-        body: `${ticket.title}: ${summary}`,
-        at: Date.now(),
-      })
-      .catch(() => {});
+    await this.notify("needs_review", projectId, "PR comments addressed", `${ticket.title}: ${summary}`).catch(
+      () => {},
+    );
   }
 
   /** Run one agent process to completion in a worktree, streaming events to the bus. */
@@ -1181,5 +1173,17 @@ export class AppController implements ControlApi {
 
   private emitProject(projectId: string): void {
     this.deps.bus.emit({ type: "project_changed", projectId, at: Date.now() });
+  }
+
+  private notify(
+    kind: NotificationKind,
+    projectId: string,
+    title: string,
+    body: string,
+  ): Promise<NotificationEvent> {
+    return publishNotification(
+      { db: this.deps.db, notifier: this.deps.notifier, bus: this.deps.bus },
+      { kind, projectId, title, body },
+    );
   }
 }
