@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import {
   buildCodeReviewPlan,
+  buildReviewAssignmentResult,
   buildReviewOutcomeSummary,
   formatStructuredSuggestion,
   isBroadCodeReviewTicket,
@@ -18,6 +19,14 @@ test("isBroadCodeReviewTicket detects repository-wide review and ignores narrow 
   assert.equal(
     isBroadCodeReviewTicket({ title: "Refine the code", body: "Repository-wide cleanup and hardening." } as never),
     true,
+  );
+  assert.equal(
+    isBroadCodeReviewTicket({ title: "Improve the billing system", body: "Make billing retries easier to follow." } as never),
+    false,
+  );
+  assert.equal(
+    isBroadCodeReviewTicket({ title: "Refactor project creation flow", body: "Simplify the create-project wizard." } as never),
+    false,
   );
   assert.equal(
     isBroadCodeReviewTicket({ title: "Address PR review feedback", body: "Fix the login route comment." } as never),
@@ -120,6 +129,46 @@ test("buildReviewOutcomeSummary makes subagent results human-reviewable", () => 
   assert.match(summary, /Not completed in this session: review-2/);
   assert.match(summary, /Simplified validation/);
   assert.match(summary, /Suggestions created: 1/);
+});
+
+test("review assignment summaries report authoritative diff files", () => {
+  const plan = {
+    kind: "parallel_code_review" as const,
+    summary: "review",
+    assignments: [
+      {
+        id: "review-1",
+        title: "packages/api",
+        scope: ["packages/api"],
+        avoid: [],
+        goals: [],
+        documentationGoals: [],
+        securityGoals: [],
+        coordination: "",
+        suggestedAgent: "software-dev",
+        instruction: "",
+      },
+    ],
+  };
+  const modelReportedFiles = ["packages/api/src/server.ts"];
+  const authoritativeFiles = ["packages/api/src/server.ts", "packages/api/README.md"];
+
+  const result = buildReviewAssignmentResult({
+    assignment: plan.assignments[0]!,
+    agent: "software-dev",
+    worktreeId: "wt_1",
+    status: "success",
+    summary: "Changed validation.",
+    authoritativeFilesChanged: authoritativeFiles,
+    notes: null,
+    suggestionsCreated: 0,
+  });
+
+  assert.deepEqual(result.filesChanged, authoritativeFiles);
+  assert.notDeepEqual(result.filesChanged, modelReportedFiles);
+  const summary = buildReviewOutcomeSummary(plan, [result]);
+  assert.match(summary, /packages\/api\/src\/server\.ts/);
+  assert.match(summary, /packages\/api\/README\.md/);
 });
 
 test("formatStructuredSuggestion includes required review suggestion fields", () => {
