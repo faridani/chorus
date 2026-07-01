@@ -253,6 +253,18 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE tickets ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
   `,
+
+  // 0012 — structured suggestions for review follow-ups. The original message
+  // column remains the dashboard-safe fallback and notification text.
+  `
+  ALTER TABLE suggestions ADD COLUMN title TEXT;
+  ALTER TABLE suggestions ADD COLUMN rationale TEXT;
+  ALTER TABLE suggestions ADD COLUMN affected_area TEXT;
+  ALTER TABLE suggestions ADD COLUMN proposed_action TEXT;
+  ALTER TABLE suggestions ADD COLUMN recommended_agent TEXT;
+  ALTER TABLE suggestions ADD COLUMN recommended_tool TEXT;
+  ALTER TABLE suggestions ADD COLUMN recommended_skill TEXT;
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {

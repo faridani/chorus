@@ -66,6 +66,10 @@ const TOOLS: ToolSpec[] = [
         .string()
         .optional()
         .describe("Continue in this existing worktree instead of creating a new one"),
+      reviewAssignmentId: z
+        .string()
+        .optional()
+        .describe("For codeReviewPlan items, pass the assignment id exactly so Chorus can enforce scoped delegation"),
     },
     method: "POST",
     path: "/run-agent",
@@ -129,8 +133,18 @@ const TOOLS: ToolSpec[] = [
   },
   {
     name: "add_suggestion",
-    description: "Surface a human-visible suggestion or recommendation for this project/ticket.",
-    input: { text: z.string() },
+    description:
+      "Surface a human-visible suggestion or recommendation for this project/ticket. Prefer structured fields for review follow-ups.",
+    input: {
+      text: z.string().optional(),
+      title: z.string().optional(),
+      rationale: z.string().optional(),
+      affectedArea: z.string().optional(),
+      proposedAction: z.string().optional(),
+      recommendedAgent: z.string().optional(),
+      recommendedTool: z.string().optional(),
+      recommendedSkill: z.string().optional(),
+    },
     method: "POST",
     path: "/suggest",
   },
