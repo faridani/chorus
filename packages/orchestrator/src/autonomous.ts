@@ -107,6 +107,12 @@ export function buildAutonomousPrompt(args: {
   L.push("");
   L.push("## Your tools");
   L.push("- get_context: read the ticket, project settings, activity trail, and last attempt journal. Call this first.");
+  L.push(
+    "- attempt_journal.read: read recent durable attempt-journal entries for this ticket. Use this before reassigning or restarting work so retry continuity comes from the platform journal.",
+  );
+  L.push(
+    "- attempt_journal.write: write a durable attempt-journal handoff for this ticket, including verification, diagnosis/blockers, proof such as branch or commit, and nextAction. Use this before finishing, handing off, or reporting a blocker.",
+  );
   L.push("- list_agents: list the spoke agents (names to use with run_agent).");
   L.push(
     "- run_agent(agent, instruction, baseWorktreeId?): delegate work. Each call runs in its OWN git worktree and returns a worktreeId plus the agent's result, new commit count, and a diff summary. Omit baseWorktreeId to start fresh; pass a prior worktreeId to continue building in it.",
@@ -121,13 +127,15 @@ export function buildAutonomousPrompt(args: {
   L.push("");
   L.push("## How to work");
   L.push("1. get_context to understand the task.");
-  L.push("2. Delegate implementation to the most fitting spoke agent(s) with a clear instruction.");
+  L.push("2. attempt_journal.read to inspect previous attempts before deciding whether to continue, reassign, or restart.");
+  L.push("3. Delegate implementation to the most fitting spoke agent(s) with a clear instruction.");
   L.push(
-    `3. You MAY run up to ${maxParallel} agents in parallel (e.g. two approaches, or implementation + tests) by issuing multiple run_agent calls; compare their diffs and merge_worktree the best work together.`,
+    `4. You MAY run up to ${maxParallel} agents in parallel (e.g. two approaches, or implementation + tests) by issuing multiple run_agent calls; compare their diffs and merge_worktree the best work together.`,
   );
-  L.push("4. Verify with run_verify and inspect with get_diff. If something is wrong, send a spoke agent back with a precise fix instruction (reuse its worktreeId).");
-  L.push("5. YOU own the quality bar: open_pr only when the work genuinely satisfies the ticket and verification passes. Otherwise close_ticket or needs_human.");
-  L.push("6. Call finish once you have taken a terminal action.");
+  L.push("5. Verify with run_verify and inspect with get_diff. If something is wrong, send a spoke agent back with a precise fix instruction (reuse its worktreeId).");
+  L.push("6. Before open_pr, close_ticket, needs_human, or finish, call attempt_journal.write with the branch/commit or blocker, verification status, diagnosis, proof, and nextAction.");
+  L.push("7. YOU own the quality bar: open_pr only when the work genuinely satisfies the ticket and verification passes. Otherwise close_ticket or needs_human.");
+  L.push("8. Call finish once you have taken a terminal action.");
   L.push("");
   L.push("## Guardrails");
   L.push("- Spoke agents commit on their own branch; they never push. Only open_pr ships work.");

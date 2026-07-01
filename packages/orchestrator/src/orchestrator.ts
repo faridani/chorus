@@ -6,6 +6,7 @@ import { type BackendRegistry, mapCodexLine } from "@chorus/backends";
 import {
   type AgentEvent,
   type AgentResult,
+  type AttemptJournalEntry,
   type ChorusBus,
   type Config,
   newId,
@@ -56,6 +57,50 @@ export interface OrchestratorDeps {
   bus: ChorusBus;
   config: Config;
   idleTicketGenerator?: IdleTicketGenerator;
+}
+
+const JOURNAL_READ_LIMIT_DEFAULT = 10;
+const JOURNAL_READ_LIMIT_MAX = 50;
+const JOURNAL_VERIFICATION_MAX_CHARS = 12_000;
+const JOURNAL_TEXT_MAX_CHARS = 6_000;
+const JOURNAL_NEXT_ACTION_MAX_CHARS = 3_000;
+
+function journalLimit(value: unknown): number {
+  const n =
+    typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
+  if (!Number.isFinite(n)) return JOURNAL_READ_LIMIT_DEFAULT;
+  return Math.min(JOURNAL_READ_LIMIT_MAX, Math.max(1, Math.trunc(n)));
+}
+
+function firstPresent(body: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) return body[key];
+  }
+  return undefined;
+}
+
+function sanitizeJournalText(value: unknown, maxChars: number): string | null {
+  if (value === null || value === undefined) return null;
+  let raw: string;
+  if (typeof value === "string") {
+    raw = value;
+  } else if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    raw = String(value);
+  } else {
+    try {
+      raw = JSON.stringify(value);
+    } catch {
+      raw = String(value);
+    }
+  }
+  const cleaned = raw
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .trim();
+  if (!cleaned) return null;
+  if (cleaned.length <= maxChars) return cleaned;
+  const marker = "\n[truncated]";
+  return `${cleaned.slice(0, Math.max(0, maxChars - marker.length))}${marker}`;
 }
 
 /**
@@ -718,6 +763,10 @@ export class Orchestrator {
       switch (action) {
         case "context":
           return { status: 200, body: this.sessionContext(project, ticket, session) };
+        case "attempt_journal.read":
+          return this.sessionReadAttemptJournal(ticket, body);
+        case "attempt_journal.write":
+          return this.sessionWriteAttemptJournal(session, project, ticket, body);
         case "agents":
           return { status: 200, body: this.sessionAgents(project) };
         case "run-agent":
@@ -799,6 +848,67 @@ export class Orchestrator {
         spokeAgentsMax: this.deps.config.orchestrator.maxSpokeAgentsPerSession,
       },
     };
+  }
+
+  private sessionReadAttemptJournal(ticket: Ticket, body: Record<string, unknown>): { status: number; body: unknown } {
+    const limit = journalLimit(body.limit);
+    const entries = this.deps.db.listAttemptJournal(ticket.id);
+    return { status: 200, body: { entries: entries.slice(-limit).reverse() } };
+  }
+
+  private sessionWriteAttemptJournal(
+    session: SessionState,
+    project: Project,
+    ticket: Ticket,
+    body: Record<string, unknown>,
+  ): { status: number; body: unknown } {
+    const verification = sanitizeJournalText(
+      firstPresent(body, ["verification", "verifyOutput", "verify_output"]),
+      JOURNAL_VERIFICATION_MAX_CHARS,
+    );
+    const verifyPassed = typeof body.verifyPassed === "boolean" ? body.verifyPassed : null;
+    const diagnosis = sanitizeJournalText(body.diagnosis, JOURNAL_TEXT_MAX_CHARS);
+    const proof = sanitizeJournalText(body.proof, JOURNAL_TEXT_MAX_CHARS);
+    const nextAction = sanitizeJournalText(
+      firstPresent(body, ["nextAction", "next_action", "next-action"]),
+      JOURNAL_NEXT_ACTION_MAX_CHARS,
+    );
+
+    if (verifyPassed === null && !verification && !diagnosis && !proof && !nextAction) {
+      return {
+        status: 400,
+        body: {
+          error: "attempt_journal.write requires at least one of verification, verifyPassed, diagnosis, proof, or nextAction",
+        },
+      };
+    }
+
+    const previous = this.deps.db.listAttemptJournal(ticket.id);
+    const attempt = previous.reduce((max, entry) => Math.max(max, entry.attempt), 0) + 1;
+    const entry: AttemptJournalEntry = {
+      id: newId("aj"),
+      taskId: newId("task"),
+      ticketId: ticket.id,
+      projectId: project.id,
+      attempt,
+      promptHash: null,
+      diffHash: null,
+      verifyPassed,
+      verifyOutput: verification,
+      diagnosis,
+      nextAction,
+      evaluatorVerdict: null,
+      reviewerVerdict: null,
+      proof,
+      createdAt: Date.now(),
+    };
+    this.deps.db.insertAttemptJournal(entry);
+    this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, {
+      kind: "message",
+      text: `attempt journal entry recorded for attempt ${attempt}`,
+      at: Date.now(),
+    });
+    return { status: 200, body: { ok: true, entry, session: { projectId: session.projectId, ticketId: session.ticketId } } };
   }
 
   private async runAgentInSession(
