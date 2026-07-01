@@ -54,10 +54,11 @@ export function mapCodexLine(raw: string, worktreePath?: string): AgentEvent[] {
     const isStart = type === "item.started";
 
     switch (itemType) {
-      case "reasoning":
-        return type === "item.completed" && str(item.text)
-          ? [{ kind: "reasoning", text: str(item.text)!, at }]
-          : [];
+      case "reasoning": {
+        if (type !== "item.completed") return [];
+        const text = str(item.text);
+        return text ? [{ kind: "reasoning", text, at }] : [];
+      }
       case "agent_message": {
         if (type !== "item.completed") return [];
         const text = str(item.text);
