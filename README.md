@@ -32,8 +32,8 @@ run commands, install packages, and modify cloned repositories.
   against.
 - At least one AI backend account: Codex, Claude Code, or Gemini CLI.
 - For container mode, a container runtime:
-  - **macOS:** Apple `container` from <https://github.com/apple/container>.
-    Apple documents support for Apple silicon Macs on macOS 26+.
+  - **macOS:** Apple `container` from <https://github.com/apple/container>,
+    Docker Desktop, Podman, or OrbStack.
   - **Linux:** Docker Engine or Podman.
   - **Windows:** Docker Desktop or Podman Desktop with Linux containers enabled.
 - For bare-metal mode, Node 22+, npm 10+, Git, GitHub CLI, and the AI CLI tools
@@ -45,7 +45,9 @@ home directory.
 
 ## Configuration
 
-Optional, but recommended:
+Optional, but recommended. The example omits `dataDir`, so Chorus uses the
+default `~/.chorus` on bare metal and the launcher-provided container data path
+in container mode:
 
 ```bash
 cp chorus.config.example.json chorus.config.json
@@ -62,7 +64,7 @@ The dashboard is published on the host as `http://127.0.0.1:7878`.
 
 ## macOS Launch
 
-Install Apple `container`, then start its system service:
+For Apple `container`, install it and start its system service:
 
 ```bash
 container system start
@@ -72,6 +74,12 @@ Build and run Chorus:
 
 ```bash
 ./deploy/mac/run-container.sh start
+```
+
+For Docker Desktop, Podman, or OrbStack on macOS, use the OCI launcher:
+
+```bash
+./deploy/linux/run-container.sh start
 ```
 
 Authenticate inside the container:
@@ -286,7 +294,7 @@ Build and launch Chorus:
 
 ```bash
 cp chorus.config.example.json chorus.config.json
-# Edit chorus.config.json and prefer "host": "127.0.0.1" for bare metal.
+# Optional: edit chorus.config.json. Prefer "host": "127.0.0.1" for bare metal.
 npm install
 npm run build
 npm --workspace @chorus/dashboard run build
@@ -336,7 +344,7 @@ Build and launch:
 
 ```bash
 cp chorus.config.example.json chorus.config.json
-# Edit chorus.config.json and prefer "host": "127.0.0.1" for bare metal.
+# Optional: edit chorus.config.json. Prefer "host": "127.0.0.1" for bare metal.
 npm install
 npm run build
 npm --workspace @chorus/dashboard run build
@@ -369,7 +377,7 @@ Build and launch:
 
 ```powershell
 Copy-Item chorus.config.example.json chorus.config.json
-# Edit chorus.config.json and prefer "host": "127.0.0.1" for bare metal.
+# Optional: edit chorus.config.json. Prefer "host": "127.0.0.1" for bare metal.
 npm install
 npm run build
 npm --workspace @chorus/dashboard run build
