@@ -44,7 +44,16 @@ export function ProjectPanel({
   onDebugTicket: (ticketId: string, ticketTitle: string) => void;
   onSelfHeal: (ticketId: string, ticketTitle: string) => void;
 }) {
-  const { project, tickets, roles, pullRequests, attemptJournal, changelog, suggestions } = detail;
+  const {
+    project,
+    tickets,
+    roles,
+    pullRequests,
+    attemptJournal,
+    changelog,
+    notifications = [],
+    suggestions,
+  } = detail;
   const [tab, setTab] = useState<Tab>("tickets");
   // When the state-machine view asks to edit an agent, switch to the Agents tab
   // and tell it which role to open.
@@ -132,6 +141,7 @@ export function ProjectPanel({
             pullRequests={pullRequests}
             attemptJournal={attemptJournal}
             changelog={changelog}
+            notifications={notifications}
           />
         )}
         {tab === "suggestions" && (

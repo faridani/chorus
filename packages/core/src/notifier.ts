@@ -1,6 +1,10 @@
+import type { NotificationKind, NotificationRecord } from "./domain.js";
+import type { ChorusBus } from "./events.js";
+import { newId } from "./ids.js";
+
 /** A human-facing notification raised by the orchestrator. */
 export interface NotificationEvent {
-  kind: "pr_opened" | "pr_merged" | "needs_review" | "quota_paused" | "error";
+  kind: NotificationKind;
   projectId: string;
   title: string;
   body: string;
@@ -15,4 +19,53 @@ export interface NotificationEvent {
 export interface Notifier {
   readonly id: string;
   notify(event: NotificationEvent): Promise<void>;
+}
+
+export interface NotificationStore {
+  insertNotification(notification: NotificationRecord): void;
+}
+
+export interface PublishNotificationDeps {
+  db: NotificationStore;
+  notifier: Notifier;
+  bus?: ChorusBus;
+}
+
+/**
+ * Persist a project notification, preserve the live bus event when requested,
+ * then hand off to the external notifier. Notification failures never fail the
+ * task/controller path that raised them.
+ */
+export async function publishNotification(
+  deps: PublishNotificationDeps,
+  input: Omit<NotificationEvent, "at"> & { at?: number },
+): Promise<NotificationEvent> {
+  const at = input.at ?? Date.now();
+  const event: NotificationEvent = { ...input, at };
+  try {
+    deps.db.insertNotification({
+      id: newId("ntf"),
+      projectId: event.projectId,
+      kind: event.kind,
+      title: event.title,
+      body: event.body,
+      createdAt: at,
+    });
+  } catch (err) {
+    console.warn(`[notifier] failed to persist notification: ${String(err)}`);
+  }
+  deps.bus?.emit({
+    type: "notification",
+    projectId: event.projectId,
+    kind: event.kind,
+    title: event.title,
+    body: event.body,
+    at,
+  });
+  try {
+    await deps.notifier.notify(event);
+  } catch (err) {
+    console.warn(`[notifier] delivery failed: ${String(err)}`);
+  }
+  return event;
 }

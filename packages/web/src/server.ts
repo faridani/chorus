@@ -259,6 +259,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
       pullRequests: db.listPullRequests(id),
       attemptJournal: db.listProjectAttemptJournal(id),
       changelog: db.listChangelog(id),
+      notifications: db.listNotifications(id),
       suggestions: db.listSuggestions(id, "open"),
     };
   });

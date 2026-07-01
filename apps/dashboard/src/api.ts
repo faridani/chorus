@@ -65,6 +65,15 @@ export interface ChangelogEntry {
   createdAt: number;
 }
 
+export interface NotificationRecord {
+  id: string;
+  projectId: string;
+  kind: "pr_opened" | "pr_merged" | "needs_review" | "quota_paused" | "error";
+  title: string;
+  body: string;
+  createdAt: number;
+}
+
 export interface DiagnosisResult {
   status: "working_as_expected" | "needs_ticket" | "uncertain";
   summary: string;
@@ -137,6 +146,7 @@ export interface ProjectDetail {
   pullRequests: PullRequest[];
   attemptJournal: AttemptJournalEntry[];
   changelog: ChangelogEntry[];
+  notifications: NotificationRecord[];
   suggestions: Suggestion[];
 }
 

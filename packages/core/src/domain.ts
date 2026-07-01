@@ -154,6 +154,18 @@ export interface Suggestion {
   createdAt: number;
 }
 
+export type NotificationKind = "pr_opened" | "pr_merged" | "needs_review" | "quota_paused" | "error";
+
+/** A durable project-scoped notification shown in project activity history. */
+export interface NotificationRecord {
+  id: string;
+  projectId: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  createdAt: number;
+}
+
 /** The structured decision the orchestrator agent returns when triaging a ticket. */
 export interface OrchestratorDecision {
   action: "assign" | "open_pr" | "close" | "needs_human";
