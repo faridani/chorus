@@ -40,8 +40,8 @@ interface CandidateArea {
 }
 
 const REVIEW_TERMS = /\b(review|improve|refine|harden|clean\s*up|cleanup|quality|readability|maintainability|documentation|document|refactor)\b/i;
-const BROAD_TERMS = /\b(codebase|repository|repo|project|whole\s+code|all\s+code|entire\s+code|source\s+tree|system)\b/i;
-const CODE_REVIEW_TERMS = /\b(code\s*review|repo(?:sitory)?-wide|repository-wide|review\s+and\s+improve)\b/i;
+const EXPLICIT_BROAD_SCOPE_TERMS =
+  /\b(codebase|repository|repo|repo(?:sitory)?-wide|codebase-wide|project-wide|source\s+tree|all\s+(?:source|code|codebase)|(?:entire|whole)\s+(?:codebase|repository|repo|source\s+tree|project|system))\b/i;
 
 const IGNORED_NAMES = new Set([
   ".git",
@@ -95,9 +95,7 @@ const DEFAULT_SECURITY_GOALS = [
 
 export function isBroadCodeReviewTicket(ticket: Pick<Ticket, "title" | "body">): boolean {
   const text = `${ticket.title}\n${ticket.body}`.toLowerCase();
-  if (CODE_REVIEW_TERMS.test(text)) return true;
-  if (BROAD_TERMS.test(text) && REVIEW_TERMS.test(text)) return true;
-  return /\brefine\s+the\s+code\b/i.test(text) || /\breview\s+the\s+codebase\b/i.test(text);
+  return EXPLICIT_BROAD_SCOPE_TERMS.test(text) && REVIEW_TERMS.test(text);
 }
 
 export function buildCodeReviewPlan(args: {
@@ -188,6 +186,29 @@ export function formatStructuredSuggestion(input: SuggestionDetails): string {
   const support = [input.recommendedAgent, input.recommendedTool, input.recommendedSkill].filter(Boolean);
   if (support.length) lines.push(`Recommended support: ${support.join(" · ")}`);
   return lines.join("\n");
+}
+
+export function buildReviewAssignmentResult(args: {
+  assignment: Pick<CodeReviewAssignment, "id" | "title">;
+  agent: string;
+  worktreeId: string;
+  status: string | null;
+  summary: string | null;
+  authoritativeFilesChanged: string[];
+  notes: string | null;
+  suggestionsCreated: number;
+}): ReviewAssignmentResult {
+  return {
+    assignmentId: args.assignment.id,
+    title: args.assignment.title,
+    agent: args.agent,
+    worktreeId: args.worktreeId,
+    status: args.status,
+    summary: args.summary,
+    filesChanged: [...args.authoritativeFilesChanged],
+    notes: args.notes,
+    suggestionsCreated: args.suggestionsCreated,
+  };
 }
 
 export function buildReviewOutcomeSummary(plan: CodeReviewPlan | null, results: ReviewAssignmentResult[]): string {

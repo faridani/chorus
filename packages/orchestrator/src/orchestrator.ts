@@ -28,11 +28,14 @@ import {
   buildCodexMcpArgs,
   buildSpokeAgentPrompt,
   isCodingRole,
+  reviewAssignmentOwnerForWorktree,
   type SessionState,
   type SpokeAgentInfo,
+  validateReviewAssignmentClaim,
 } from "./autonomous.js";
 import {
   buildCodeReviewPlan,
+  buildReviewAssignmentResult,
   buildReviewOutcomeSummary,
   formatReviewAssignmentInstruction,
   formatStructuredSuggestion,
@@ -65,6 +68,8 @@ export interface OrchestratorDeps {
   config: Config;
   idleTicketGenerator?: IdleTicketGenerator;
 }
+
+const MAX_AGENT_SUGGESTIONS_PER_RESULT = 20;
 
 /**
  * The daemon dispatch loop. Processes tickets serially per project through a
@@ -848,21 +853,36 @@ export class Orchestrator {
     if (reviewAssignmentId && !reviewAssignment) {
       return { status: 400, body: { error: `unknown reviewAssignmentId "${reviewAssignmentId}"` } };
     }
-    const existingReviewRun = reviewAssignmentId ? session.reviewAssignments.get(reviewAssignmentId) : undefined;
-    if (existingReviewRun?.status === "running") {
-      return { status: 409, body: { error: `review assignment "${reviewAssignmentId}" is already running` } };
-    }
-    if (existingReviewRun && (!baseWorktreeId || baseWorktreeId !== existingReviewRun.worktreeId)) {
-      return {
-        status: 409,
-        body: {
-          error: `review assignment "${reviewAssignmentId}" already ran in ${existingReviewRun.worktreeId}; pass that baseWorktreeId to continue it`,
-        },
-      };
+    if (reviewAssignmentId) {
+      const validation = validateReviewAssignmentClaim({
+        reviewAssignmentId,
+        baseWorktreeId,
+        reviewAssignments: session.reviewAssignments,
+        worktrees: session.worktrees,
+      });
+      if (!validation.ok) return { status: validation.status, body: { error: validation.error } };
+    } else if (baseWorktreeId) {
+      const owner = reviewAssignmentOwnerForWorktree(session.reviewAssignments, baseWorktreeId);
+      if (owner) {
+        return {
+          status: 409,
+          body: {
+            error: `baseWorktreeId "${baseWorktreeId}" is owned by review assignment "${owner}"; pass that reviewAssignmentId to continue it`,
+          },
+        };
+      }
     }
     const finalInstruction = reviewAssignment
       ? formatReviewAssignmentInstruction(reviewAssignment, instruction)
       : instruction;
+    if (reviewAssignmentId) {
+      const existingReviewRun = session.reviewAssignments.get(reviewAssignmentId);
+      session.reviewAssignments.set(reviewAssignmentId, {
+        agent: role.name,
+        worktreeId: existingReviewRun?.worktreeId ?? baseWorktreeId,
+        status: "running",
+      });
+    }
     // Respect the parallelism cap; queue until a slot frees.
     while (session.running >= this.deps.config.orchestrator.maxParallelSpokeAgents) {
       await this.sleep(250);
@@ -871,13 +891,6 @@ export class Orchestrator {
 
     session.running++;
     session.spokeCount++;
-    if (reviewAssignmentId) {
-      session.reviewAssignments.set(reviewAssignmentId, {
-        agent: role.name,
-        worktreeId: baseWorktreeId,
-        status: "running",
-      });
-    }
     // Advisory (read-only) roles don't edit the repo, so their runs skip the
     // setup command (which can mutate tracked files like lockfiles) and the
     // leftover-changes autocommit — keeping the read-only contract real, not
@@ -1024,17 +1037,16 @@ export class Orchestrator {
         this.trail(project.id, ticket.id, role.name, "note", `Created ${suggestionsCreated} structured suggestion(s).`);
       }
       if (reviewAssignment) {
-        session.reviewResults.push({
-          assignmentId: reviewAssignment.id,
-          title: reviewAssignment.title,
+        session.reviewResults.push(buildReviewAssignmentResult({
+          assignment: reviewAssignment,
           agent: role.name,
           worktreeId: wt.id,
           status: result.payload?.status ?? result.terminalReason,
           summary: result.payload?.summary ?? null,
-          filesChanged: result.payload?.filesChanged ?? [],
+          authoritativeFilesChanged: after.files,
           notes: result.payload?.notes ?? null,
           suggestionsCreated,
-        });
+        }));
         session.reviewAssignments.set(reviewAssignment.id, { agent: role.name, worktreeId: wt.id, status: "finished" });
       }
       this.trail(
@@ -1937,7 +1949,7 @@ export class Orchestrator {
 
   private persistAgentSuggestions(project: Project, ticketId: string | null, suggestions: SuggestionDetails[]): number {
     let count = 0;
-    for (const suggestion of suggestions) {
+    for (const suggestion of suggestions.slice(0, MAX_AGENT_SUGGESTIONS_PER_RESULT)) {
       if (!suggestion.title?.trim() || !suggestion.rationale?.trim() || !suggestion.affectedArea?.trim() || !suggestion.proposedAction?.trim()) {
         continue;
       }

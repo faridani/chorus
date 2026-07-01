@@ -8,6 +8,12 @@ export interface SessionWorktree {
   branch: string;
 }
 
+export interface ReviewAssignmentClaim {
+  agent: string;
+  worktreeId: string | null;
+  status: "running" | "finished";
+}
+
 /** Live state for one autonomous orchestrator session (one ticket). */
 export interface SessionState {
   token: string;
@@ -28,7 +34,7 @@ export interface SessionState {
   /** Deterministic plan for broad repository review tickets, when applicable. */
   reviewPlan: CodeReviewPlan | null;
   /** Review assignment ids currently or previously delegated in this session. */
-  reviewAssignments: Map<string, { agent: string; worktreeId: string | null; status: "running" | "finished" }>;
+  reviewAssignments: Map<string, ReviewAssignmentClaim>;
   /** Structured outputs from scoped review subagents, used in the final PR summary. */
   reviewResults: ReviewAssignmentResult[];
 }
@@ -37,6 +43,66 @@ export interface SpokeAgentInfo {
   name: string;
   description: string;
   backendId: string;
+}
+
+export type ReviewAssignmentClaimValidation =
+  | { ok: true }
+  | { ok: false; status: 400 | 409; error: string };
+
+export function reviewAssignmentOwnerForWorktree(
+  reviewAssignments: ReadonlyMap<string, ReviewAssignmentClaim>,
+  worktreeId: string,
+): string | null {
+  for (const [assignmentId, claim] of reviewAssignments) {
+    if (claim.worktreeId === worktreeId) return assignmentId;
+  }
+  return null;
+}
+
+export function validateReviewAssignmentClaim(args: {
+  reviewAssignmentId: string;
+  baseWorktreeId: string | null;
+  reviewAssignments: ReadonlyMap<string, ReviewAssignmentClaim>;
+  worktrees?: ReadonlyMap<string, SessionWorktree>;
+}): ReviewAssignmentClaimValidation {
+  const existing = args.reviewAssignments.get(args.reviewAssignmentId);
+  if (existing?.status === "running") {
+    return { ok: false, status: 409, error: `review assignment "${args.reviewAssignmentId}" is already running` };
+  }
+
+  if (existing) {
+    if (!existing.worktreeId || !args.baseWorktreeId || args.baseWorktreeId !== existing.worktreeId) {
+      return {
+        ok: false,
+        status: 409,
+        error: `review assignment "${args.reviewAssignmentId}" already ran in ${existing.worktreeId ?? "an unknown worktree"}; pass that baseWorktreeId to continue it`,
+      };
+    }
+    if (args.worktrees && !args.worktrees.has(args.baseWorktreeId)) {
+      return {
+        ok: false,
+        status: 400,
+        error: `review assignment "${args.reviewAssignmentId}" refers to missing worktree "${args.baseWorktreeId}"`,
+      };
+    }
+    return { ok: true };
+  }
+
+  if (args.baseWorktreeId) {
+    const owner = reviewAssignmentOwnerForWorktree(args.reviewAssignments, args.baseWorktreeId);
+    if (owner && owner !== args.reviewAssignmentId) {
+      return {
+        ok: false,
+        status: 409,
+        error: `baseWorktreeId "${args.baseWorktreeId}" is already owned by review assignment "${owner}"`,
+      };
+    }
+    if (args.worktrees && !args.worktrees.has(args.baseWorktreeId)) {
+      return { ok: false, status: 400, error: `unknown baseWorktreeId "${args.baseWorktreeId}"` };
+    }
+  }
+
+  return { ok: true };
 }
 
 /**
