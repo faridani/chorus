@@ -12,8 +12,8 @@ ticket (open)
 git worktree add  →  chorus/ticket-<id>  (cut from origin/<base>, fetched first)
    │
    ▼
-backend.startRun()  →  codex exec --json --output-schema -o result.json
-   │   (isolated worktree, full sandbox, group-killable, idle/wall timeouts)
+backend.startRun()  →  codex / claude / gemini CLI
+   │   (isolated worktree, permission bypass, group-killable, idle/wall timeouts)
    ▼
 result + git inspection  →  done-detection, then orchestrator triage
    │   work ready (committed + coherent)?
@@ -33,10 +33,10 @@ marks the ticket `merged` once GitHub reports the PR merged.
 
 ## Key design decisions
 
-- **Output file, not the event stream, is authoritative.** `codex exec`'s
-  `--json` JSONL is telemetry (progress, token usage); the `-o` file validated
-  against a Zod schema is the result. The stream is parsed defensively
-  (partial lines, non-JSON noise) and fully persisted as a raw log.
+- **Structured result files are authoritative.** Backend event streams are
+  telemetry (progress, token usage, logs); the schema-validated result file is
+  what drives ticket state. Streams are parsed defensively (partial lines,
+  non-JSON noise) and fully persisted as raw logs.
 - **"Done" is not a boolean.** Process exit means "the agent stopped," not
   "the work is correct." Opening a PR requires clean exit **and** a structured
   success **and** a real new commit. Rich terminal states (`done-no-changes`,
@@ -44,7 +44,7 @@ marks the ticket `merged` once GitHub reports the PR merged.
 - **One git mutex.** Parallel agents edit files in separate worktrees safely,
   but every shared-ref operation (worktree add, fetch, push) serializes
   through a single mutex in `git-service` — nothing else shells out to git.
-- **Group-kill.** Codex spawns child processes; the runner spawns detached and
+- **Group-kill.** AI CLIs spawn child processes; the runner spawns detached and
   signals the whole process group, so stop/pause/timeout never orphan work.
 - **PIDs are dead on boot.** SQLite is durable; processes are not. Restart
   reconciliation re-derives each interrupted task's fate from git state and
@@ -54,11 +54,11 @@ marks the ticket `merged` once GitHub reports the PR merged.
   preserves worktrees, and a single backoff scheduler resumes by re-running in
   the same worktree. The exhaustion signal is a config-tunable regex classifier.
 - **Backend abstraction.** The orchestrator depends only on the `AIBackend`
-  interface via a registry; adding Claude/Gemini is a new adapter package with
-  no orchestrator change.
+  interface via a registry. Codex, Claude Code, and Gemini CLI adapters live in
+  `packages/backends`.
 
 ## Deferred (Milestone 2+)
 
-Claude/Gemini adapters, email notifications, precise quota-reset parsing and
-native CLI session resume, automatic conflict resolution, a visual role editor,
-dollar-cost projection, multi-repo, crash-loop quarantine.
+Email notifications, precise quota-reset parsing, native CLI session resume,
+automatic conflict resolution, a visual role editor, dollar-cost projection,
+multi-repo, crash-loop quarantine.
