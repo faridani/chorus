@@ -1,6 +1,17 @@
 import { z } from "zod";
 import type { TerminalReason } from "./state.js";
 
+export const AgentSuggestionSchema = z.object({
+  title: z.string(),
+  rationale: z.string(),
+  affectedArea: z.string(),
+  proposedAction: z.string(),
+  recommendedAgent: z.string().optional(),
+  recommendedTool: z.string().optional(),
+  recommendedSkill: z.string().optional(),
+});
+export type AgentSuggestion = z.infer<typeof AgentSuggestionSchema>;
+
 /**
  * The contract a backend CLI's final structured output must satisfy. We pass
  * this (as JSON Schema) to `codex exec --output-schema` and validate the
@@ -12,6 +23,7 @@ export const AgentResultPayloadSchema = z.object({
   summary: z.string(),
   filesChanged: z.array(z.string()).default([]),
   notes: z.string().optional(),
+  suggestions: z.array(AgentSuggestionSchema).default([]),
 });
 export type AgentResultPayload = z.infer<typeof AgentResultPayloadSchema>;
 

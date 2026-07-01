@@ -126,6 +126,13 @@ export interface Suggestion {
   projectId: string;
   ticketId: string | null;
   message: string;
+  title?: string | null;
+  rationale?: string | null;
+  affectedArea?: string | null;
+  proposedAction?: string | null;
+  recommendedAgent?: string | null;
+  recommendedTool?: string | null;
+  recommendedSkill?: string | null;
   status: string;
   createdAt: number;
 }

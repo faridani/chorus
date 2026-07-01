@@ -254,7 +254,8 @@ export function buildAgentPrompt(args: {
   lines.push(
     "Commit any NEW work, then return your final result as JSON matching the provided output schema: " +
       "`status` (success | no_changes | blocked), a one-paragraph `summary` for the changelog, and `filesChanged`. " +
-      "Use `no_changes` if you made no new commits, and `blocked` if the requested change can't be done here.",
+      "Use `no_changes` if you made no new commits, and `blocked` if the requested change can't be done here. " +
+      "When you identify deferred work that belongs in the Suggestions tab, add optional structured `suggestions` entries with title, rationale, affectedArea, proposedAction, and optional recommendedAgent/recommendedTool/recommendedSkill.",
   );
 
   return lines.join("\n");

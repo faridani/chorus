@@ -27,6 +27,25 @@ export const AGENT_RESULT_SCHEMA = {
       type: "string",
       description: "Optional caveats, follow-ups, or reasons for blocked/no_changes.",
     },
+    suggestions: {
+      type: "array",
+      description:
+        "Optional structured follow-up suggestions for work that is useful but outside this attempt's safe scope.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "rationale", "affectedArea", "proposedAction"],
+        properties: {
+          title: { type: "string" },
+          rationale: { type: "string" },
+          affectedArea: { type: "string" },
+          proposedAction: { type: "string" },
+          recommendedAgent: { type: "string" },
+          recommendedTool: { type: "string" },
+          recommendedSkill: { type: "string" },
+        },
+      },
+    },
   },
 } as const;
 

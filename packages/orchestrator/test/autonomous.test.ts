@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project, Role, Ticket } from "@chorus/core";
-import { buildAutonomousPrompt, buildCodexMcpArgs, buildSpokeAgentPrompt, isCodingRole } from "../src/autonomous.js";
+import {
+  buildAutonomousPrompt,
+  buildCodexMcpArgs,
+  buildSpokeAgentPrompt,
+  isCodingRole,
+  reviewAssignmentOwnerForWorktree,
+  validateReviewAssignmentClaim,
+} from "../src/autonomous.js";
 
 const project = {
   id: "p1",
@@ -80,6 +87,8 @@ test("buildAutonomousPrompt lists the agent, the tools, and the parallel budget"
     assert.ok(p.includes(tool), `prompt mentions ${tool}`);
   }
   assert.ok(p.includes("up to 3 agents in parallel"));
+  assert.ok(p.includes("codeReviewPlan"));
+  assert.ok(p.includes("reviewAssignmentId"));
   assert.ok(p.includes("budget of 12"));
   // Neutral wording: nothing that trips codex's moderation filter.
   assert.ok(!/secret token/i.test(p));
@@ -98,6 +107,7 @@ test("buildSpokeAgentPrompt embeds the instruction, role rules, and result contr
   assert.ok(p.includes("Add the /health route and a test."));
   assert.ok(p.includes("NEVER run `git push`"));
   assert.ok(p.includes("run the project's checks before finishing"));
+  assert.ok(p.includes('"suggestions"?'));
   assert.ok(p.includes('"status"') && p.includes("filesChanged"));
 });
 
@@ -141,4 +151,60 @@ test("isCodingRole: advisory only on explicit signal; empty lists stay coding", 
   // Explicit denial of write capability → advisory.
   const forbidWrite = { ...role, allowedToolIds: [], forbiddenToolIds: ["repo.modify", "repo.commit"] } as Role;
   assert.equal(isCodingRole(forbidWrite), false);
+});
+
+test("validateReviewAssignmentClaim blocks conflicting worktree ownership", () => {
+  const worktrees = new Map([
+    ["wt_1", { id: "wt_1", path: "/tmp/wt_1", branch: "chorus/t1/wt_1" }],
+    ["wt_2", { id: "wt_2", path: "/tmp/wt_2", branch: "chorus/t1/wt_2" }],
+  ]);
+  const reviewAssignments = new Map([
+    ["review-1", { agent: "software-dev", worktreeId: "wt_1", status: "finished" as const }],
+  ]);
+
+  assert.deepEqual(
+    validateReviewAssignmentClaim({
+      reviewAssignmentId: "review-2",
+      baseWorktreeId: "wt_1",
+      reviewAssignments,
+      worktrees,
+    }),
+    {
+      ok: false,
+      status: 409,
+      error: 'baseWorktreeId "wt_1" is already owned by review assignment "review-1"',
+    },
+  );
+  assert.deepEqual(
+    validateReviewAssignmentClaim({
+      reviewAssignmentId: "review-1",
+      baseWorktreeId: "wt_2",
+      reviewAssignments,
+      worktrees,
+    }),
+    {
+      ok: false,
+      status: 409,
+      error: 'review assignment "review-1" already ran in wt_1; pass that baseWorktreeId to continue it',
+    },
+  );
+  assert.deepEqual(
+    validateReviewAssignmentClaim({
+      reviewAssignmentId: "review-1",
+      baseWorktreeId: "wt_1",
+      reviewAssignments,
+      worktrees,
+    }),
+    { ok: true },
+  );
+  assert.deepEqual(
+    validateReviewAssignmentClaim({
+      reviewAssignmentId: "review-2",
+      baseWorktreeId: "missing",
+      reviewAssignments,
+      worktrees,
+    }),
+    { ok: false, status: 400, error: 'unknown baseWorktreeId "missing"' },
+  );
+  assert.equal(reviewAssignmentOwnerForWorktree(reviewAssignments, "wt_1"), "review-1");
 });
