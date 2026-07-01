@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
+$RepoRoot = Convert-Path (Join-Path $ScriptDir "..\..")
 
 $Image = if ($env:CHORUS_IMAGE) { $env:CHORUS_IMAGE } else { "chorus:local" }
 $Name = if ($env:CHORUS_CONTAINER_NAME) { $env:CHORUS_CONTAINER_NAME } else { "chorus" }
@@ -14,6 +14,8 @@ $Port = if ($env:CHORUS_PORT) { $env:CHORUS_PORT } else { "7878" }
 $InstallAiClis = if ($env:CHORUS_INSTALL_AI_CLIS) { $env:CHORUS_INSTALL_AI_CLIS } else { "true" }
 $DataDir = if ($env:CHORUS_DATA_DIR_HOST) { $env:CHORUS_DATA_DIR_HOST } else { Join-Path $env:USERPROFILE ".chorus-container\data" }
 $HomeDir = if ($env:CHORUS_HOME_DIR_HOST) { $env:CHORUS_HOME_DIR_HOST } else { Join-Path $env:USERPROFILE ".chorus-container\home" }
+$DataDir = [System.IO.Path]::GetFullPath($DataDir)
+$HomeDir = [System.IO.Path]::GetFullPath($HomeDir)
 $ConfigFile = if ($env:CHORUS_CONFIG_FILE) { $env:CHORUS_CONFIG_FILE } else { Join-Path $RepoRoot "chorus.config.json" }
 
 function Get-ContainerRuntime {
@@ -32,7 +34,6 @@ function Get-ContainerRuntime {
 function Initialize-HostDirs {
   $dirs = @(
     $DataDir,
-    (Join-Path $HomeDir ".npm-global\bin"),
     (Join-Path $HomeDir ".config"),
     (Join-Path $HomeDir ".codex"),
     (Join-Path $HomeDir ".claude"),
@@ -93,7 +94,7 @@ function Start-ChorusContainer {
   )
 
   if (Test-Path $ConfigFile) {
-    $resolvedConfig = Resolve-Path $ConfigFile
+    $resolvedConfig = Convert-Path $ConfigFile
     $runArgs += @("--volume", "${resolvedConfig}:/app/chorus.config.json")
   }
 

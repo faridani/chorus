@@ -8,8 +8,9 @@ if [[ "$(id -u)" = "0" ]]; then
   groupmod -o -g "$run_gid" chorus >/dev/null 2>&1 || true
   usermod -o -u "$run_uid" -g "$run_gid" -d /home/chorus chorus >/dev/null 2>&1 || true
 
-  mkdir -p /var/lib/chorus /home/chorus/.npm-global/bin
-  chown -R "$run_uid:$run_gid" /var/lib/chorus /home/chorus >/dev/null 2>&1 || true
+  mkdir -p /var/lib/chorus /opt/npm-global
+  chown -R "$run_uid:$run_gid" /var/lib/chorus /opt/npm-global >/dev/null 2>&1 || true
+  chown "$run_uid:$run_gid" /home/chorus >/dev/null 2>&1 || true
 
   exec gosu chorus "$@"
 fi
