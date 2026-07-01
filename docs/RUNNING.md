@@ -32,7 +32,7 @@ For all modes:
 
 For container mode:
 
-- macOS: Apple `container`.
+- macOS: Apple `container`, Docker Desktop, Podman, or OrbStack.
 - Linux: Docker or Podman.
 - Windows: Docker Desktop or Podman Desktop with Linux containers enabled.
 
@@ -52,7 +52,7 @@ npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @google/gem
 # macOS
 ./deploy/mac/run-container.sh start
 
-# Linux
+# Linux, or macOS with Docker Desktop/Podman/OrbStack
 ./deploy/linux/run-container.sh start
 ```
 
@@ -118,6 +118,8 @@ cp chorus.config.example.json chorus.config.json
 
 The daemon auto-loads `chorus.config.json` from the repo root on every start.
 Set `CHORUS_CONFIG=/path/to/file.json` only if you keep config elsewhere.
+The example omits `dataDir`; leaving it unset uses `~/.chorus` on bare metal,
+while the container launchers force `/var/lib/chorus` inside the container.
 
 Important fields:
 
