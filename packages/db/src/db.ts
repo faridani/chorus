@@ -280,10 +280,22 @@ export class ChorusDb {
   insertSuggestion(s: Suggestion): void {
     this.raw
       .prepare(
-        `INSERT INTO suggestions (id, project_id, ticket_id, message, status, created_at)
-         VALUES (@id, @projectId, @ticketId, @message, @status, @createdAt)`,
+        `INSERT INTO suggestions (id, project_id, ticket_id, message, status, created_at,
+         title, rationale, affected_area, proposed_action, recommended_agent, recommended_tool, recommended_skill)
+         VALUES (@id, @projectId, @ticketId, @message, @status, @createdAt,
+         @title, @rationale, @affectedArea, @proposedAction, @recommendedAgent, @recommendedTool, @recommendedSkill)`,
       )
-      .run({ ...s, ticketId: s.ticketId ?? null });
+      .run({
+        ...s,
+        ticketId: s.ticketId ?? null,
+        title: s.title ?? null,
+        rationale: s.rationale ?? null,
+        affectedArea: s.affectedArea ?? null,
+        proposedAction: s.proposedAction ?? null,
+        recommendedAgent: s.recommendedAgent ?? null,
+        recommendedTool: s.recommendedTool ?? null,
+        recommendedSkill: s.recommendedSkill ?? null,
+      });
   }
   listSuggestions(projectId: string, status: "open" | "dismissed" = "open"): Suggestion[] {
     return (
@@ -633,6 +645,13 @@ function mapSuggestion(r: Row): Suggestion {
     projectId: r.project_id as string,
     ticketId: (r.ticket_id as string | null) ?? null,
     message: r.message as string,
+    title: (r.title as string | null) ?? null,
+    rationale: (r.rationale as string | null) ?? null,
+    affectedArea: (r.affected_area as string | null) ?? null,
+    proposedAction: (r.proposed_action as string | null) ?? null,
+    recommendedAgent: (r.recommended_agent as string | null) ?? null,
+    recommendedTool: (r.recommended_tool as string | null) ?? null,
+    recommendedSkill: (r.recommended_skill as string | null) ?? null,
     status: r.status as Suggestion["status"],
     createdAt: r.created_at as number,
   };

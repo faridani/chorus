@@ -80,6 +80,8 @@ test("buildAutonomousPrompt lists the agent, the tools, and the parallel budget"
     assert.ok(p.includes(tool), `prompt mentions ${tool}`);
   }
   assert.ok(p.includes("up to 3 agents in parallel"));
+  assert.ok(p.includes("codeReviewPlan"));
+  assert.ok(p.includes("reviewAssignmentId"));
   assert.ok(p.includes("budget of 12"));
   // Neutral wording: nothing that trips codex's moderation filter.
   assert.ok(!/secret token/i.test(p));
@@ -98,6 +100,7 @@ test("buildSpokeAgentPrompt embeds the instruction, role rules, and result contr
   assert.ok(p.includes("Add the /health route and a test."));
   assert.ok(p.includes("NEVER run `git push`"));
   assert.ok(p.includes("run the project's checks before finishing"));
+  assert.ok(p.includes('"suggestions"?'));
   assert.ok(p.includes('"status"') && p.includes("filesChanged"));
 });
 

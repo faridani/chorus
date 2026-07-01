@@ -144,12 +144,30 @@ export interface TicketEvent {
   createdAt: number;
 }
 
+/** Structured fields for a human-visible follow-up recommendation. */
+export interface SuggestionDetails {
+  title: string;
+  rationale: string;
+  affectedArea: string;
+  proposedAction: string;
+  recommendedAgent?: string | null;
+  recommendedTool?: string | null;
+  recommendedSkill?: string | null;
+}
+
 /** A message from the orchestrator to the human, shown in the Suggestions tab. */
 export interface Suggestion {
   id: string;
   projectId: string;
   ticketId: string | null;
   message: string;
+  title?: string | null;
+  rationale?: string | null;
+  affectedArea?: string | null;
+  proposedAction?: string | null;
+  recommendedAgent?: string | null;
+  recommendedTool?: string | null;
+  recommendedSkill?: string | null;
   status: "open" | "dismissed";
   createdAt: number;
 }

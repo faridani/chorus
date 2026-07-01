@@ -56,6 +56,14 @@ marks the ticket `merged` once GitHub reports the PR merged.
 - **Backend abstraction.** The orchestrator depends only on the `AIBackend`
   interface via a registry. Codex, Claude Code, and Gemini CLI adapters live in
   `packages/backends`.
+- **Parallel code review plans.** Broad tickets such as "review and improve the
+  codebase" get a deterministic repository-structure plan in the autonomous
+  orchestrator context. The plan splits packages, apps, docs, tests, and support
+  directories into non-overlapping review assignments. Each scoped subagent is
+  told to improve readability, add useful documentation, check obvious security
+  risks, and return structured Suggestions for deferred or higher-risk work.
+  The orchestrator records those Suggestions and folds subagent results into the
+  PR summary for human review.
 
 ## Deferred (Milestone 2+)
 

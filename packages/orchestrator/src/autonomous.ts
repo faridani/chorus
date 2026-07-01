@@ -1,4 +1,5 @@
 import type { Project, Role, Ticket, TicketEvent } from "@chorus/core";
+import type { CodeReviewPlan, ReviewAssignmentResult } from "./code-review-plan.js";
 
 /** A worktree created during an autonomous session, keyed by a short id. */
 export interface SessionWorktree {
@@ -24,6 +25,12 @@ export interface SessionState {
   prUrl: string | null;
   /** Live spoke-agent handles, so a Stop tears them down with the session. */
   handles: Set<{ stop: (r: "killed") => Promise<void> }>;
+  /** Deterministic plan for broad repository review tickets, when applicable. */
+  reviewPlan: CodeReviewPlan | null;
+  /** Review assignment ids currently or previously delegated in this session. */
+  reviewAssignments: Map<string, { agent: string; worktreeId: string | null; status: "running" | "finished" }>;
+  /** Structured outputs from scoped review subagents, used in the final PR summary. */
+  reviewResults: ReviewAssignmentResult[];
 }
 
 export interface SpokeAgentInfo {
@@ -109,7 +116,7 @@ export function buildAutonomousPrompt(args: {
   L.push("- get_context: read the ticket, project settings, activity trail, and last attempt journal. Call this first.");
   L.push("- list_agents: list the spoke agents (names to use with run_agent).");
   L.push(
-    "- run_agent(agent, instruction, baseWorktreeId?): delegate work. Each call runs in its OWN git worktree and returns a worktreeId plus the agent's result, new commit count, and a diff summary. Omit baseWorktreeId to start fresh; pass a prior worktreeId to continue building in it.",
+    "- run_agent(agent, instruction, baseWorktreeId?, reviewAssignmentId?): delegate work. Each call runs in its OWN git worktree and returns a worktreeId plus the agent's result, new commit count, and a diff summary. Omit baseWorktreeId to start fresh; pass a prior worktreeId to continue building in it. For codeReviewPlan assignments, pass the assignment id exactly as reviewAssignmentId.",
   );
   L.push("- run_verify(worktreeId): run the project's build/test/lint commands in a worktree.");
   L.push("- get_diff(worktreeId): inspect the committed changes in a worktree.");
@@ -121,13 +128,18 @@ export function buildAutonomousPrompt(args: {
   L.push("");
   L.push("## How to work");
   L.push("1. get_context to understand the task.");
-  L.push("2. Delegate implementation to the most fitting spoke agent(s) with a clear instruction.");
+  L.push(
+    "2. Delegate implementation to the most fitting spoke agent(s) with a clear instruction. If get_context includes codeReviewPlan, use it as the planning step: dispatch one scoped assignment per subagent where budget allows, keep scopes non-overlapping, and pass reviewAssignmentId on each run_agent call.",
+  );
   L.push(
     `3. You MAY run up to ${maxParallel} agents in parallel (e.g. two approaches, or implementation + tests) by issuing multiple run_agent calls; compare their diffs and merge_worktree the best work together.`,
   );
   L.push("4. Verify with run_verify and inspect with get_diff. If something is wrong, send a spoke agent back with a precise fix instruction (reuse its worktreeId).");
   L.push("5. YOU own the quality bar: open_pr only when the work genuinely satisfies the ticket and verification passes. Otherwise close_ticket or needs_human.");
-  L.push("6. Call finish once you have taken a terminal action.");
+  L.push(
+    "6. For broad code review tickets, collect the subagent summaries, changed files, unresolved risks, and Suggestions entries into the open_pr summary so the final outcome is easy for a human to review.",
+  );
+  L.push("7. Call finish once you have taken a terminal action.");
   L.push("");
   L.push("## Guardrails");
   L.push("- Spoke agents commit on their own branch; they never push. Only open_pr ships work.");
@@ -199,11 +211,11 @@ export function buildSpokeAgentPrompt(args: {
   L.push("## When you finish");
   if (coding) {
     L.push(
-      'Return a single JSON object: { "status": "success" | "no_changes" | "blocked", "summary": string, "filesChanged": string[], "notes": string }. status=success means work is done and committed; no_changes means nothing was needed; blocked means you could not proceed (explain in notes).',
+      'Return a single JSON object: { "status": "success" | "no_changes" | "blocked", "summary": string, "filesChanged": string[], "notes": string, "suggestions"?: [{ "title": string, "rationale": string, "affectedArea": string, "proposedAction": string, "recommendedAgent"?: string, "recommendedTool"?: string, "recommendedSkill"?: string }] }. status=success means work is done and committed; no_changes means nothing was needed; blocked means you could not proceed (explain in notes). Use suggestions only for deferred work that should appear in the Suggestions tab.',
     );
   } else {
     L.push(
-      'Return a single JSON object: { "status": "success" | "blocked", "summary": string, "filesChanged": string[], "notes": string }. Put your idea / findings / recommendation in `summary` (with any detail in `notes`) and leave `filesChanged` empty — advisory work commits nothing. status=success means you produced the requested analysis; blocked means you could not (explain in notes).',
+      'Return a single JSON object: { "status": "success" | "blocked", "summary": string, "filesChanged": string[], "notes": string, "suggestions"?: [{ "title": string, "rationale": string, "affectedArea": string, "proposedAction": string, "recommendedAgent"?: string, "recommendedTool"?: string, "recommendedSkill"?: string }] }. Put your idea / findings / recommendation in `summary` (with any detail in `notes`) and leave `filesChanged` empty — advisory work commits nothing. status=success means you produced the requested analysis; blocked means you could not (explain in notes). Use suggestions only for deferred work that should appear in the Suggestions tab.',
     );
   }
   L.push("Narrate progress in prose; emit the JSON object exactly once, as your final message.");

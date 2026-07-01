@@ -308,10 +308,22 @@ test("migration 0005: ticket branch/worktree, trail events, suggestions", () => 
     projectId,
     ticketId,
     message: "Create a Security agent",
+    title: "Create a Security agent",
+    rationale: "Review agents found deferred hardening work.",
+    affectedArea: "security",
+    proposedAction: "Add a dedicated security analyst to the project.",
+    recommendedAgent: "security-analyst",
+    recommendedTool: "security.report",
+    recommendedSkill: "security-review",
     status: "open",
     createdAt: Date.now(),
   });
-  assert.equal(db.listSuggestions(projectId, "open").length, 1);
+  const open = db.listSuggestions(projectId, "open");
+  assert.equal(open.length, 1);
+  assert.equal(open[0]?.title, "Create a Security agent");
+  assert.equal(open[0]?.affectedArea, "security");
+  assert.equal(open[0]?.proposedAction, "Add a dedicated security analyst to the project.");
+  assert.equal(open[0]?.recommendedAgent, "security-analyst");
   db.setSuggestionStatus(sid, "dismissed");
   assert.equal(db.listSuggestions(projectId, "open").length, 0);
   assert.equal(db.listSuggestions(projectId, "dismissed").length, 1);
