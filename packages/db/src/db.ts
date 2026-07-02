@@ -478,17 +478,22 @@ export class ChorusDb {
 
   // ---- usage ----
   insertUsage(u: UsageEvent): void {
+    const inputTokens = u.inputTokens ?? null;
+    const outputTokens = u.outputTokens ?? null;
+    const totalTokens =
+      u.totalTokens ?? (inputTokens !== null || outputTokens !== null ? (inputTokens ?? 0) + (outputTokens ?? 0) : null);
     this.raw
       .prepare(
-        `INSERT INTO usage_events (id, run_id, project_id, kind, input_tokens, output_tokens, detail, observed_at)
-         VALUES (@id, @runId, @projectId, @kind, @inputTokens, @outputTokens, @detail, @observedAt)`,
+        `INSERT INTO usage_events (id, run_id, project_id, kind, input_tokens, output_tokens, total_tokens, detail, observed_at)
+         VALUES (@id, @runId, @projectId, @kind, @inputTokens, @outputTokens, @totalTokens, @detail, @observedAt)`,
       )
       .run({
         ...u,
         runId: u.runId ?? null,
         projectId: u.projectId ?? null,
-        inputTokens: u.inputTokens ?? null,
-        outputTokens: u.outputTokens ?? null,
+        inputTokens,
+        outputTokens,
+        totalTokens,
         detail: u.detail ?? null,
       });
   }
@@ -497,13 +502,21 @@ export class ChorusDb {
       this.raw.prepare("SELECT * FROM usage_events ORDER BY observed_at DESC LIMIT ?").all(limit) as Row[]
     ).map(mapUsage);
   }
-  usageTotals(): { inputTokens: number; outputTokens: number } {
+  usageTotals(): { inputTokens: number; outputTokens: number; totalTokens: number } {
     const r = this.raw
       .prepare(
-        "SELECT COALESCE(SUM(input_tokens),0) AS i, COALESCE(SUM(output_tokens),0) AS o FROM usage_events",
+        `SELECT
+           COALESCE(SUM(input_tokens),0) AS i,
+           COALESCE(SUM(output_tokens),0) AS o,
+           COALESCE(SUM(COALESCE(total_tokens, CASE
+             WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL
+             THEN COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+             ELSE 0
+           END)),0) AS t
+         FROM usage_events`,
       )
-      .get() as { i: number; o: number };
-    return { inputTokens: r.i, outputTokens: r.o };
+      .get() as { i: number; o: number; t: number };
+    return { inputTokens: r.i, outputTokens: r.o, totalTokens: r.t };
   }
 
   // ---- quota singleton ----
@@ -712,13 +725,19 @@ function mapChangelog(r: Row): ChangelogEntry {
   };
 }
 function mapUsage(r: Row): UsageEvent {
+  const inputTokens = (r.input_tokens as number | null) ?? null;
+  const outputTokens = (r.output_tokens as number | null) ?? null;
+  const totalTokens =
+    ((r.total_tokens as number | null | undefined) ?? null) ??
+    (inputTokens !== null || outputTokens !== null ? (inputTokens ?? 0) + (outputTokens ?? 0) : null);
   return {
     id: r.id as string,
     runId: (r.run_id as string | null) ?? null,
     projectId: (r.project_id as string | null) ?? null,
     kind: r.kind as UsageEvent["kind"],
-    inputTokens: (r.input_tokens as number | null) ?? null,
-    outputTokens: (r.output_tokens as number | null) ?? null,
+    inputTokens,
+    outputTokens,
+    totalTokens,
     detail: (r.detail as string | null) ?? null,
     observedAt: r.observed_at as number,
   };

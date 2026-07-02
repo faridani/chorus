@@ -20,6 +20,7 @@ import { DebugTracesModal } from "./components/DebugTracesModal.js";
 import { SelfHealModal } from "./components/SelfHealModal.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 import { ToolsGallery } from "./components/ToolsGallery.js";
+import { formatTokenUsage } from "./usageFormat.js";
 
 /** Expanded width of the right pane; must match `--events-pane-width` in styles.css. */
 const EVENTS_PANE_WIDTH = 320;
@@ -136,9 +137,7 @@ export function App() {
         </div>
         <div className="metrics">
           <span className={`pill quota-${state?.quota.state}`}>quota: {state?.quota.state ?? "?"}</span>
-          <span className="pill">
-            tokens in/out: {state?.usageTotals.inputTokens ?? 0}/{state?.usageTotals.outputTokens ?? 0}
-          </span>
+          <span className="pill">{formatTokenUsage(state?.usageTotals)}</span>
           <span className="pill">running: {state?.runningTasks.length ?? 0}</span>
         </div>
         <button
