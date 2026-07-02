@@ -8,7 +8,7 @@ export interface FeedEntry {
 export function EventFeed({ entries }: { entries: FeedEntry[] }) {
   return (
     <ul className="feed">
-      {entries.map(({ seq, e }) => (
+      {entries.filter(({ e }) => isVisibleEntry(e)).map(({ seq, e }) => (
         <li key={seq} className={`feedline kind-${rowKind(e)}`}>
           <span className="ts">{time(e.at)}</span>
           <Row e={e} />
@@ -36,12 +36,6 @@ function Row({ e }: { e: any }) {
 
 function AgentBody({ ev }: { ev: any }) {
   switch (ev.kind) {
-    case "reasoning":
-      return (
-        <span>
-          <span className="ico">💭</span> <span className="reason">{ev.text}</span>
-        </span>
-      );
     case "message":
       return (
         <span>
@@ -83,6 +77,11 @@ function AgentBody({ ev }: { ev: any }) {
     default:
       return <span className="muted">{ev.kind}</span>;
   }
+}
+
+function isVisibleEntry(e: any): boolean {
+  if (e.type !== "agent_event") return true;
+  return e.event?.kind !== "reasoning";
 }
 
 function describeSystem(e: any): string {

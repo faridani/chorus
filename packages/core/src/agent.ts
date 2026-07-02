@@ -32,7 +32,7 @@ export interface PlanItem {
 /**
  * Normalized streaming event. Each backend adapter translates its native
  * JSONL into this union so the orchestrator never sees Codex-specific shapes.
- * These are surfaced verbatim in the dashboard's live feed.
+ * Public live feeds drop internal reasoning events at the bus boundary.
  */
 export type AgentEvent =
   /** The model's internal reasoning summary. */
