@@ -1919,6 +1919,7 @@ export class Orchestrator {
       kind: "quota_exhausted",
       inputTokens: null,
       outputTokens: null,
+      totalTokens: null,
       detail: `Paused; retry at ${new Date(resumeAt).toISOString()}`,
       observedAt: Date.now(),
     });
@@ -1947,6 +1948,11 @@ export class Orchestrator {
       kind: "tokens",
       inputTokens: u.inputTokens ?? null,
       outputTokens: u.outputTokens ?? null,
+      totalTokens:
+        u.totalTokens ??
+        (u.inputTokens !== undefined || u.outputTokens !== undefined
+          ? (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
+          : null),
       detail: null,
       observedAt: Date.now(),
     });

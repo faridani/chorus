@@ -616,6 +616,7 @@ test("usage totals sum across events", () => {
     kind: "tokens",
     inputTokens: 100,
     outputTokens: 40,
+    totalTokens: null,
     detail: null,
     observedAt: Date.now(),
   });
@@ -626,11 +627,38 @@ test("usage totals sum across events", () => {
     kind: "tokens",
     inputTokens: 50,
     outputTokens: 10,
+    totalTokens: null,
     detail: null,
     observedAt: Date.now(),
   });
   const totals = db.usageTotals();
   assert.equal(totals.inputTokens, 150);
   assert.equal(totals.outputTokens, 50);
+  assert.equal(totals.totalTokens, 200);
+  assert.equal(db.recentUsage(1)[0]?.totalTokens, 60);
+  db.close();
+});
+
+test("usage totals include total-only events", () => {
+  const db = freshDb();
+  db.insertUsage({
+    id: newId("usage"),
+    runId: "run_total",
+    projectId: "proj_total",
+    kind: "tokens",
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: 5,
+    detail: null,
+    observedAt: Date.now(),
+  });
+  const [event] = db.recentUsage(1);
+  assert.equal(event?.inputTokens, null);
+  assert.equal(event?.outputTokens, null);
+  assert.equal(event?.totalTokens, 5);
+  const totals = db.usageTotals();
+  assert.equal(totals.inputTokens, 0);
+  assert.equal(totals.outputTokens, 0);
+  assert.equal(totals.totalTokens, 5);
   db.close();
 });
