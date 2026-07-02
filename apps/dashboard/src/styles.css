@@ -363,11 +363,9 @@ table.tickets tr.dragover td { border-top: 2px solid var(--accent); }
 .feedline .who { font-weight: 600; color: var(--accent); }
 .feedline .ico { display: inline-block; }
 .feedline code { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 11px; }
-.feedline .reason { color: #c7b3e6; font-style: italic; }
 .feedline .ok { color: #7ee787; }
 .feedline .bad { color: #f85149; }
 /* subtle left accent by kind */
-.kind-reasoning { border-left: 2px solid #8957e5; padding-left: 6px; }
 .kind-command { border-left: 2px solid #2f6feb; padding-left: 6px; }
 .kind-file_change { border-left: 2px solid #3fb950; padding-left: 6px; }
 .kind-plan { border-left: 2px solid #e3b341; padding-left: 6px; }

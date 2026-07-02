@@ -73,7 +73,7 @@ test("stepActivity scopes to one turn — two orchestrator steps show different 
   assert.ok(!last.some((i) => i.text === "starting"), "second turn excludes the first turn's events");
 });
 
-test("stepActivity includes a turn's live stream emitted before its trail summary", () => {
+test("stepActivity includes public live events before the trail summary and drops reasoning", () => {
   // Worker live events stream during the run; the "work" trail entry is written
   // afterwards (later timestamp). Scoping a step from its trail entry would drop
   // the stream — the window must open at the prior hand-off instead.
@@ -90,8 +90,8 @@ test("stepActivity includes a turn's live stream emitted before its trail summar
   const log = stepActivity(events, feed, "t1", devStep);
   assert.deepEqual(
     log.map((i) => i.text),
-    ["npm test", "patching", "committed fix"],
-    "pre-summary command + reasoning appear, ahead of the trail summary",
+    ["npm test", "committed fix"],
+    "pre-summary commands appear ahead of the trail summary, while reasoning is hidden",
   );
 });
 
@@ -100,12 +100,14 @@ test("activeAgents lights only running tickets with a recent live event", () => 
   const feed: FeedItem[] = [
     { e: { type: "agent_event", ticketId: "t1", role: "orchestrator", at: now - 1000, event: { kind: "message" } } },
     { e: { type: "agent_event", ticketId: "t1", role: "software-dev", at: now - 2000, event: { kind: "command" } } },
+    { e: { type: "agent_event", ticketId: "t1", role: "reason-only", at: now - 1000, event: { kind: "reasoning" } } },
     { e: { type: "agent_event", ticketId: "t1", role: "old-agent", at: now - 60_000, event: { kind: "message" } } },
     { e: { type: "agent_event", ticketId: "t2", role: "other", at: now, event: { kind: "message" } } },
   ];
   // Parallel agents both light when the ticket is running and events are fresh.
   const lit = activeAgents(feed, "t1", ["t1"], now);
   assert.deepEqual([...lit].sort(), ["orchestrator", "software-dev"]);
+  assert.ok(!lit.has("reason-only"), "reasoning-only live events do not light an agent");
   // Stale event (>window) is dropped.
   assert.ok(!lit.has("old-agent"));
   // Ticket not in runningTaskIds → nothing lit.
@@ -122,6 +124,7 @@ test("spokeAgents marks project roles editable, trail-only actors not, hub first
   // a node, marked non-editable.
   const feed: FeedItem[] = [
     { e: { type: "agent_event", ticketId: "t1", role: "evaluator", at: 3, event: { kind: "command" } } },
+    { e: { type: "agent_event", ticketId: "t1", role: "reason-only", at: 4, event: { kind: "reasoning" } } },
   ];
   const boxes = spokeAgents(roles, events, "t1", feed);
   assert.equal(boxes[0]?.name, "orchestrator");
@@ -129,15 +132,18 @@ test("spokeAgents marks project roles editable, trail-only actors not, hub first
   const dev = boxes.find((b) => b.name === "software-dev");
   const rev = boxes.find((b) => b.name === "reviewer");
   const evl = boxes.find((b) => b.name === "evaluator");
+  const reasonOnly = boxes.find((b) => b.name === "reason-only");
   assert.equal(dev?.editable, true);
   assert.equal(rev?.editable, false, "trail-only actor (reviewer) is not editable");
   assert.equal(evl?.editable, false, "live-feed-only actor (evaluator) appears, non-editable");
+  assert.equal(reasonOnly, undefined, "reasoning-only live-feed actors are hidden");
 });
 
-test("agentActivity merges trail + live for one agent, time-ordered", () => {
+test("agentActivity merges trail + public live events for one agent, time-ordered", () => {
   const events: TicketEvent[] = [ev("software-dev", "work", "committed", 5)];
   const feed: FeedItem[] = [
     { e: { type: "agent_event", ticketId: "t1", role: "software-dev", at: 3, event: { kind: "command", command: "npm test" } } },
+    { e: { type: "agent_event", ticketId: "t1", role: "software-dev", at: 4, event: { kind: "reasoning", text: "private chain" } } },
     { e: { type: "agent_event", ticketId: "t1", role: "orchestrator", at: 4, event: { kind: "message", text: "nope" } } },
   ];
   const log = agentActivity(events, feed, "t1", "software-dev");
