@@ -26,7 +26,7 @@ export interface FeedItem {
  * `firstAt`/`lastAt` are the step's first/last *trail* entries. The activity
  * window is `[startAt, endAt)`, which is wider: it opens at the previous step's
  * last trail entry (the hand-off point) — not at this step's trail entry —
- * because agents stream their live events (commands, reasoning) *before* the
+ * because agents stream their live events (commands, messages) *before* the
  * caller writes the summarizing trail entry. Scoping from `firstAt` would drop
  * that whole live stream; scoping from the prior hand-off captures it. Combined
  * with the actor filter in `stepActivity`, overlapping windows don't double-count.
@@ -61,6 +61,10 @@ export interface ActivityItem {
   kind: string;
   text: string;
   source: "trail" | "live";
+}
+
+function isVisibleLiveAgentEvent(e: FeedItem["e"]): boolean {
+  return e.type === "agent_event" && e.event?.kind !== "reasoning";
 }
 
 /**
@@ -137,7 +141,7 @@ export function stepActivity(
     }
   }
   for (const { e } of feed) {
-    if (e.type === "agent_event" && e.ticketId === ticketId && e.role === node.actor && e.event) {
+    if (isVisibleLiveAgentEvent(e) && e.ticketId === ticketId && e.role === node.actor && e.event) {
       const at = typeof e.at === "number" ? e.at : Date.now();
       if (inWindow(at)) {
         items.push({ at, kind: String(e.event.kind ?? "log"), text: liveEventText(e.event), source: "live" });
@@ -164,7 +168,7 @@ export function activeAgents(
   if (!runningTaskIds.includes(ticketId)) return active;
   for (const { e } of feed) {
     if (
-      e.type === "agent_event" &&
+      isVisibleLiveAgentEvent(e) &&
       e.ticketId === ticketId &&
       e.role &&
       typeof e.at === "number" &&
@@ -196,7 +200,7 @@ export function spokeAgents(
     if (e.ticketId === ticketId && e.actor && e.actor !== "system") names.add(e.actor);
   }
   for (const { e } of feed) {
-    if (e.type === "agent_event" && e.ticketId === ticketId && e.role && e.role !== "system") {
+    if (isVisibleLiveAgentEvent(e) && e.ticketId === ticketId && e.role && e.role !== "system") {
       names.add(e.role);
     }
   }
@@ -208,7 +212,6 @@ export function spokeAgents(
 /** Best-effort one-line text for a live AgentEvent. */
 export function liveEventText(ev: { kind?: string; [k: string]: unknown }): string {
   switch (ev.kind) {
-    case "reasoning":
     case "message":
       return String(ev.text ?? "");
     case "command":
@@ -248,7 +251,7 @@ export function agentActivity(
     }
   }
   for (const { e } of feed) {
-    if (e.type === "agent_event" && e.ticketId === ticketId && e.role === agent && e.event) {
+    if (isVisibleLiveAgentEvent(e) && e.ticketId === ticketId && e.role === agent && e.event) {
       items.push({
         // Fall back to "now" (not 0/epoch) so a timestamp-less live event sorts
         // to the end of the log, not the start where the cap would drop it.

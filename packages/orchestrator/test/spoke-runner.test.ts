@@ -29,7 +29,9 @@ class FakeBackend implements AIBackend {
   startRun(_spec: AgentRunSpec): AgentRunHandle {
     const events: AgentEvent[] = [
       { kind: "message", text: "working", at: 1 },
-      { kind: "file_change", files: ["src/a.ts"], at: 2 },
+      { kind: "reasoning", text: "private chain", at: 2 },
+      { kind: "message", text: '{"status":"success","summary":"streamed early"}', at: 3 },
+      { kind: "file_change", files: ["src/a.ts"], at: 4 },
     ];
     return {
       pid: 4242,
@@ -74,7 +76,9 @@ test("runAgentProcess returns the structured result and streams events to the bu
   assert.equal(result.payload?.status, "success");
   assert.equal(result.terminalReason, "completed");
   assert.equal(handlePid, 4242, "onHandle receives the live handle before await");
-  assert.equal(seen.length, 2, "both agent events were forwarded to the bus");
+  assert.equal(seen.length, 2, "only public operational events were forwarded to the bus");
+  assert.ok(!seen.some((e) => e.kind === "reasoning"));
+  assert.ok(!seen.some((e) => e.kind === "message" && e.text.includes("streamed early")));
   assert.ok(seen.some((e) => e.kind === "file_change"));
 });
 

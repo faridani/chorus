@@ -37,6 +37,23 @@ export type ChorusEvent =
   | { type: "notification"; projectId: string; kind: string; title: string; body: string; at: number };
 
 /**
+ * Public/live AgentEvents are allowed onto the shared bus. Raw backend event
+ * streams and durable records keep their original data; this only guards the
+ * live feed consumed by WebSocket/dashboard clients.
+ */
+export function sanitizePublicAgentEvent(event: AgentEvent): AgentEvent | null {
+  if (event.kind === "reasoning") return null;
+  return event;
+}
+
+export function sanitizePublicChorusEvent(event: ChorusEvent): ChorusEvent | null {
+  if (event.type !== "agent_event") return event;
+  const publicEvent = sanitizePublicAgentEvent(event.event);
+  if (!publicEvent) return null;
+  return event;
+}
+
+/**
  * Minimal typed wrapper over EventEmitter. A single shared instance is the
  * pub/sub backbone between the orchestrator and the web layer.
  */
@@ -49,7 +66,9 @@ export class ChorusBus {
   }
 
   emit(event: ChorusEvent): void {
-    this.emitter.emit("event", event);
+    const publicEvent = sanitizePublicChorusEvent(event);
+    if (!publicEvent) return;
+    this.emitter.emit("event", publicEvent);
   }
 
   on(listener: (event: ChorusEvent) => void): () => void {

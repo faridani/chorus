@@ -75,7 +75,7 @@ export class CodexBackend implements AIBackend {
       "--json",
       "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
-      // Stream the model's reasoning summary so the dashboard can show it.
+      // Keep summaries available to backend consumers; public live feeds drop them.
       ...(reasoning !== "none" ? ["-c", `model_reasoning_summary=${reasoning}`] : []),
       "-C",
       spec.worktreePath,
