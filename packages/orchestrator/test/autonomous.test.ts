@@ -76,9 +76,20 @@ test("buildAutonomousPrompt lists the agent, the tools, and the parallel budget"
     maxParallel: 3,
   });
   assert.ok(p.includes("software-engineer"));
-  for (const tool of ["get_context", "run_agent", "run_verify", "merge_worktree", "open_pr", "finish"]) {
+  for (const tool of [
+    "get_context",
+    "attempt_journal.read",
+    "attempt_journal.write",
+    "run_agent",
+    "run_verify",
+    "merge_worktree",
+    "open_pr",
+    "finish",
+  ]) {
     assert.ok(p.includes(tool), `prompt mentions ${tool}`);
   }
+  assert.ok(/before reassigning or restarting work/i.test(p));
+  assert.ok(/Before open_pr, close_ticket, needs_human, or finish/i.test(p));
   assert.ok(p.includes("up to 3 agents in parallel"));
   assert.ok(p.includes("budget of 12"));
   // Neutral wording: nothing that trips codex's moderation filter.
