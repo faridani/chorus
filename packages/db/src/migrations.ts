@@ -253,6 +253,12 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE tickets ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
   `,
+
+  // 0012 — preserve backend usage totals even when input/output splits are
+  // unavailable. Legacy rows derive totals from their split counts at read time.
+  `
+  ALTER TABLE usage_events ADD COLUMN total_tokens INTEGER;
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {

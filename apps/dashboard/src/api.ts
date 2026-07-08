@@ -232,8 +232,32 @@ export interface AppState {
   runningTasks: string[];
   addressingPrTicketIds: string[];
   quota: { state: string; resumeAt: number | null };
-  usageTotals: { inputTokens: number; outputTokens: number };
+  usageTotals: UsageTotals;
   version?: VersionInfo;
+}
+
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface UsageEvent {
+  id: string;
+  runId: string | null;
+  projectId: string | null;
+  kind: "tokens" | "quota_exhausted" | "quota_reset";
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  detail: string | null;
+  observedAt: number;
+}
+
+export interface UsageResponse {
+  totals: UsageTotals;
+  recent: UsageEvent[];
+  quota: { state: string; resumeAt: number | null };
 }
 
 export interface GlobalSettings {
@@ -252,6 +276,7 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   state: () => fetch("/api/state").then((r) => json<AppState>(r)),
+  usage: () => fetch("/api/usage").then((r) => json<UsageResponse>(r)),
   settings: () => fetch("/api/settings").then((r) => json<GlobalSettings>(r)),
   backends: () => fetch("/api/backends").then((r) => json<BackendInfo[]>(r)),
   refreshBackends: () =>

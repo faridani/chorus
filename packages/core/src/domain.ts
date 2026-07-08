@@ -271,6 +271,7 @@ export interface UsageEvent {
   kind: "tokens" | "quota_exhausted" | "quota_reset";
   inputTokens: number | null;
   outputTokens: number | null;
+  totalTokens: number | null;
   detail: string | null;
   observedAt: number;
 }
