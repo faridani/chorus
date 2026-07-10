@@ -5,6 +5,8 @@ export interface CreateProjectInput {
   repoUrl: string;
   /** Optional spec text to write if the repo has none. */
   specText?: string;
+  /** Optional base branch; auto-detected from the repo when omitted. */
+  baseBranch?: string;
 }
 
 export interface CreateTicketInput {
@@ -12,6 +14,21 @@ export interface CreateTicketInput {
   body: string;
   roleName?: string;
   priority?: number;
+}
+
+export interface UpdateTicketInput {
+  title?: string;
+  body?: string;
+  roleName?: string;
+  priority?: number;
+  /** Set status back to "open" so the orchestrator re-dispatches it. */
+  reopen?: boolean;
+}
+
+export interface ProjectSettingsInput {
+  baseBranch?: string;
+  expectations?: string;
+  groundRules?: string[];
 }
 
 export type UpsertRoleInput = Omit<Role, "id" | "projectId">;
@@ -25,8 +42,15 @@ export interface ControlApi {
   createProject(input: CreateProjectInput): Promise<Project>;
   /** Provide/refresh a spec for a project that had none, then (re)ingest. */
   provideSpec(projectId: string, specText: string): Promise<void>;
+  /** Update base branch / expectations / ground rules (applies going forward). */
+  updateProjectSettings(projectId: string, patch: ProjectSettingsInput): Promise<Project>;
+
   addTicket(projectId: string, input: CreateTicketInput): Promise<Ticket>;
+  updateTicket(projectId: string, ticketId: string, patch: UpdateTicketInput): Promise<Ticket>;
+  deleteTicket(projectId: string, ticketId: string): Promise<void>;
+
   upsertRole(projectId: string, input: UpsertRoleInput): Promise<Role>;
+  deleteRole(projectId: string, name: string): Promise<void>;
 
   startOrchestrator(): void;
   pauseOrchestrator(): void;
