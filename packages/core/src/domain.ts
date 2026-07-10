@@ -18,6 +18,10 @@ export interface Project {
   baseBranch: string;
   /** Path to the spec within the repo, if found (e.g. docs/SPEC.md). */
   specPath: string | null;
+  /** High-level expectations / vision for the project (injected into prompts). */
+  expectations: string;
+  /** Project-wide ground rules every agent must follow (injected into prompts). */
+  groundRules: string[];
   status: "initializing" | "needs_spec" | "ready" | "error";
   createdAt: number;
 }
