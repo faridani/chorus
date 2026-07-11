@@ -23,6 +23,8 @@ test("reconcile: interrupted running task with no worktree → ticket reopened, 
     integrationBranch: "chorus/integration",
     baseBranch: "main",
     specPath: null,
+    expectations: "",
+    groundRules: [],
     status: "ready",
     createdAt: Date.now(),
   });
