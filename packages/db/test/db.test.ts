@@ -28,6 +28,8 @@ test("project + ticket + task round-trip", () => {
     integrationBranch: "chorus/integration",
     baseBranch: "main",
     specPath: "docs/SPEC.md",
+    expectations: "",
+    groundRules: [],
     status: "ready",
     createdAt: Date.now(),
   });
@@ -71,6 +73,96 @@ test("project + ticket + task round-trip", () => {
   db.updateTask(taskId, { state: "merged" });
   assert.equal(db.listTasksByState("running").length, 0);
 
+  db.close();
+});
+
+test("migration 0002: project round-trips expectations + ground rules", () => {
+  const db = freshDb();
+  const id = newId("proj");
+  db.insertProject({
+    id,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    integrationBranch: "chorus/integration",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "Build a great thing",
+    groundRules: ["rule one", "rule two"],
+    status: "ready",
+    createdAt: Date.now(),
+  });
+  const got = db.getProject(id)!;
+  assert.equal(got.expectations, "Build a great thing");
+  assert.deepEqual(got.groundRules, ["rule one", "rule two"]);
+
+  db.updateProject(id, { expectations: "new vision", groundRules: ["only one"], baseBranch: "develop" });
+  const upd = db.getProject(id)!;
+  assert.equal(upd.expectations, "new vision");
+  assert.deepEqual(upd.groundRules, ["only one"]);
+  assert.equal(upd.baseBranch, "develop");
+  db.close();
+});
+
+test("ticket delete + role update/delete", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    integrationBranch: "chorus/integration",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    status: "ready",
+    createdAt: Date.now(),
+  });
+
+  const ticketId = newId("tkt");
+  db.insertTicket({
+    id: ticketId,
+    projectId,
+    title: "x",
+    body: "y",
+    status: "open",
+    roleName: null,
+    priority: 0,
+    source: "manual",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  assert.ok(db.getTicket(ticketId));
+  db.deleteTicket(ticketId);
+  assert.equal(db.getTicket(ticketId), undefined);
+
+  const roleId = newId("role");
+  db.insertRole({
+    id: roleId,
+    projectId,
+    name: "qa",
+    description: "tester",
+    allowed: ["run tests"],
+    forbidden: [],
+    backendId: "codex",
+  });
+  db.updateRole({
+    id: roleId,
+    projectId,
+    name: "qa",
+    description: "updated",
+    allowed: ["run tests", "file bugs"],
+    forbidden: ["edit prod"],
+    backendId: "codex",
+    model: "gpt-x",
+  });
+  const r = db.getRole(projectId, "qa")!;
+  assert.equal(r.description, "updated");
+  assert.deepEqual(r.allowed, ["run tests", "file bugs"]);
+  assert.equal(r.model, "gpt-x");
+
+  db.deleteRole(projectId, "qa");
+  assert.equal(db.getRole(projectId, "qa"), undefined);
   db.close();
 });
 
