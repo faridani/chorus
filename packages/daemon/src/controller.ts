@@ -9,8 +9,10 @@ import {
   type CreateTicketInput,
   newId,
   type Project,
+  type ProjectSettingsInput,
   type Role,
   type Ticket,
+  type UpdateTicketInput,
   type UpsertRoleInput,
 } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
@@ -28,6 +30,12 @@ export interface ControllerDeps {
   bus: ChorusBus;
   config: Config;
 }
+
+const DEFAULT_GROUND_RULES = [
+  "Follow the project specification and the high-level expectations above.",
+  "Write clear commit messages describing what changed and why.",
+  "Prefer small, focused changes that keep the integration branch releasable.",
+];
 
 const DEFAULT_ROLES: UpsertRoleInput[] = [
   {
@@ -55,22 +63,24 @@ export class AppController implements ControlApi {
       repoUrl: input.repoUrl,
       localPath,
       integrationBranch: this.deps.config.integrationBranch,
-      baseBranch: "main",
+      baseBranch: input.baseBranch?.trim() || "main",
       specPath: null,
+      expectations: "",
+      groundRules: DEFAULT_GROUND_RULES,
       status: "initializing",
       createdAt: Date.now(),
     };
     this.deps.db.insertProject(project);
     this.emitProject(id);
     // Initialize in the background so the UI returns immediately.
-    void this.initProject(project, input.specText);
+    void this.initProject(project, input.specText, input.baseBranch?.trim() || undefined);
     return project;
   }
 
-  private async initProject(project: Project, specText?: string): Promise<void> {
+  private async initProject(project: Project, specText?: string, baseOverride?: string): Promise<void> {
     try {
       await this.deps.git.clone(project.repoUrl, project.localPath);
-      const baseBranch = await this.deps.git.detectDefaultBranch(project.localPath);
+      const baseBranch = baseOverride ?? (await this.deps.git.detectDefaultBranch(project.localPath));
       await this.deps.git.ensureIntegrationBranch(
         project.localPath,
         baseBranch,
@@ -140,6 +150,18 @@ export class AppController implements ControlApi {
     }
   }
 
+  updateProjectSettings(projectId: string, patch: ProjectSettingsInput): Promise<Project> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project) throw new Error("project not found");
+    this.deps.db.updateProject(projectId, {
+      ...(patch.baseBranch !== undefined ? { baseBranch: patch.baseBranch.trim() || "main" } : {}),
+      ...(patch.expectations !== undefined ? { expectations: patch.expectations } : {}),
+      ...(patch.groundRules !== undefined ? { groundRules: patch.groundRules } : {}),
+    });
+    this.emitProject(projectId);
+    return Promise.resolve(this.deps.db.getProject(projectId)!);
+  }
+
   addTicket(projectId: string, input: CreateTicketInput): Promise<Ticket> {
     const now = Date.now();
     const ticket: Ticket = {
@@ -160,13 +182,59 @@ export class AppController implements ControlApi {
     return Promise.resolve(ticket);
   }
 
+  updateTicket(projectId: string, ticketId: string, patch: UpdateTicketInput): Promise<Ticket> {
+    const ticket = this.deps.db.getTicket(ticketId);
+    if (!ticket || ticket.projectId !== projectId) throw new Error("ticket not found");
+    this.assertTicketIdle(ticketId, "modify");
+    this.deps.db.updateTicket(ticketId, {
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.body !== undefined ? { body: patch.body } : {}),
+      ...(patch.roleName !== undefined ? { roleName: patch.roleName } : {}),
+      ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+      ...(patch.reopen ? { status: "open" as const } : {}),
+    });
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
+    if (patch.reopen) void this.deps.orchestrator.tick();
+    return Promise.resolve(this.deps.db.getTicket(ticketId)!);
+  }
+
+  deleteTicket(projectId: string, ticketId: string): Promise<void> {
+    const ticket = this.deps.db.getTicket(ticketId);
+    if (!ticket || ticket.projectId !== projectId) throw new Error("ticket not found");
+    this.assertTicketIdle(ticketId, "delete");
+    this.deps.db.deleteTicket(ticketId);
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
+    return Promise.resolve();
+  }
+
+  /** Reject mutations to a ticket whose agent is actively running. */
+  private assertTicketIdle(ticketId: string, action: string): void {
+    const running = new Set(this.deps.orchestrator.runningTaskIds());
+    const active = this.deps.db.listTasksForTicket(ticketId).some((t) => running.has(t.id));
+    if (active) {
+      throw Object.assign(new Error(`Cannot ${action} a ticket while its agent is running.`), {
+        statusCode: 409,
+      });
+    }
+  }
+
   upsertRole(projectId: string, input: UpsertRoleInput): Promise<Role> {
     const existing = this.deps.db.getRole(projectId, input.name);
     if (existing) {
-      // Roles are immutable-by-id in M1; replace by re-seeding is out of scope.
-      return Promise.resolve(existing);
+      const updated: Role = { ...existing, ...input };
+      this.deps.db.updateRole(updated);
+      this.emitProject(projectId);
+      return Promise.resolve(updated);
     }
-    return Promise.resolve(this.seedRole(projectId, input));
+    const role = this.seedRole(projectId, input);
+    this.emitProject(projectId);
+    return Promise.resolve(role);
+  }
+
+  deleteRole(projectId: string, name: string): Promise<void> {
+    this.deps.db.deleteRole(projectId, name);
+    this.emitProject(projectId);
+    return Promise.resolve();
   }
 
   private seedRole(projectId: string, input: UpsertRoleInput): Role {
