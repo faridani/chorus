@@ -119,6 +119,12 @@ export const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+
+  // 0002 — project-level expectations + ground rules
+  `
+  ALTER TABLE projects ADD COLUMN expectations TEXT NOT NULL DEFAULT '';
+  ALTER TABLE projects ADD COLUMN ground_rules TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {
