@@ -7,8 +7,8 @@
 *.dylib
 /bin/
 /dist/
-chorus
-chorusd
+/chorus
+/chorusd
 # Test binary / coverage
 *.test
 *.out
@@ -30,6 +30,12 @@ yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
 
+# ---- Python (persistence foundation) ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.test-tmp/
+
 # ---- Env & secrets ----
 .env
 .env.*
@@ -39,6 +45,8 @@ pnpm-debug.log*
 # ---- Chorus runtime data (don't commit local state) ----
 # Local DB / ticket store / changelog working copies
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 /data/
