@@ -6,11 +6,20 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 
+export interface VersionInfo {
+  number: string;
+  commit: string;
+  dirty: boolean;
+  /** When this daemon process started (ms). */
+  startedAt: number;
+}
+
 export interface WebDeps {
   db: ChorusDb;
   bus: ChorusBus;
   api: ControlApi;
   config: Config;
+  version: VersionInfo;
   /** Directory of the built dashboard SPA, if available. */
   dashboardDir?: string;
 }
@@ -39,12 +48,14 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   // ---- read endpoints (straight from the DB) ----
+  app.get("/api/version", () => deps.version);
+
   app.get("/api/state", () => ({
     orchestrator: api.orchestratorState(),
     runningTasks: api.runningTaskIds(),
     quota: db.getQuota(),
     usageTotals: db.usageTotals(),
-    backends: undefined,
+    version: deps.version,
     at: Date.now(),
   }));
 
