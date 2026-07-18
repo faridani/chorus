@@ -16,6 +16,8 @@ export const ConfigSchema = z.object({
   integrationBranch: z.string().default("chorus/integration"),
   /** Max number of agents running at once. */
   maxConcurrentAgents: z.number().int().positive().default(2),
+  /** Max dispatch attempts per ticket before it is parked for human review. */
+  maxAttemptsPerTicket: z.number().int().positive().default(5),
   agent: z
     .object({
       maxWallClockMs: z.number().int().positive().default(45 * 60 * 1000),
