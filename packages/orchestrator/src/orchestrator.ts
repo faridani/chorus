@@ -51,8 +51,12 @@ export class Orchestrator {
 
   start(): void {
     this.setState("running");
-    if (!this.timer) this.timer = setInterval(() => void this.tick(), 4000);
-    void this.tick();
+    if (!this.timer) {
+      this.timer = setInterval(() => {
+        this.tick().catch((e) => console.error("[chorus] tick error:", e));
+      }, 4000);
+    }
+    this.tick().catch((e) => console.error("[chorus] tick error:", e));
   }
 
   pause(): void {
@@ -87,8 +91,8 @@ export class Orchestrator {
       // Resume quota-paused tasks whose retry time has arrived.
       for (const task of this.deps.db.listTasksByState("paused-quota")) {
         if (this.atCapacity()) break;
-        if (task.resumeAt && task.resumeAt <= Date.now()) {
-          void this.runTask(task, true);
+        if (task.resumeAt && task.resumeAt <= Date.now() && !this.running.has(task.id)) {
+          void this.runTask(task, true).catch((e) => console.error("[chorus] runTask error:", e));
         }
       }
 
@@ -137,6 +141,13 @@ export class Orchestrator {
     }
 
     const attempt = this.deps.db.listTasksForTicket(ticket.id).length + 1;
+    if (attempt > this.deps.config.maxAttemptsPerTicket) {
+      this.failTicket(
+        ticket,
+        `Exceeded max attempts (${this.deps.config.maxAttemptsPerTicket}).`,
+      );
+      return;
+    }
     const branch = `chorus/ticket-${ticket.id}-a${attempt}`;
     const worktreePath = join(
       this.deps.config.dataDir,
@@ -174,7 +185,7 @@ export class Orchestrator {
     this.emitTask(task);
     this.deps.bus.emit({ type: "ticket_changed", projectId: project.id, ticketId: ticket.id, at: now });
 
-    void this.runTask(task, false);
+    void this.runTask(task, false).catch((e) => console.error("[chorus] runTask error:", e));
   }
 
   // ---- run a task (initial or resume) ----
@@ -183,6 +194,10 @@ export class Orchestrator {
     const ticket = this.deps.db.getTicket(task.ticketId);
     if (!project || !ticket) return;
 
+    // Guard against double-dispatch (e.g. a quota-resume racing the next tick):
+    // reserve the slot and flip state synchronously, before any await.
+    if (this.running.has(task.id)) return;
+    this.running.set(task.id, { stop: async () => {} });
     this.deps.db.updateTask(task.id, { state: "running", resumeAt: null });
     this.emitTaskState(task, "running");
 
@@ -241,8 +256,8 @@ export class Orchestrator {
       this.deps.db.updateRun(runId, { endedAt: Date.now(), terminalReason: "failed" });
       this.setTaskState(task, "failed");
       this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
-      void this.notify("error", project, "Agent run errored", `${ticket.title}: ${String(err)}`);
-      void this.tick();
+      void this.notify("error", project, "Agent run errored", `${ticket.title}: ${String(err)}`).catch(() => {});
+      void this.tick().catch((e) => console.error("[chorus] tick error:", e));
       return;
     }
 
@@ -257,8 +272,21 @@ export class Orchestrator {
     });
     this.recordUsage(runId, project, result);
 
-    await this.handleResult(project, ticket, task, runId, result);
-    void this.tick();
+    // Done-detection + merge can touch git/db; never let a failure here escape
+    // as an unhandled rejection and crash the daemon.
+    try {
+      await this.handleResult(project, ticket, task, runId, result);
+    } catch (err) {
+      this.setTaskState(task, "failed");
+      this.deps.db.updateTicket(ticket.id, { status: "needs_review" });
+      void this.notify(
+        "error",
+        project,
+        "Post-run handling failed",
+        `${ticket.title}: ${String(err)}`,
+      ).catch(() => {});
+    }
+    void this.tick().catch((e) => console.error("[chorus] tick error:", e));
   }
 
   // ---- done-detection & merge ----
@@ -422,10 +450,12 @@ export class Orchestrator {
     runId: string,
   ): Promise<void> {
     const quota = this.deps.db.getQuota();
-    const pauses = quota.consecutivePauses + 1;
-    const backend = this.deps.backends.get(task.backendId);
-    void backend;
-    const resumeAt = this.nextRetryAt(pauses);
+    // If a sibling agent already flagged exhaustion in this window, join its
+    // backoff instead of re-incrementing the counter (concurrent agents would
+    // otherwise each bump it and clobber each other's resumeAt).
+    const alreadyExhausted = quota.state === "exhausted" && quota.resumeAt != null;
+    const pauses = alreadyExhausted ? quota.consecutivePauses : quota.consecutivePauses + 1;
+    const resumeAt = alreadyExhausted ? quota.resumeAt! : this.nextRetryAt(pauses);
     this.deps.db.setQuota({
       state: "exhausted",
       resumeAt,
