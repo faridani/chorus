@@ -80,6 +80,10 @@ export function run(
       resolve(result);
     });
 
+    // A short-lived child may close stdin before we finish writing; without an
+    // error listener the resulting EPIPE becomes an unhandled 'error' and
+    // crashes the process.
+    child.stdin.on("error", () => {});
     if (opts.input !== undefined) {
       child.stdin.write(opts.input);
     }
