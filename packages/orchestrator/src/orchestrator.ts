@@ -437,6 +437,7 @@ export class Orchestrator {
         "CHANGELOG.md",
         content,
         "chorus: update changelog",
+        project.integrationBranch,
       );
     } catch {
       /* changelog commit failure is non-fatal */
