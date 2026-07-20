@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type AppState, api, type Project, type ProjectDetail, useEvents } from "./api.js";
+import { EventFeed, type FeedEntry } from "./components/EventFeed.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 
 export function App() {
@@ -7,7 +8,8 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
-  const [log, setLog] = useState<string[]>([]);
+  const [feed, setFeed] = useState<FeedEntry[]>([]);
+  const seq = useRef(0);
 
   const refreshTop = useCallback(async () => {
     setState(await api.state().catch(() => null));
@@ -27,8 +29,8 @@ export function App() {
   }, [selected, refreshDetail]);
 
   useEvents((e) => {
-    if (e?.type) {
-      setLog((l) => [`${new Date(e.at ?? Date.now()).toLocaleTimeString()}  ${describe(e)}`, ...l].slice(0, 200));
+    if (e?.type && e.type !== "usage") {
+      setFeed((f) => [{ seq: seq.current++, e }, ...f].slice(0, 300));
     }
     void refreshTop();
     if (selected) void refreshDetail(selected);
@@ -92,11 +94,7 @@ export function App() {
 
         <aside className="events">
           <h3>Live events</h3>
-          <ul>
-            {log.map((l, i) => (
-              <li key={i}>{l}</li>
-            ))}
-          </ul>
+          <EventFeed entries={feed} />
         </aside>
       </div>
     </div>
@@ -136,29 +134,6 @@ function NewProject({ onCreated }: { onCreated: (p: Project) => void }) {
       </button>
     </div>
   );
-}
-
-function describe(e: any): string {
-  switch (e.type) {
-    case "task_changed":
-      return `task ${e.taskId.slice(0, 12)} → ${e.state}`;
-    case "merge":
-      return `merge ${e.mergeId.slice(0, 12)}`;
-    case "notification":
-      return `🔔 ${e.title}: ${e.body?.split("\n")[0] ?? ""}`;
-    case "agent_event":
-      return `agent ${e.taskId.slice(0, 8)}: ${e.event?.message ?? e.event?.kind}`;
-    case "quota":
-      return `quota → ${e.state}`;
-    case "orchestrator_state":
-      return `orchestrator → ${e.state}`;
-    case "ticket_changed":
-      return `ticket ${e.ticketId.slice(0, 12)} changed`;
-    case "project_changed":
-      return `project ${e.projectId.slice(0, 12)} changed`;
-    default:
-      return e.type;
-  }
 }
 
 function shortRepo(url: string): string {
