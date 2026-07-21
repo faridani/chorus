@@ -241,10 +241,18 @@ export class Orchestrator {
     this.deps.db.updateRun(runId, { pid: handle.pid ?? null, pgid: handle.pgid ?? null });
     this.running.set(task.id, { stop: () => handle.stop("killed") });
 
-    // Drain events for the live dashboard feed.
+    // Drain events for the live dashboard feed, tagged with who/what.
     const drain = (async () => {
       for await (const ev of handle.events) {
-        this.deps.bus.emit({ type: "agent_event", taskId: task.id, event: ev, at: Date.now() });
+        this.deps.bus.emit({
+          type: "agent_event",
+          taskId: task.id,
+          role: ticket.roleName,
+          ticketId: ticket.id,
+          ticketTitle: ticket.title,
+          event: ev,
+          at: Date.now(),
+        });
       }
     })();
 
