@@ -32,6 +32,7 @@ async function main(): Promise<void> {
         backoffMaxMs: config.quota.backoffMaxMs,
       }),
       defaultModel: config.agent.model,
+      reasoningSummary: config.agent.reasoningSummary,
     }),
   );
 
