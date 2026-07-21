@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { type AppState, api, type Project, type ProjectDetail, useEvents } from "./api.js";
+import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type AppState, api, type BackendInfo, type Project, type ProjectDetail, useEvents } from "./api.js";
+import { AgentGallery } from "./components/AgentGallery.js";
 import { EventFeed, type FeedEntry } from "./components/EventFeed.js";
+import { ModelsPanel } from "./components/ModelsPanel.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 
 export function App() {
@@ -9,7 +11,26 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [feed, setFeed] = useState<FeedEntry[]>([]);
+  const [showNew, setShowNew] = useState(false);
+  const [leftTab, setLeftTab] = useState<"projects" | "gallery">("projects");
+  const [backends, setBackends] = useState<BackendInfo[]>([]);
+  const [refreshingBackends, setRefreshingBackends] = useState(false);
   const seq = useRef(0);
+
+  useEffect(() => {
+    void api.backends().then(setBackends).catch(() => setBackends([]));
+  }, []);
+
+  const refreshBackends = useCallback(async () => {
+    setRefreshingBackends(true);
+    try {
+      setBackends(await api.refreshBackends());
+    } catch (err) {
+      alert(String(err));
+    } finally {
+      setRefreshingBackends(false);
+    }
+  }, []);
 
   const refreshTop = useCallback(async () => {
     setState(await api.state().catch(() => null));
@@ -50,12 +71,12 @@ export function App() {
           </span>
         )}
         <div className="controls">
-          <span className={`pill state-${state?.orchestrator}`}>
+          <span
+            className={`pill state-${state?.orchestrator}`}
+            title="Daemon dispatch loop status. Per-project start/pause/stop controls live next to each project in the left pane."
+          >
             orchestrator: {state?.orchestrator ?? "…"}
           </span>
-          <button onClick={() => api.orchestrator("start").then(refreshTop)}>Start</button>
-          <button onClick={() => api.orchestrator("pause").then(refreshTop)}>Pause</button>
-          <button onClick={() => api.orchestrator("stop").then(refreshTop)}>Stop</button>
         </div>
         <div className="metrics">
           <span className={`pill quota-${state?.quota.state}`}>quota: {state?.quota.state ?? "?"}</span>
@@ -68,22 +89,50 @@ export function App() {
 
       <div className="body">
         <aside className="sidebar">
-          <NewProject onCreated={(p) => { void refreshTop(); setSelected(p.id); }} />
-          <h3>Projects</h3>
-          <ul className="projlist">
-            {projects.map((p) => (
-              <li key={p.id} className={selected === p.id ? "active" : ""} onClick={() => setSelected(p.id)}>
-                <div className="repo">{shortRepo(p.repoUrl)}</div>
-                <div className={`tag status-${p.status}`}>{p.status}</div>
-              </li>
-            ))}
-          </ul>
+          <nav className="tabs">
+            <button
+              className={`tabbtn ${leftTab === "projects" ? "active" : ""}`}
+              onClick={() => setLeftTab("projects")}
+              title="Your projects — each is one GitHub repo Chorus works on. Create a project, then start/pause/stop it and manage its tickets, agents, and settings."
+            >
+              Projects
+            </button>
+            <button
+              className={`tabbtn ${leftTab === "gallery" ? "active" : ""}`}
+              onClick={() => setLeftTab("gallery")}
+              title="Reusable agent definitions usable across all projects."
+            >
+              Agent Gallery
+            </button>
+          </nav>
+
+          {leftTab === "projects" ? (
+            <>
+              <button className="primary newproj-btn" onClick={() => setShowNew(true)}>
+                + New project
+              </button>
+              <ul className="projlist">
+                {projects.map((p) => (
+                  <li key={p.id} className={selected === p.id ? "active" : ""} onClick={() => setSelected(p.id)}>
+                    <div className="repo">{shortRepo(p.repoUrl)}</div>
+                    <div className="projrow">
+                      <span className={`tag status-${p.status}`}>{p.status}</span>
+                      <RunStateControls project={p} onChanged={refreshTop} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <AgentGallery backends={backends} projects={projects} />
+          )}
         </aside>
 
         <main className="main">
           {detail ? (
             <ProjectPanel
               detail={detail}
+              backends={backends}
               runningTaskIds={state?.runningTasks ?? []}
               onChange={() => selected && refreshDetail(selected)}
             />
@@ -93,46 +142,155 @@ export function App() {
         </main>
 
         <aside className="events">
-          <h3>Live events</h3>
-          <EventFeed entries={feed} />
+          <section className="models-pane">
+            <h3>
+              Models
+              <button
+                className={`runbtn refresh ${refreshingBackends ? "spinning" : ""}`}
+                onClick={refreshBackends}
+                disabled={refreshingBackends}
+                title="Refresh — re-scan the host for backend CLIs (codex, claude, gemini) and their models. Use this after installing a new CLI."
+              >
+                ↻
+              </button>
+            </h3>
+            <ModelsPanel backends={backends} />
+          </section>
+          <section className="feed-pane">
+            <h3>
+              Live events
+              {selected ? (
+                <span className="muted"> — {shortRepo(projects.find((p) => p.id === selected)?.repoUrl ?? "")}</span>
+              ) : (
+                <span className="muted"> — all projects</span>
+              )}
+            </h3>
+            <EventFeed
+              entries={
+                selected
+                  ? feed.filter(({ e }) => !e.projectId || e.projectId === selected)
+                  : feed
+              }
+            />
+          </section>
         </aside>
+      </div>
+
+      {showNew && (
+        <NewProject
+          onClose={() => setShowNew(false)}
+          onCreated={(p) => {
+            setShowNew(false);
+            void refreshTop();
+            setSelected(p.id);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewProject({
+  onCreated,
+  onClose,
+}: {
+  onCreated: (p: Project) => void;
+  onClose: () => void;
+}) {
+  const [repoUrl, setRepoUrl] = useState("");
+  const [baseBranch, setBaseBranch] = useState("main");
+  const [specText, setSpecText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const p = await api.createProject(repoUrl, specText || undefined, baseBranch.trim() || undefined);
+      onCreated(p);
+    } catch (err) {
+      alert(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>New project</h3>
+
+        <label>GitHub repo URL or owner/repo</label>
+        <input
+          autoFocus
+          placeholder="https://github.com/owner/repo  or  owner/repo"
+          value={repoUrl}
+          onChange={(e) => setRepoUrl(e.target.value)}
+        />
+
+        <label>Main branch</label>
+        <input
+          placeholder="main"
+          value={baseBranch}
+          onChange={(e) => setBaseBranch(e.target.value)}
+          title="The repo's base/main branch (default: main). Chorus cuts its integration branch from here and only merges back to it after your explicit approval; it is never modified autonomously."
+        />
+
+        <label>Spec text (optional — only if the repo has no docs/SPEC.md)</label>
+        <textarea
+          rows={6}
+          placeholder="Paste a project specification here if the repo doesn't already contain one."
+          value={specText}
+          onChange={(e) => setSpecText(e.target.value)}
+        />
+
+        <div className="modal-actions">
+          <button onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="primary" disabled={busy || !repoUrl.trim()} onClick={create}>
+            {busy ? "Creating…" : "Create"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function NewProject({ onCreated }: { onCreated: (p: Project) => void }) {
-  const [repoUrl, setRepoUrl] = useState("");
-  const [baseBranch, setBaseBranch] = useState("main");
-  const [specText, setSpecText] = useState("");
-  const [busy, setBusy] = useState(false);
+function RunStateControls({ project, onChanged }: { project: Project; onChanged: () => void }) {
+  const set = async (e: MouseEvent, state: "running" | "paused" | "stopped") => {
+    e.stopPropagation(); // don't trigger project selection
+    try {
+      await api.setProjectRunState(project.id, state);
+      onChanged();
+    } catch (err) {
+      alert(String(err));
+    }
+  };
+  const cur = project.runState;
   return (
-    <div className="newproj">
-      <h3>New project</h3>
-      <input placeholder="github repo URL or owner/repo" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} />
-      <input placeholder="base branch (default: main)" value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} />
-      <textarea placeholder="(optional) spec text if repo has none" value={specText} onChange={(e) => setSpecText(e.target.value)} />
+    <span className="runctl">
       <button
-        className="primary"
-        disabled={busy || !repoUrl}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            const p = await api.createProject(repoUrl, specText || undefined, baseBranch.trim() || undefined);
-            setRepoUrl("");
-            setSpecText("");
-            setBaseBranch("main");
-            onCreated(p);
-          } catch (err) {
-            alert(String(err));
-          } finally {
-            setBusy(false);
-          }
-        }}
+        className={`runbtn ${cur === "running" ? "on run" : ""}`}
+        onClick={(e) => set(e, "running")}
+        title="Start — assign this project's tickets to agents and resume work."
       >
-        {busy ? "Creating…" : "Create"}
+        ▶
       </button>
-    </div>
+      <button
+        className={`runbtn ${cur === "paused" ? "on pause" : ""}`}
+        onClick={(e) => set(e, "paused")}
+        title="Pause — stop assigning NEW tickets, but let agents already working finish their current ticket. No work is lost; resume by pressing Start."
+      >
+        ⏸
+      </button>
+      <button
+        className={`runbtn ${cur === "stopped" ? "on stop" : ""}`}
+        onClick={(e) => set(e, "stopped")}
+        title="Stop — stop assigning new tickets AND immediately halt any agents currently working on this project (their in-progress, uncommitted work is discarded and the ticket is requeued). Use Pause instead if you only want to hold new work."
+      >
+        ⏹
+      </button>
+    </span>
   );
 }
 
