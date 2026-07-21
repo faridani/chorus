@@ -62,10 +62,13 @@ async function main() {
   const drain = (async () => {
     for await (const ev of handle.events) {
       eventCount++;
-      if (ev.kind === "progress" || ev.kind === "tool_use") {
-        const msg = ev.kind === "progress" ? ev.message : ev.tool;
-        process.stdout.write(`  · ${ev.kind}: ${String(msg).slice(0, 80)}\n`);
-      }
+      let detail = "";
+      if (ev.kind === "reasoning") detail = ev.text;
+      else if (ev.kind === "message") detail = ev.text;
+      else if (ev.kind === "command") detail = ev.command;
+      else if (ev.kind === "file_change") detail = ev.files.join(", ");
+      else if (ev.kind === "plan") detail = `${ev.items.length} items`;
+      if (detail) process.stdout.write(`  · ${ev.kind}: ${detail.slice(0, 80)}\n`);
     }
   })();
 
