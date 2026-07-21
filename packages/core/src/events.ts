@@ -22,6 +22,10 @@ export type ChorusEvent =
   | {
       type: "agent_event";
       taskId: string;
+      /** Role/agent name working the ticket (null if unassigned). */
+      role: string | null;
+      ticketId: string;
+      ticketTitle: string;
       event: AgentEvent;
       at: number;
     }
