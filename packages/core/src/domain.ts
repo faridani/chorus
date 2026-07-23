@@ -23,6 +23,32 @@ export interface Project {
   /** Project-wide ground rules every agent must follow (injected into prompts). */
   groundRules: string[];
   status: "initializing" | "needs_spec" | "ready" | "error";
+  /** Per-project dispatch control (independent of other projects). */
+  runState: ProjectRunState;
+  createdAt: number;
+}
+
+/**
+ * Whether the orchestrator dispatches work for a project:
+ * - `running`  — assign tickets to agents normally.
+ * - `paused`   — stop assigning NEW tickets; agents already working finish.
+ * - `stopped`  — stop assigning AND stop any agents currently working.
+ */
+export type ProjectRunState = "running" | "paused" | "stopped";
+
+/**
+ * A reusable, project-independent agent definition kept in the "Agent Gallery".
+ * Same shape as a Role but global — it can be applied to any project (which
+ * creates a project Role from it). E.g. a "PR review evaluator" agent.
+ */
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  description: string;
+  allowed: string[];
+  forbidden: string[];
+  backendId: string;
+  model?: string;
   createdAt: number;
 }
 
