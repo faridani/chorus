@@ -10,6 +10,7 @@ import { GitService } from "@chorus/git-service";
 import { CompositeNotifier, IMessageNotifier, NullNotifier } from "@chorus/notifier";
 import { Orchestrator, Reconciler } from "@chorus/orchestrator";
 import { createServer } from "@chorus/web";
+import { detectBackends } from "./backend-detect.js";
 import { loadConfig } from "./config.js";
 import { AppController } from "./controller.js";
 
@@ -45,7 +46,24 @@ async function main(): Promise<void> {
   // Boot reconciliation BEFORE accepting work or starting the loop.
   await new Reconciler(db, git).reconcile();
 
-  const controller = new AppController({ db, git, backends, orchestrator, notifier, bus, config });
+  // Probe the host for available backend CLIs + their models.
+  const detectedBackends = await detectBackends();
+  console.log(
+    `[chorus] backends: ${detectedBackends
+      .map((b) => `${b.id}${b.available ? `(${b.version ?? "ok"})` : "(absent)"}`)
+      .join(", ")}`,
+  );
+
+  const controller = new AppController({
+    db,
+    git,
+    backends,
+    orchestrator,
+    notifier,
+    bus,
+    config,
+    detectedBackends,
+  });
 
   // Web + dashboard.
   const version = resolveVersion();
