@@ -1,4 +1,5 @@
-import type { Project, Role, Ticket } from "./domain.js";
+import type { BackendInfo } from "./backend-info.js";
+import type { AgentTemplate, Project, ProjectRunState, Role, Ticket } from "./domain.js";
 import type { OrchestratorState } from "./state.js";
 
 export interface CreateProjectInput {
@@ -33,6 +34,8 @@ export interface ProjectSettingsInput {
 
 export type UpsertRoleInput = Omit<Role, "id" | "projectId">;
 
+export type UpsertAgentTemplateInput = Omit<AgentTemplate, "id" | "createdAt">;
+
 /**
  * Commands the web layer issues to the daemon. The daemon implements this;
  * the web layer reads state directly from the DB and calls these for any
@@ -44,6 +47,8 @@ export interface ControlApi {
   provideSpec(projectId: string, specText: string): Promise<void>;
   /** Update base branch / expectations / ground rules (applies going forward). */
   updateProjectSettings(projectId: string, patch: ProjectSettingsInput): Promise<Project>;
+  /** Start / pause / stop dispatch for a single project independently. */
+  setProjectRunState(projectId: string, state: ProjectRunState): Promise<Project>;
 
   addTicket(projectId: string, input: CreateTicketInput): Promise<Ticket>;
   updateTicket(projectId: string, ticketId: string, patch: UpdateTicketInput): Promise<Ticket>;
@@ -60,4 +65,13 @@ export interface ControlApi {
 
   /** Human approval gate: merge the integration branch into main. */
   approveToMain(projectId: string): Promise<{ ok: boolean; message: string }>;
+
+  /** Global "Agent Gallery" templates, reusable across projects. */
+  upsertAgentTemplate(input: UpsertAgentTemplateInput): Promise<AgentTemplate>;
+  deleteAgentTemplate(name: string): Promise<void>;
+
+  /** Backends/models detected on the host (for the Models panel + dropdowns). */
+  listBackends(): BackendInfo[];
+  /** Re-probe the host for backend CLIs/models (e.g. after installing one). */
+  refreshBackends(): Promise<BackendInfo[]>;
 }
