@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BackendRegistry } from "@chorus/backends";
 import {
+  type AgentTemplate,
+  type BackendInfo,
   type ChorusBus,
   type Config,
   type ControlApi,
@@ -9,7 +11,9 @@ import {
   type CreateTicketInput,
   newId,
   type Project,
+  type ProjectRunState,
   type ProjectSettingsInput,
+  type UpsertAgentTemplateInput,
   type Role,
   type Ticket,
   type UpdateTicketInput,
@@ -20,6 +24,7 @@ import type { GitService } from "@chorus/git-service";
 import type { Notifier } from "@chorus/core";
 import type { Orchestrator } from "@chorus/orchestrator";
 import { findSpec, SpecIngestor } from "@chorus/spec-ingest";
+import { detectBackends } from "./backend-detect.js";
 
 export interface ControllerDeps {
   db: ChorusDb;
@@ -29,6 +34,8 @@ export interface ControllerDeps {
   notifier: Notifier;
   bus: ChorusBus;
   config: Config;
+  /** Backends/models detected on the host at startup. */
+  detectedBackends: BackendInfo[];
 }
 
 const DEFAULT_GROUND_RULES = [
@@ -50,9 +57,37 @@ const DEFAULT_ROLES: UpsertRoleInput[] = [
 /** Implements the commands the web layer issues. Owns project initialization. */
 export class AppController implements ControlApi {
   private readonly ingestor: SpecIngestor;
+  private backends: BackendInfo[];
 
   constructor(private readonly deps: ControllerDeps) {
     this.ingestor = new SpecIngestor(deps.db);
+    this.backends = deps.detectedBackends;
+  }
+
+  listBackends(): BackendInfo[] {
+    return this.backends;
+  }
+
+  upsertAgentTemplate(input: UpsertAgentTemplateInput): Promise<AgentTemplate> {
+    const existing = this.deps.db.getAgentTemplate(input.name);
+    if (existing) {
+      const updated: AgentTemplate = { ...existing, ...input };
+      this.deps.db.updateAgentTemplate(updated);
+      return Promise.resolve(updated);
+    }
+    const created: AgentTemplate = { id: newId("tmpl"), createdAt: Date.now(), ...input };
+    this.deps.db.insertAgentTemplate(created);
+    return Promise.resolve(created);
+  }
+
+  deleteAgentTemplate(name: string): Promise<void> {
+    this.deps.db.deleteAgentTemplate(name);
+    return Promise.resolve();
+  }
+
+  async refreshBackends(): Promise<BackendInfo[]> {
+    this.backends = await detectBackends();
+    return this.backends;
   }
 
   async createProject(input: CreateProjectInput): Promise<Project> {
@@ -68,6 +103,7 @@ export class AppController implements ControlApi {
       expectations: "",
       groundRules: DEFAULT_GROUND_RULES,
       status: "initializing",
+      runState: "running",
       createdAt: Date.now(),
     };
     this.deps.db.insertProject(project);
@@ -160,6 +196,31 @@ export class AppController implements ControlApi {
     });
     this.emitProject(projectId);
     return Promise.resolve(this.deps.db.getProject(projectId)!);
+  }
+
+  async setProjectRunState(projectId: string, state: ProjectRunState): Promise<Project> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project) throw new Error("project not found");
+    this.deps.db.updateProject(projectId, { runState: state });
+
+    if (state === "stopped") {
+      // Stop: halt new dispatch (gated in the loop) AND stop running agents.
+      await this.deps.orchestrator.stopProjectAgents(projectId);
+    } else if (state === "running") {
+      // Start: re-open any tickets that were left in_progress with no live agent
+      // (e.g. interrupted by a prior Stop) so they get re-dispatched.
+      const running = new Set(this.deps.orchestrator.runningTaskIds());
+      for (const ticket of this.deps.db.listTickets(projectId)) {
+        if (ticket.status !== "in_progress") continue;
+        const live = this.deps.db.listTasksForTicket(ticket.id).some((t) => running.has(t.id));
+        if (!live) this.deps.db.updateTicket(ticket.id, { status: "open" });
+      }
+      void this.deps.orchestrator.tick();
+    }
+    // "paused": just gate new dispatch; running agents finish on their own.
+
+    this.emitProject(projectId);
+    return this.deps.db.getProject(projectId)!;
   }
 
   addTicket(projectId: string, input: CreateTicketInput): Promise<Ticket> {
