@@ -125,6 +125,25 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE projects ADD COLUMN expectations TEXT NOT NULL DEFAULT '';
   ALTER TABLE projects ADD COLUMN ground_rules TEXT NOT NULL DEFAULT '[]';
   `,
+
+  // 0003 — per-project dispatch control
+  `
+  ALTER TABLE projects ADD COLUMN run_state TEXT NOT NULL DEFAULT 'running';
+  `,
+
+  // 0004 — global reusable agent templates ("Agent Gallery")
+  `
+  CREATE TABLE agent_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    allowed TEXT NOT NULL,      -- JSON array
+    forbidden TEXT NOT NULL,    -- JSON array
+    backend_id TEXT NOT NULL,
+    model TEXT,
+    created_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {
