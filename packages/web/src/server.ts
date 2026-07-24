@@ -50,6 +50,38 @@ export function createServer(deps: WebDeps): FastifyInstance {
   // ---- read endpoints (straight from the DB) ----
   app.get("/api/version", () => deps.version);
 
+  app.get("/api/backends", () => api.listBackends());
+  app.post("/api/backends/refresh", () => api.refreshBackends());
+
+  // ---- agent gallery (global templates) ----
+  app.get("/api/agent-templates", () => db.listAgentTemplates());
+
+  app.post("/api/agent-templates", async (req, reply) => {
+    const body = req.body as {
+      name?: string;
+      description?: string;
+      allowed?: string[];
+      forbidden?: string[];
+      backendId?: string;
+      model?: string;
+    };
+    if (!body?.name) return reply.code(400).send({ error: "name required" });
+    return api.upsertAgentTemplate({
+      name: body.name,
+      description: body.description ?? "",
+      allowed: body.allowed ?? [],
+      forbidden: body.forbidden ?? [],
+      backendId: body.backendId ?? "codex",
+      model: body.model,
+    });
+  });
+
+  app.delete("/api/agent-templates/:name", async (req) => {
+    const { name } = req.params as { name: string };
+    await api.deleteAgentTemplate(decodeURIComponent(name));
+    return { ok: true };
+  });
+
   app.get("/api/state", () => ({
     orchestrator: api.orchestratorState(),
     runningTasks: api.runningTaskIds(),
@@ -97,6 +129,15 @@ export function createServer(deps: WebDeps): FastifyInstance {
     const { id } = req.params as { id: string };
     const body = req.body as { baseBranch?: string; expectations?: string; groundRules?: string[] };
     return api.updateProjectSettings(id, body ?? {});
+  });
+
+  app.post("/api/projects/:id/run-state", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { state?: string };
+    if (body?.state !== "running" && body?.state !== "paused" && body?.state !== "stopped") {
+      return reply.code(400).send({ error: "state must be running|paused|stopped" });
+    }
+    return api.setProjectRunState(id, body.state);
   });
 
   app.post("/api/projects/:id/spec", async (req, reply) => {
