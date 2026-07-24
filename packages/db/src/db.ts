@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import type {
   AgentRun,
+  AgentTemplate,
   ChangelogEntry,
   Merge,
   Project,
@@ -39,8 +40,8 @@ export class ChorusDb {
   insertProject(p: Project): void {
     this.raw
       .prepare(
-        `INSERT INTO projects (id, repo_url, local_path, integration_branch, base_branch, spec_path, expectations, ground_rules, status, created_at)
-         VALUES (@id, @repoUrl, @localPath, @integrationBranch, @baseBranch, @specPath, @expectations, @groundRules, @status, @createdAt)`,
+        `INSERT INTO projects (id, repo_url, local_path, integration_branch, base_branch, spec_path, expectations, ground_rules, status, run_state, created_at)
+         VALUES (@id, @repoUrl, @localPath, @integrationBranch, @baseBranch, @specPath, @expectations, @groundRules, @status, @runState, @createdAt)`,
       )
       .run({ ...p, groundRules: JSON.stringify(p.groundRules) });
   }
@@ -51,7 +52,7 @@ export class ChorusDb {
     this.raw
       .prepare(
         `UPDATE projects SET repo_url=@repoUrl, local_path=@localPath, integration_branch=@integrationBranch,
-         base_branch=@baseBranch, spec_path=@specPath, expectations=@expectations, ground_rules=@groundRules, status=@status WHERE id=@id`,
+         base_branch=@baseBranch, spec_path=@specPath, expectations=@expectations, ground_rules=@groundRules, status=@status, run_state=@runState WHERE id=@id`,
       )
       .run({ ...next, groundRules: JSON.stringify(next.groundRules) });
   }
@@ -100,6 +101,48 @@ export class ChorusDb {
   }
   deleteRole(projectId: string, name: string): void {
     this.raw.prepare("DELETE FROM roles WHERE project_id=? AND name=?").run(projectId, name);
+  }
+
+  // ---- agent templates (global gallery) ----
+  insertAgentTemplate(t: AgentTemplate): void {
+    this.raw
+      .prepare(
+        `INSERT INTO agent_templates (id, name, description, allowed, forbidden, backend_id, model, created_at)
+         VALUES (@id, @name, @description, @allowed, @forbidden, @backendId, @model, @createdAt)`,
+      )
+      .run({
+        ...t,
+        allowed: JSON.stringify(t.allowed),
+        forbidden: JSON.stringify(t.forbidden),
+        model: t.model ?? null,
+      });
+  }
+  updateAgentTemplate(t: AgentTemplate): void {
+    this.raw
+      .prepare(
+        `UPDATE agent_templates SET description=@description, allowed=@allowed, forbidden=@forbidden,
+         backend_id=@backendId, model=@model WHERE id=@id`,
+      )
+      .run({
+        ...t,
+        allowed: JSON.stringify(t.allowed),
+        forbidden: JSON.stringify(t.forbidden),
+        model: t.model ?? null,
+      });
+  }
+  deleteAgentTemplate(name: string): void {
+    this.raw.prepare("DELETE FROM agent_templates WHERE name=?").run(name);
+  }
+  getAgentTemplate(name: string): AgentTemplate | undefined {
+    const r = this.raw.prepare("SELECT * FROM agent_templates WHERE name=?").get(name) as
+      | Row
+      | undefined;
+    return r ? mapAgentTemplate(r) : undefined;
+  }
+  listAgentTemplates(): AgentTemplate[] {
+    return (
+      this.raw.prepare("SELECT * FROM agent_templates ORDER BY name").all() as Row[]
+    ).map(mapAgentTemplate);
   }
 
   // ---- tickets ----
@@ -324,6 +367,7 @@ function mapProject(r: Row): Project {
     expectations: (r.expectations as string | null) ?? "",
     groundRules: JSON.parse((r.ground_rules as string | null) ?? "[]"),
     status: r.status as Project["status"],
+    runState: (r.run_state as Project["runState"] | null) ?? "running",
     createdAt: r.created_at as number,
   };
 }
@@ -337,6 +381,18 @@ function mapRole(r: Row): Role {
     forbidden: JSON.parse(r.forbidden as string),
     backendId: r.backend_id as string,
     model: (r.model as string | null) ?? undefined,
+  };
+}
+function mapAgentTemplate(r: Row): AgentTemplate {
+  return {
+    id: r.id as string,
+    name: r.name as string,
+    description: r.description as string,
+    allowed: JSON.parse(r.allowed as string),
+    forbidden: JSON.parse(r.forbidden as string),
+    backendId: r.backend_id as string,
+    model: (r.model as string | null) ?? undefined,
+    createdAt: r.created_at as number,
   };
 }
 function mapTicket(r: Row): Ticket {
