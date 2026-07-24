@@ -88,27 +88,43 @@ export class Orchestrator {
       const quota = this.deps.db.getQuota();
       if (quota.state === "exhausted") return;
 
-      // Resume quota-paused tasks whose retry time has arrived.
+      // Resume quota-paused tasks whose retry time has arrived (only for
+      // running projects, within each project's own capacity).
       for (const task of this.deps.db.listTasksByState("paused-quota")) {
-        if (this.atCapacity()) break;
+        const project = this.deps.db.getProject(task.projectId);
+        if (!project || project.runState !== "running") continue;
+        if (this.atCapacityForProject(project.id)) continue;
         if (task.resumeAt && task.resumeAt <= Date.now() && !this.running.has(task.id)) {
           void this.runTask(task, true).catch((e) => console.error("[chorus] runTask error:", e));
         }
       }
 
-      // Dispatch new work.
-      while (!this.atCapacity()) {
-        const ticket = this.pickNextTicket();
-        if (!ticket) break;
-        await this.dispatchTicket(ticket);
+      // Dispatch new work — each project runs independently up to its OWN cap,
+      // so a busy project can't starve the others ("its own orchestrator").
+      for (const project of this.deps.db.listProjects()) {
+        if (project.status !== "ready" || project.runState !== "running") continue;
+        while (!this.atCapacityForProject(project.id)) {
+          const ticket = this.deps.db.nextOpenTicket(project.id);
+          if (!ticket) break;
+          await this.dispatchTicket(ticket);
+        }
       }
     } finally {
       this.ticking = false;
     }
   }
 
-  private atCapacity(): boolean {
-    return this.running.size >= this.deps.config.maxConcurrentAgents;
+  private countRunningForProject(projectId: string): number {
+    let n = 0;
+    for (const taskId of this.running.keys()) {
+      const t = this.deps.db.getTask(taskId);
+      if (t && t.projectId === projectId) n++;
+    }
+    return n;
+  }
+
+  private atCapacityForProject(projectId: string): boolean {
+    return this.countRunningForProject(projectId) >= this.deps.config.maxConcurrentAgents;
   }
 
   private reconcileQuota(): void {
@@ -119,13 +135,14 @@ export class Orchestrator {
     }
   }
 
-  private pickNextTicket(): Ticket | undefined {
-    for (const project of this.deps.db.listProjects()) {
-      if (project.status !== "ready") continue;
-      const ticket = this.deps.db.nextOpenTicket(project.id);
-      if (ticket) return ticket;
+  /** Stop any agents currently running for a single project (used by Stop). */
+  async stopProjectAgents(projectId: string): Promise<void> {
+    const stops: Array<Promise<void>> = [];
+    for (const [taskId, handle] of this.running) {
+      const task = this.deps.db.getTask(taskId);
+      if (task && task.projectId === projectId) stops.push(handle.stop());
     }
-    return undefined;
+    await Promise.allSettled(stops);
   }
 
   // ---- dispatch ----
@@ -246,6 +263,7 @@ export class Orchestrator {
       for await (const ev of handle.events) {
         this.deps.bus.emit({
           type: "agent_event",
+          projectId: project.id,
           taskId: task.id,
           role: ticket.roleName,
           ticketId: ticket.id,
@@ -558,7 +576,7 @@ export class Orchestrator {
     title: string,
     body: string,
   ): Promise<void> {
-    this.deps.bus.emit({ type: "notification", kind, title, body, at: Date.now() });
+    this.deps.bus.emit({ type: "notification", projectId: project.id, kind, title, body, at: Date.now() });
     await this.deps.notifier.notify({ kind, projectId: project.id, title, body, at: Date.now() });
   }
 }
