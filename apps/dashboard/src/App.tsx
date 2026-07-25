@@ -1,5 +1,13 @@
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
-import { type AppState, api, type BackendInfo, type Project, type ProjectDetail, useEvents } from "./api.js";
+import {
+  type AppState,
+  api,
+  type BackendInfo,
+  type Project,
+  type ProjectDetail,
+  type TicketEvent,
+  useEvents,
+} from "./api.js";
 import { AgentGallery } from "./components/AgentGallery.js";
 import { EventFeed, type FeedEntry } from "./components/EventFeed.js";
 import { ModelsPanel } from "./components/ModelsPanel.js";
@@ -10,6 +18,7 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
+  const [projectEvents, setProjectEvents] = useState<TicketEvent[]>([]);
   const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [leftTab, setLeftTab] = useState<"projects" | "gallery">("projects");
@@ -39,6 +48,7 @@ export function App() {
 
   const refreshDetail = useCallback(async (id: string) => {
     setDetail(await api.project(id).catch(() => null));
+    setProjectEvents(await api.projectEvents(id).catch(() => []));
   }, []);
 
   useEffect(() => {
@@ -133,6 +143,7 @@ export function App() {
             <ProjectPanel
               detail={detail}
               backends={backends}
+              events={projectEvents}
               runningTaskIds={state?.runningTasks ?? []}
               onChange={() => selected && refreshDetail(selected)}
             />
