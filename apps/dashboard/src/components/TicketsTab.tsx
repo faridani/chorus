@@ -1,23 +1,23 @@
 import { useState } from "react";
-import { api, type Role, type Ticket } from "../api.js";
+import { api, type Ticket, type TicketEvent } from "../api.js";
 
-/** Tickets table with a create/edit/delete editor. */
+/** Tickets table with a create/edit/delete editor + activity trail. */
 export function TicketsTab({
   projectId,
   tickets,
-  roles,
+  events,
   runningTaskIds,
   onChange,
 }: {
   projectId: string;
   tickets: Ticket[];
-  roles: Role[];
+  events: TicketEvent[];
   runningTaskIds: string[];
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState<Ticket | "new" | null>(null);
-  const running = new Set(runningTaskIds);
-  const isRunning = (t: Ticket) => t.tasks.some((tk) => running.has(tk.id));
+  const running = new Set(runningTaskIds); // ticket ids currently being acted on
+  const isRunning = (t: Ticket) => running.has(t.id);
 
   return (
     <div>
@@ -31,31 +31,26 @@ export function TicketsTab({
         <thead>
           <tr>
             <th>Title</th>
-            <th>Agent</th>
+            <th>Now with</th>
             <th>Priority</th>
             <th>Status</th>
-            <th>Latest task</th>
           </tr>
         </thead>
         <tbody>
-          {tickets.map((t) => {
-            const last = t.tasks[t.tasks.length - 1];
-            return (
-              <tr key={t.id} className="clickable" onClick={() => setEditing(t)}>
-                <td>{t.title}</td>
-                <td>{t.roleName ?? "—"}</td>
-                <td>{t.priority}</td>
-                <td>
-                  <span className={`tag status-${t.status}`}>{t.status}</span>
-                  {isRunning(t) && <span className="tag running"> running</span>}
-                </td>
-                <td>{last ? `${last.state} (a${last.attempt})` : "—"}</td>
-              </tr>
-            );
-          })}
+          {tickets.map((t) => (
+            <tr key={t.id} className="clickable" onClick={() => setEditing(t)}>
+              <td>{t.title}</td>
+              <td>{t.roleName ?? "—"}</td>
+              <td>{t.priority}</td>
+              <td>
+                <span className={`tag status-${t.status}`}>{t.status}</span>
+                {isRunning(t) && <span className="tag running"> running</span>}
+              </td>
+            </tr>
+          ))}
           {tickets.length === 0 && (
             <tr>
-              <td colSpan={5} className="muted">
+              <td colSpan={4} className="muted">
                 no tickets yet
               </td>
             </tr>
@@ -66,8 +61,10 @@ export function TicketsTab({
       {editing && (
         <TicketEditor
           projectId={projectId}
-          roles={roles}
           ticket={editing === "new" ? null : editing}
+          trail={
+            editing === "new" ? [] : events.filter((e) => e.ticketId === editing.id)
+          }
           locked={editing !== "new" && isRunning(editing)}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -82,22 +79,21 @@ export function TicketsTab({
 
 function TicketEditor({
   projectId,
-  roles,
   ticket,
+  trail,
   locked,
   onClose,
   onSaved,
 }: {
   projectId: string;
-  roles: Role[];
   ticket: Ticket | null;
+  trail: TicketEvent[];
   locked: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [title, setTitle] = useState(ticket?.title ?? "");
   const [body, setBody] = useState(ticket?.body ?? "");
-  const [roleName, setRoleName] = useState(ticket?.roleName ?? roles[0]?.name ?? "software-dev");
   const [priority, setPriority] = useState(ticket?.priority ?? 0);
   const [busy, setBusy] = useState(false);
 
@@ -117,22 +113,15 @@ function TicketEditor({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{ticket ? "Edit ticket" : "New ticket"}</h3>
-        {locked && <div className="warn">This ticket's agent is running — editing is disabled.</div>}
+        {locked && <div className="warn">An agent is working this ticket — editing is disabled.</div>}
         <label>Title</label>
         <input value={title} disabled={locked} onChange={(e) => setTitle(e.target.value)} />
         <label>Description</label>
-        <textarea rows={8} value={body} disabled={locked} onChange={(e) => setBody(e.target.value)} />
+        <textarea rows={6} value={body} disabled={locked} onChange={(e) => setBody(e.target.value)} />
         <div className="row2">
           <div>
-            <label>Agent (role)</label>
-            <select value={roleName} disabled={locked} onChange={(e) => setRoleName(e.target.value)}>
-              {roles.map((r) => (
-                <option key={r.id} value={r.name}>
-                  {r.name}
-                </option>
-              ))}
-              {roles.length === 0 && <option value="software-dev">software-dev</option>}
-            </select>
+            <label>Currently with</label>
+            <div className="ro">{ticket ? ticket.roleName ?? "—" : "orchestrator (on create)"}</div>
           </div>
           <div>
             <label>Priority</label>
@@ -144,6 +133,26 @@ function TicketEditor({
             />
           </div>
         </div>
+        <div className="hint">
+          Every ticket is triaged by the orchestrator agent, which assigns it to a worker, merges
+          its work, or closes it. Assignment is managed automatically.
+        </div>
+
+        {ticket && (
+          <>
+            <label style={{ marginTop: 12 }}>Activity trail</label>
+            <ul className="trail">
+              {trail.length === 0 && <li className="muted">No activity yet.</li>}
+              {trail.map((e) => (
+                <li key={e.id}>
+                  <span className="muted">{new Date(e.createdAt).toLocaleString()}</span>{" "}
+                  <strong>{e.actor}</strong> <span className={`tag te-${e.kind}`}>{e.kind}</span>{" "}
+                  {e.message}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
 
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
@@ -161,8 +170,9 @@ function TicketEditor({
               <button
                 disabled={busy || locked}
                 onClick={() => run(() => api.updateTicket(projectId, ticket.id, { reopen: true }))}
+                title="Send this ticket back to the orchestrator to re-triage."
               >
-                Reopen (re-dispatch)
+                Reopen
               </button>
             </>
           )}
@@ -172,8 +182,8 @@ function TicketEditor({
             onClick={() =>
               run(() =>
                 ticket
-                  ? api.updateTicket(projectId, ticket.id, { title, body, roleName, priority })
-                  : api.addTicket(projectId, { title, body, roleName, priority }),
+                  ? api.updateTicket(projectId, ticket.id, { title, body, priority })
+                  : api.addTicket(projectId, { title, body, priority }),
               )
             }
           >
