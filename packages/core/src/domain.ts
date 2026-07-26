@@ -36,6 +36,9 @@ export interface Project {
  */
 export type ProjectRunState = "running" | "paused" | "stopped";
 
+/** The per-project triage agent's role name. Auto-created and undeletable. */
+export const ORCHESTRATOR_ROLE = "orchestrator";
+
 /**
  * A reusable, project-independent agent definition kept in the "Agent Gallery".
  * Same shape as a Role but global — it can be applied to any project (which
@@ -76,12 +79,53 @@ export interface Ticket {
   title: string;
   body: string;
   status: TicketStatus;
-  /** Role this ticket is assigned to (by role name). */
+  /** Current assignee (role name): "orchestrator" or a worker role. */
   roleName: string | null;
   priority: number;
   source: "spec" | "manual";
+  /** Persistent work branch for this ticket (created on first worker run). */
+  branch: string | null;
+  /** Persistent worktree path for this ticket's branch. */
+  worktreePath: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** One entry in a ticket's activity trail (agent messages + work done). */
+export interface TicketEvent {
+  id: string;
+  projectId: string;
+  ticketId: string;
+  /** Who produced it: a role name ("orchestrator"/worker) or "system". */
+  actor: string;
+  kind: "triage" | "work" | "merge" | "close" | "note";
+  message: string;
+  createdAt: number;
+}
+
+/** A message from the orchestrator to the human, shown in the Suggestions tab. */
+export interface Suggestion {
+  id: string;
+  projectId: string;
+  ticketId: string | null;
+  message: string;
+  status: "open" | "dismissed";
+  createdAt: number;
+}
+
+/** The structured decision the orchestrator agent returns when triaging a ticket. */
+export interface OrchestratorDecision {
+  action: "assign" | "merge" | "close" | "needs_human";
+  /** For "assign": the worker role to hand the ticket to. */
+  assignee?: string;
+  /** Optional reprioritization. */
+  priority?: number;
+  /** Follow-up tickets to create (assigned to the orchestrator). */
+  newTickets?: { title: string; body: string; priority?: number }[];
+  /** Messages to surface to the human. */
+  suggestions?: string[];
+  /** A one-line explanation recorded in the ticket trail. */
+  message: string;
 }
 
 /** A single attempt at a ticket. A ticket may have several over time. */
