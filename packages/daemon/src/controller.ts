@@ -10,6 +10,7 @@ import {
   type CreateProjectInput,
   type CreateTicketInput,
   newId,
+  ORCHESTRATOR_ROLE,
   type Project,
   type ProjectRunState,
   type ProjectSettingsInput,
@@ -46,6 +47,14 @@ const DEFAULT_GROUND_RULES = [
 
 const DEFAULT_ROLES: UpsertRoleInput[] = [
   {
+    name: ORCHESTRATOR_ROLE,
+    description:
+      "Triages every ticket: decides whether to assign it to another agent, merge the work, or close it. Routes work and gates merges. Cannot be deleted.",
+    allowed: ["read the repo", "assign tickets to other agents", "merge approved work", "close tickets", "raise suggestions"],
+    forbidden: ["write code directly"],
+    backendId: "codex",
+  },
+  {
     name: "software-dev",
     description: "Implements tickets end-to-end with tests, following the project spec.",
     allowed: ["read and write code", "run tests and builds", "create files", "refactor touched code"],
@@ -66,6 +75,13 @@ export class AppController implements ControlApi {
 
   listBackends(): BackendInfo[] {
     return this.backends;
+  }
+
+  /** Backfill default agents (incl. the orchestrator) for all existing projects. */
+  ensureProjectAgents(): void {
+    for (const project of this.deps.db.listProjects()) {
+      for (const role of DEFAULT_ROLES) this.seedRole(project.id, role);
+    }
   }
 
   upsertAgentTemplate(input: UpsertAgentTemplateInput): Promise<AgentTemplate> {
@@ -207,13 +223,13 @@ export class AppController implements ControlApi {
       // Stop: halt new dispatch (gated in the loop) AND stop running agents.
       await this.deps.orchestrator.stopProjectAgents(projectId);
     } else if (state === "running") {
-      // Start: re-open any tickets that were left in_progress with no live agent
-      // (e.g. interrupted by a prior Stop) so they get re-dispatched.
-      const running = new Set(this.deps.orchestrator.runningTaskIds());
+      // Start: re-open (to the orchestrator) any tickets left in_progress with no
+      // live agent (e.g. interrupted by a prior Stop) so they get re-triaged.
+      const running = new Set(this.deps.orchestrator.runningTaskIds()); // ticket ids
       for (const ticket of this.deps.db.listTickets(projectId)) {
         if (ticket.status !== "in_progress") continue;
-        const live = this.deps.db.listTasksForTicket(ticket.id).some((t) => running.has(t.id));
-        if (!live) this.deps.db.updateTicket(ticket.id, { status: "open" });
+        if (!running.has(ticket.id))
+          this.deps.db.updateTicket(ticket.id, { status: "open", roleName: ORCHESTRATOR_ROLE });
       }
       void this.deps.orchestrator.tick();
     }
@@ -231,9 +247,12 @@ export class AppController implements ControlApi {
       title: input.title,
       body: input.body,
       status: "open",
-      roleName: input.roleName ?? "software-dev",
+      // Every ticket first goes to the orchestrator agent, which triages it.
+      roleName: ORCHESTRATOR_ROLE,
       priority: input.priority ?? 0,
       source: "manual",
+      branch: null,
+      worktreePath: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -270,9 +289,7 @@ export class AppController implements ControlApi {
 
   /** Reject mutations to a ticket whose agent is actively running. */
   private assertTicketIdle(ticketId: string, action: string): void {
-    const running = new Set(this.deps.orchestrator.runningTaskIds());
-    const active = this.deps.db.listTasksForTicket(ticketId).some((t) => running.has(t.id));
-    if (active) {
+    if (this.deps.orchestrator.runningTaskIds().includes(ticketId)) {
       throw Object.assign(new Error(`Cannot ${action} a ticket while its agent is running.`), {
         statusCode: 409,
       });
@@ -293,7 +310,18 @@ export class AppController implements ControlApi {
   }
 
   deleteRole(projectId: string, name: string): Promise<void> {
+    if (name === ORCHESTRATOR_ROLE) {
+      throw Object.assign(new Error("The orchestrator agent cannot be deleted."), {
+        statusCode: 409,
+      });
+    }
     this.deps.db.deleteRole(projectId, name);
+    this.emitProject(projectId);
+    return Promise.resolve();
+  }
+
+  dismissSuggestion(projectId: string, suggestionId: string): Promise<void> {
+    this.deps.db.setSuggestionStatus(suggestionId, "dismissed");
     this.emitProject(projectId);
     return Promise.resolve();
   }
