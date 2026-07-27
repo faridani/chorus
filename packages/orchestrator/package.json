@@ -16,6 +16,8 @@
     "@chorus/db": "*",
     "@chorus/git-service": "*",
     "@chorus/backends": "*",
-    "@chorus/notifier": "*"
+    "@chorus/notifier": "*",
+    "@chorus/proc": "*",
+    "zod": "^3.24.1"
   }
 }
