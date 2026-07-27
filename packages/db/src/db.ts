@@ -7,9 +7,11 @@ import type {
   Project,
   QuotaInfo,
   Role,
+  Suggestion,
   Task,
   TaskState,
   Ticket,
+  TicketEvent,
   UsageEvent,
 } from "@chorus/core";
 import { runMigrations } from "./migrations.js";
@@ -149,10 +151,10 @@ export class ChorusDb {
   insertTicket(t: Ticket): void {
     this.raw
       .prepare(
-        `INSERT INTO tickets (id, project_id, title, body, status, role_name, priority, source, created_at, updated_at)
-         VALUES (@id, @projectId, @title, @body, @status, @roleName, @priority, @source, @createdAt, @updatedAt)`,
+        `INSERT INTO tickets (id, project_id, title, body, status, role_name, priority, source, branch, worktree_path, created_at, updated_at)
+         VALUES (@id, @projectId, @title, @body, @status, @roleName, @priority, @source, @branch, @worktreePath, @createdAt, @updatedAt)`,
       )
-      .run({ ...t, roleName: t.roleName ?? null });
+      .run({ ...t, roleName: t.roleName ?? null, branch: t.branch ?? null, worktreePath: t.worktreePath ?? null });
   }
   updateTicket(id: string, patch: Partial<Ticket>): void {
     const cur = this.getTicket(id);
@@ -161,9 +163,14 @@ export class ChorusDb {
     this.raw
       .prepare(
         `UPDATE tickets SET title=@title, body=@body, status=@status, role_name=@roleName,
-         priority=@priority, updated_at=@updatedAt WHERE id=@id`,
+         priority=@priority, branch=@branch, worktree_path=@worktreePath, updated_at=@updatedAt WHERE id=@id`,
       )
-      .run({ ...next, roleName: next.roleName ?? null });
+      .run({
+        ...next,
+        roleName: next.roleName ?? null,
+        branch: next.branch ?? null,
+        worktreePath: next.worktreePath ?? null,
+      });
   }
   getTicket(id: string): Ticket | undefined {
     const r = this.raw.prepare("SELECT * FROM tickets WHERE id=?").get(id) as Row | undefined;
@@ -189,6 +196,50 @@ export class ChorusDb {
       )
       .get(projectId) as Row | undefined;
     return r ? mapTicket(r) : undefined;
+  }
+
+  // ---- ticket events (trail) ----
+  insertTicketEvent(e: TicketEvent): void {
+    this.raw
+      .prepare(
+        `INSERT INTO ticket_events (id, project_id, ticket_id, actor, kind, message, created_at)
+         VALUES (@id, @projectId, @ticketId, @actor, @kind, @message, @createdAt)`,
+      )
+      .run(e);
+  }
+  listTicketEvents(ticketId: string): TicketEvent[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM ticket_events WHERE ticket_id=? ORDER BY created_at")
+        .all(ticketId) as Row[]
+    ).map(mapTicketEvent);
+  }
+  listProjectTicketEvents(projectId: string, limit = 500): TicketEvent[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM ticket_events WHERE project_id=? ORDER BY created_at DESC LIMIT ?")
+        .all(projectId, limit) as Row[]
+    ).map(mapTicketEvent);
+  }
+
+  // ---- suggestions ----
+  insertSuggestion(s: Suggestion): void {
+    this.raw
+      .prepare(
+        `INSERT INTO suggestions (id, project_id, ticket_id, message, status, created_at)
+         VALUES (@id, @projectId, @ticketId, @message, @status, @createdAt)`,
+      )
+      .run({ ...s, ticketId: s.ticketId ?? null });
+  }
+  listSuggestions(projectId: string, status: "open" | "dismissed" = "open"): Suggestion[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM suggestions WHERE project_id=? AND status=? ORDER BY created_at DESC")
+        .all(projectId, status) as Row[]
+    ).map(mapSuggestion);
+  }
+  setSuggestionStatus(id: string, status: "open" | "dismissed"): void {
+    this.raw.prepare("UPDATE suggestions SET status=? WHERE id=?").run(status, id);
   }
 
   // ---- tasks ----
@@ -405,8 +456,31 @@ function mapTicket(r: Row): Ticket {
     roleName: (r.role_name as string | null) ?? null,
     priority: r.priority as number,
     source: r.source as Ticket["source"],
+    branch: (r.branch as string | null) ?? null,
+    worktreePath: (r.worktree_path as string | null) ?? null,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
+  };
+}
+function mapTicketEvent(r: Row): TicketEvent {
+  return {
+    id: r.id as string,
+    projectId: r.project_id as string,
+    ticketId: r.ticket_id as string,
+    actor: r.actor as string,
+    kind: r.kind as TicketEvent["kind"],
+    message: r.message as string,
+    createdAt: r.created_at as number,
+  };
+}
+function mapSuggestion(r: Row): Suggestion {
+  return {
+    id: r.id as string,
+    projectId: r.project_id as string,
+    ticketId: (r.ticket_id as string | null) ?? null,
+    message: r.message as string,
+    status: r.status as Suggestion["status"],
+    createdAt: r.created_at as number,
   };
 }
 function mapTask(r: Row): Task {
