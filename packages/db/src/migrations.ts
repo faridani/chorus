@@ -144,6 +144,34 @@ export const MIGRATIONS: string[] = [
     created_at INTEGER NOT NULL
   );
   `,
+
+  // 0005 — orchestrator-driven lifecycle: ticket trail, suggestions, per-ticket branch
+  `
+  ALTER TABLE tickets ADD COLUMN branch TEXT;
+  ALTER TABLE tickets ADD COLUMN worktree_path TEXT;
+
+  CREATE TABLE ticket_events (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ticket_id TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_ticket_events_project ON ticket_events(project_id, created_at);
+  CREATE INDEX idx_ticket_events_ticket ON ticket_events(ticket_id, created_at);
+
+  CREATE TABLE suggestions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ticket_id TEXT,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_suggestions_project ON suggestions(project_id, status, created_at);
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {
