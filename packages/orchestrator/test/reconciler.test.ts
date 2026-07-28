@@ -39,6 +39,8 @@ test("reconcile: interrupted running task with no worktree → ticket reopened, 
     roleName: "software-dev",
     priority: 0,
     source: "manual",
+    branch: null,
+    worktreePath: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
