@@ -26,6 +26,8 @@ const ticket: Ticket = {
   roleName: "software-dev",
   priority: 0,
   source: "spec",
+  branch: null,
+  worktreePath: null,
   createdAt: 0,
   updatedAt: 0,
 };
