@@ -352,12 +352,20 @@ export class Orchestrator {
       outputFilePath: null,
     });
 
+    // Snapshot commit count so we can tell if this run produces NEW work.
+    const commitsBefore = (
+      await this.deps.git.branchSummary(project.localPath, project.integrationBranch, branch).catch(() => ({
+        commits: [],
+      }))
+    ).commits.length;
+
     const prompt = buildAgentPrompt({
       project,
       role,
       ticket,
       specExcerpt: this.readSpecExcerpt(project),
       resume,
+      trail: this.deps.db.listTicketEvents(ticket.id),
     });
     const handle = backend.startRun({
       taskId,
@@ -417,6 +425,12 @@ export class Orchestrator {
     // Any other terminal outcome: record the worker's result and hand back to
     // the orchestrator, which decides whether to merge / keep working / close.
     const summary = result.payload?.summary ?? `(${result.terminalReason})`;
+    const commitsAfter = (
+      await this.deps.git.branchSummary(project.localPath, project.integrationBranch, branch).catch(() => ({
+        commits: [],
+      }))
+    ).commits.length;
+    const noNewWork = commitsAfter <= commitsBefore;
     this.deps.db.updateTask(taskId, { state: "done-pending-merge", endedAt: Date.now() });
     this.trail(
       project.id,
@@ -425,7 +439,8 @@ export class Orchestrator {
       "work",
       result.payload
         ? `${result.payload.status}: ${summary}` +
-            (result.payload.filesChanged?.length ? ` (files: ${result.payload.filesChanged.join(", ")})` : "")
+            (result.payload.filesChanged?.length ? ` (files: ${result.payload.filesChanged.join(", ")})` : "") +
+            (noNewWork ? " [no new commits this attempt]" : "")
         : `Ended (${result.terminalReason}).`,
     );
     this.handBackToOrchestrator(project.id, ticket.id);
