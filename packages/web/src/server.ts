@@ -104,7 +104,21 @@ export function createServer(deps: WebDeps): FastifyInstance {
       roles: db.listRoles(id),
       merges: db.listMerges(id),
       changelog: db.listChangelog(id),
+      suggestions: db.listSuggestions(id, "open"),
     };
+  });
+
+  // Ticket activity trail for the whole project (powers the State Machine tab
+  // and per-ticket trail view).
+  app.get("/api/projects/:id/events", (req) => {
+    const { id } = req.params as { id: string };
+    return db.listProjectTicketEvents(id);
+  });
+
+  app.post("/api/projects/:id/suggestions/:sid/dismiss", async (req) => {
+    const { id, sid } = req.params as { id: string; sid: string };
+    await api.dismissSuggestion(id, sid);
+    return { ok: true };
   });
 
   app.get("/api/usage", () => ({
