@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OrchestratorDecision } from "@chorus/core";
-import { run } from "@chorus/proc";
+import { mapCodexLine } from "@chorus/backends";
+import type { AgentEvent, OrchestratorDecision } from "@chorus/core";
+import { StreamingProcess } from "@chorus/proc";
 import { z } from "zod";
 
 const DecisionZ = z.object({
@@ -70,20 +71,29 @@ export interface TriageOptions {
   prompt: string;
   bin?: string;
   model?: string;
-  timeoutMs?: number;
+  maxWallClockMs?: number;
+  idleTimeoutMs?: number;
+  /** Streamed normalized events (the orchestrator's reasoning/commands) for the live feed. */
+  onEvent?: (event: AgentEvent) => void;
 }
 
-/** Run the orchestrator agent (read-only) to produce a structured decision. */
+/**
+ * Run the orchestrator agent (read-only) to produce a structured decision,
+ * streaming its reasoning/commands to `onEvent` as they happen (so the live
+ * feed shows the orchestrator "thinking" instead of going silent).
+ */
 export async function runTriage(opts: TriageOptions): Promise<OrchestratorDecision> {
   mkdirSync(opts.artifactsDir, { recursive: true });
   const schemaPath = join(opts.artifactsDir, "decision-schema.json");
   const outputPath = join(opts.artifactsDir, "decision.json");
+  const rawLogPath = join(opts.artifactsDir, "raw.log");
   writeFileSync(schemaPath, JSON.stringify(DECISION_JSON_SCHEMA, null, 2), "utf8");
 
-  const r = await run(
+  const proc = new StreamingProcess(
     opts.bin ?? "codex",
     [
       "exec",
+      "--json",
       "-s",
       "read-only",
       "--skip-git-repo-check",
@@ -96,10 +106,22 @@ export async function runTriage(opts: TriageOptions): Promise<OrchestratorDecisi
       ...(opts.model ? ["-m", opts.model] : []),
       opts.prompt,
     ],
-    { timeoutMs: opts.timeoutMs ?? 10 * 60 * 1000 },
+    {
+      cwd: opts.cwd,
+      rawLogPath,
+      maxWallClockMs: opts.maxWallClockMs ?? 10 * 60 * 1000,
+      idleTimeoutMs: opts.idleTimeoutMs,
+    },
   );
-  if (r.code !== 0) {
-    throw new Error(`Orchestrator triage failed (${r.code}): ${r.stderr.slice(-500)}`);
+  if (opts.onEvent) {
+    proc.onLine((line) => {
+      for (const ev of mapCodexLine(line, opts.cwd)) opts.onEvent!(ev);
+    });
+  }
+
+  const exit = await proc.exit;
+  if (exit.code !== 0) {
+    throw new Error(`Orchestrator triage failed (${exit.code}): ${exit.stderrTail.slice(-500)}`);
   }
   const parsed = DecisionZ.safeParse(JSON.parse(readFileSync(outputPath, "utf8")));
   if (!parsed.success) {
