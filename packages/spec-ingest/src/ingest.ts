@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Project, newId, type Ticket } from "@chorus/core";
+import { type Project, newId, ORCHESTRATOR_ROLE, type Ticket } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import { run } from "@chorus/proc";
 import { z } from "zod";
@@ -103,9 +103,12 @@ export class SpecIngestor {
       title: t.title,
       body: t.body,
       status: "open" as const,
-      roleName: t.roleName ?? "software-dev",
+      // Every ticket starts with the orchestrator agent, which triages + routes it.
+      roleName: ORCHESTRATOR_ROLE,
       priority: t.priority ?? 0,
       source: "spec" as const,
+      branch: null,
+      worktreePath: null,
       createdAt: now,
       updatedAt: now,
     }));
