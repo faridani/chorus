@@ -198,7 +198,15 @@ export class Orchestrator {
 
     let decision: OrchestratorDecision;
     try {
-      decision = await runTriage({ cwd, artifactsDir, prompt, model: orchRole?.model });
+      decision = await runTriage({
+        cwd,
+        artifactsDir,
+        prompt,
+        model: orchRole?.model,
+        maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+        idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+        onEvent: (ev) => this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, ev),
+      });
     } catch (err) {
       if (this.looksLikeQuota(String(err))) {
         this.enterQuotaBackoff();
