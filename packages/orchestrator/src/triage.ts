@@ -75,6 +75,8 @@ export interface TriageOptions {
   idleTimeoutMs?: number;
   /** Streamed normalized events (the orchestrator's reasoning/commands) for the live feed. */
   onEvent?: (event: AgentEvent) => void;
+  /** Receives a stop fn once the process starts, so callers can cancel it. */
+  onStart?: (stop: () => Promise<void>) => void;
 }
 
 /**
@@ -113,6 +115,7 @@ export async function runTriage(opts: TriageOptions): Promise<OrchestratorDecisi
       idleTimeoutMs: opts.idleTimeoutMs,
     },
   );
+  opts.onStart?.(() => proc.stop());
   if (opts.onEvent) {
     proc.onLine((line) => {
       for (const ev of mapCodexLine(line, opts.cwd)) opts.onEvent!(ev);
