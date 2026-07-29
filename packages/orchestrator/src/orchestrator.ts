@@ -206,6 +206,10 @@ export class Orchestrator {
         maxWallClockMs: this.deps.config.agent.maxWallClockMs,
         idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
         onEvent: (ev) => this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, ev),
+        onStart: (stop) => {
+          const slot = this.active.get(ticket.id);
+          if (slot) slot.stop = stop; // make triage cancelable on Stop/shutdown
+        },
       });
     } catch (err) {
       if (this.looksLikeQuota(String(err))) {
