@@ -76,7 +76,9 @@ export function ProjectPanel({
         {tab === "agents" && (
           <AgentsTab projectId={project.id} roles={roles} backends={backends} onChange={onChange} />
         )}
-        {tab === "state" && <StateMachineTab tickets={tickets} events={events} />}
+        {tab === "state" && (
+          <StateMachineTab tickets={tickets} events={events} runningTaskIds={runningTaskIds} />
+        )}
         {tab === "settings" && <SettingsTab project={project} onSaved={onChange} />}
         {tab === "activity" && <ActivityTab merges={merges} changelog={changelog} />}
         {tab === "suggestions" && (
