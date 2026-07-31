@@ -33,8 +33,17 @@ button:disabled { opacity: .5; cursor: default; }
 .body { display: grid; grid-template-columns: 280px 1fr 320px; flex: 1; overflow: hidden; }
 .sidebar, .events { background: var(--panel); border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
 .events { border-right: none; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
-.models-pane { flex: 0 0 auto; max-height: 40%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.commits-pane { flex: 0 0 auto; max-height: 30%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.models-pane { flex: 0 0 auto; max-height: 35%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
 .feed-pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* integration-branch git log */
+.muted.small { font-size: 11px; }
+ul.gitlog { list-style: none; padding: 0; margin: 0; }
+ul.gitlog li { display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+ul.gitlog .sha { font-family: ui-monospace, monospace; color: var(--accent); font-size: 11px; }
+ul.gitlog .gsubject { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ul.gitlog .gmeta { grid-column: 2; color: var(--muted); font-size: 10px; }
 
 /* models panel */
 .backends { list-style: none; padding: 0; margin: 0; }
@@ -142,6 +151,10 @@ h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
 .approve { margin-left: auto; background: #1f3d2b; border-color: #2e5e40; }
 table.tickets { width: 100%; border-collapse: collapse; }
 table.tickets th, table.tickets td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+table.tickets td.drag-handle { width: 18px; cursor: grab; color: var(--muted); text-align: center; user-select: none; }
+table.tickets td.drag-handle:active { cursor: grabbing; }
+table.tickets tr.dragging { opacity: 0.45; }
+table.tickets tr.dragover td { border-top: 2px solid var(--accent); }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .merges, .changelog, .roles { list-style: none; padding: 0; margin: 0; }
 .merges li, .changelog li, .roles li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
