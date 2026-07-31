@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Ticket, type TicketEvent } from "../api.js";
 
 /** Tickets table with a create/edit/delete editor + activity trail. */
@@ -19,6 +19,28 @@ export function TicketsTab({
   const running = new Set(runningTaskIds); // ticket ids currently being acted on
   const isRunning = (t: Ticket) => running.has(t.id);
 
+  // Local order so drag-and-drop feels instant; re-synced when the prop changes.
+  const [order, setOrder] = useState<Ticket[]>(tickets);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const dragIdRef = useRef<string | null>(null);
+  useEffect(() => setOrder(tickets), [tickets]);
+
+  const reorder = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    const next = [...order];
+    const from = next.findIndex((t) => t.id === fromId);
+    const to = next.findIndex((t) => t.id === toId);
+    if (from < 0 || to < 0) return;
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setOrder(next);
+    void api.reorderTickets(projectId, next.map((t) => t.id)).then(onChange).catch((err) => {
+      alert(String(err));
+      setOrder(tickets); // revert on failure
+    });
+  };
+
   return (
     <div>
       <div className="tabhead">
@@ -30,6 +52,7 @@ export function TicketsTab({
       <table className="tickets">
         <thead>
           <tr>
+            <th aria-label="reorder" />
             <th>Title</th>
             <th>Now with</th>
             <th>Priority</th>
@@ -37,8 +60,43 @@ export function TicketsTab({
           </tr>
         </thead>
         <tbody>
-          {tickets.map((t) => (
-            <tr key={t.id} className="clickable" onClick={() => setEditing(t)}>
+          {order.map((t) => (
+            <tr
+              key={t.id}
+              className={`clickable ${dragId === t.id ? "dragging" : ""} ${overId === t.id ? "dragover" : ""}`}
+              onClick={() => setEditing(t)}
+              onDragOver={(e) => {
+                if (!dragIdRef.current) return;
+                e.preventDefault();
+                if (overId !== t.id) setOverId(t.id);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const from = dragIdRef.current;
+                dragIdRef.current = null;
+                setDragId(null);
+                setOverId(null);
+                if (from) reorder(from, t.id);
+              }}
+            >
+              <td
+                className="drag-handle"
+                draggable
+                title="Drag to reorder — higher in the list means higher priority (dispatched first)."
+                onClick={(e) => e.stopPropagation()}
+                onDragStart={(e) => {
+                  dragIdRef.current = t.id;
+                  setDragId(t.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={() => {
+                  dragIdRef.current = null;
+                  setDragId(null);
+                  setOverId(null);
+                }}
+              >
+                ⠿
+              </td>
               <td>{t.title}</td>
               <td>{t.roleName ?? "—"}</td>
               <td>{t.priority}</td>
@@ -48,9 +106,9 @@ export function TicketsTab({
               </td>
             </tr>
           ))}
-          {tickets.length === 0 && (
+          {order.length === 0 && (
             <tr>
-              <td colSpan={4} className="muted">
+              <td colSpan={5} className="muted">
                 no tickets yet
               </td>
             </tr>
