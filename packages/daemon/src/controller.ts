@@ -5,6 +5,7 @@ import {
   type AgentTemplate,
   type BackendInfo,
   type ChorusBus,
+  type CommitLogEntry,
   type Config,
   type ControlApi,
   type CreateProjectInput,
@@ -278,6 +279,27 @@ export class AppController implements ControlApi {
     return Promise.resolve(this.deps.db.getTicket(ticketId)!);
   }
 
+  /**
+   * Reorder a project's tickets by reassigning priorities so the given order
+   * (top→bottom) is preserved (top row = highest priority). Tickets not listed
+   * keep their relative order below the listed ones. Safe to call while an
+   * agent runs — priority only affects future dispatch ordering.
+   */
+  reorderTickets(projectId: string, orderedIds: string[]): Promise<void> {
+    const all = this.deps.db.listTickets(projectId);
+    const known = new Set(all.map((t) => t.id));
+    const ordered = orderedIds.filter((id) => known.has(id));
+    const rest = all.filter((t) => !ordered.includes(t.id)).map((t) => t.id);
+    const finalOrder = [...ordered, ...rest];
+    // Assign descending priorities; highest at the top so `priority DESC` sorts match.
+    const top = finalOrder.length;
+    finalOrder.forEach((id, i) => {
+      this.deps.db.updateTicket(id, { priority: top - i });
+    });
+    this.emitProject(projectId);
+    return Promise.resolve();
+  }
+
   deleteTicket(projectId: string, ticketId: string): Promise<void> {
     const ticket = this.deps.db.getTicket(ticketId);
     if (!ticket || ticket.projectId !== projectId) throw new Error("ticket not found");
@@ -375,6 +397,16 @@ export class AppController implements ControlApi {
       ok: true,
       message: `Merged ${project.integrationBranch} into ${project.baseBranch} locally (${outcome.mergeCommit?.slice(0, 8)}). Review and push when ready.`,
     };
+  }
+
+  async integrationLog(projectId: string, limit = 30): Promise<CommitLogEntry[]> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project) return [];
+    try {
+      return await this.deps.git.recentLog(project.localPath, project.integrationBranch, limit);
+    } catch {
+      return [];
+    }
   }
 
   private emitProject(projectId: string): void {
