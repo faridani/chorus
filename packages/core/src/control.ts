@@ -1,5 +1,12 @@
 import type { BackendInfo } from "./backend-info.js";
-import type { AgentTemplate, Project, ProjectRunState, Role, Ticket } from "./domain.js";
+import type {
+  AgentTemplate,
+  CommitLogEntry,
+  Project,
+  ProjectRunState,
+  Role,
+  Ticket,
+} from "./domain.js";
 import type { OrchestratorState } from "./state.js";
 
 export interface CreateProjectInput {
@@ -53,6 +60,8 @@ export interface ControlApi {
   addTicket(projectId: string, input: CreateTicketInput): Promise<Ticket>;
   updateTicket(projectId: string, ticketId: string, patch: UpdateTicketInput): Promise<Ticket>;
   deleteTicket(projectId: string, ticketId: string): Promise<void>;
+  /** Reorder a project's tickets; `orderedIds` is top→bottom (top = highest priority). */
+  reorderTickets(projectId: string, orderedIds: string[]): Promise<void>;
 
   upsertRole(projectId: string, input: UpsertRoleInput): Promise<Role>;
   deleteRole(projectId: string, name: string): Promise<void>;
@@ -65,6 +74,9 @@ export interface ControlApi {
 
   /** Human approval gate: merge the integration branch into main. */
   approveToMain(projectId: string): Promise<{ ok: boolean; message: string }>;
+
+  /** Recent commit log of the project's integration branch (newest first). */
+  integrationLog(projectId: string, limit?: number): Promise<CommitLogEntry[]>;
 
   /** Global "Agent Gallery" templates, reusable across projects. */
   upsertAgentTemplate(input: UpsertAgentTemplateInput): Promise<AgentTemplate>;
