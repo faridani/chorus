@@ -4,11 +4,12 @@ import { useEffect, useRef, useState } from "react";
 export interface Project {
   id: string;
   repoUrl: string;
-  integrationBranch: string;
   baseBranch: string;
   specPath: string | null;
   expectations: string;
   groundRules: string[];
+  setupCommand: string | null;
+  verifyCommands: string[];
   status: string;
   runState: "running" | "paused" | "stopped";
   createdAt: number;
@@ -22,6 +23,8 @@ export interface Ticket {
   roleName: string | null;
   priority: number;
   source: string;
+  prUrl: string | null;
+  prNumber: number | null;
   tasks: Task[];
 }
 
@@ -34,12 +37,14 @@ export interface Task {
   endedAt: number | null;
 }
 
-export interface Merge {
+export interface PullRequest {
   id: string;
-  status: string;
-  mergeCommit: string | null;
-  conflictFiles: string[];
+  ticketId: string;
+  url: string;
+  number: number | null;
+  state: string;
   createdAt: number;
+  updatedAt: number;
 }
 
 export interface ChangelogEntry {
@@ -49,23 +54,29 @@ export interface ChangelogEntry {
   createdAt: number;
 }
 
+export interface AttemptJournalEntry {
+  id: string;
+  taskId: string;
+  ticketId: string;
+  attempt: number;
+  verifyPassed: boolean | null;
+  verifyOutput: string | null;
+  diagnosis: string | null;
+  nextAction: string | null;
+  evaluatorVerdict: string | null;
+  reviewerVerdict: string | null;
+  proof: string | null;
+  createdAt: number;
+}
+
 export interface TicketEvent {
   id: string;
   projectId: string;
   ticketId: string;
   actor: string;
-  kind: "triage" | "work" | "merge" | "close" | "note";
+  kind: "triage" | "work" | "pr" | "close" | "note";
   message: string;
   createdAt: number;
-}
-
-export interface CommitLogEntry {
-  hash: string;
-  shortHash: string;
-  subject: string;
-  author: string;
-  relativeDate: string;
-  timestamp: number;
 }
 
 export interface Suggestion {
@@ -81,7 +92,8 @@ export interface ProjectDetail {
   project: Project;
   tickets: Ticket[];
   roles: Role[];
-  merges: Merge[];
+  pullRequests: PullRequest[];
+  attemptJournal: AttemptJournalEntry[];
   changelog: ChangelogEntry[];
   suggestions: Suggestion[];
 }
@@ -142,6 +154,15 @@ export interface AppState {
   version?: VersionInfo;
 }
 
+export interface GlobalSettings {
+  dataDir: string;
+  worktreesDir: string;
+  reposDir: string;
+  host: string;
+  port: number;
+  maxConcurrentAgents: number;
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json() as Promise<T>;
@@ -149,6 +170,7 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   state: () => fetch("/api/state").then((r) => json<AppState>(r)),
+  settings: () => fetch("/api/settings").then((r) => json<GlobalSettings>(r)),
   backends: () => fetch("/api/backends").then((r) => json<BackendInfo[]>(r)),
   refreshBackends: () =>
     fetch("/api/backends/refresh", { method: "POST" }).then((r) => json<BackendInfo[]>(r)),
@@ -168,7 +190,13 @@ export const api = {
     }).then((r) => json(r)),
   updateProject: (
     id: string,
-    patch: { baseBranch?: string; expectations?: string; groundRules?: string[] },
+    patch: {
+      baseBranch?: string;
+      expectations?: string;
+      groundRules?: string[];
+      setupCommand?: string;
+      verifyCommands?: string[];
+    },
   ) =>
     fetch(`/api/projects/${id}`, {
       method: "PATCH",
@@ -199,10 +227,6 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ orderedIds }),
     }).then((r) => json(r)),
-  integrationLog: (id: string, limit?: number) =>
-    fetch(`/api/projects/${id}/integration-log${limit ? `?limit=${limit}` : ""}`).then((r) =>
-      json<CommitLogEntry[]>(r),
-    ),
   upsertRole: (id: string, role: RoleInput) =>
     fetch(`/api/projects/${id}/roles`, {
       method: "POST",
@@ -234,10 +258,6 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ state }),
     }).then((r) => json<Project>(r)),
-  approve: (id: string) =>
-    fetch(`/api/projects/${id}/approve`, { method: "POST" }).then((r) =>
-      json<{ ok: boolean; message: string }>(r),
-    ),
   orchestrator: (action: "start" | "pause" | "stop") =>
     fetch(`/api/orchestrator/${action}`, { method: "POST" }).then((r) => json(r)),
 };
