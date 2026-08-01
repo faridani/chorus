@@ -186,6 +186,16 @@ export function createServer(deps: WebDeps): FastifyInstance {
     return api.updateTicket(id, ticketId, body ?? {});
   });
 
+  app.post("/api/projects/:id/tickets/reorder", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { orderedIds?: string[] };
+    if (!Array.isArray(body?.orderedIds)) {
+      return reply.code(400).send({ error: "orderedIds (string[]) required" });
+    }
+    await api.reorderTickets(id, body.orderedIds);
+    return { ok: true };
+  });
+
   app.delete("/api/projects/:id/tickets/:ticketId", async (req) => {
     const { id, ticketId } = req.params as { id: string; ticketId: string };
     await api.deleteTicket(id, ticketId);
@@ -227,6 +237,12 @@ export function createServer(deps: WebDeps): FastifyInstance {
   app.post("/api/projects/:id/approve", async (req) => {
     const { id } = req.params as { id: string };
     return api.approveToMain(id);
+  });
+
+  app.get("/api/projects/:id/integration-log", (req) => {
+    const { id } = req.params as { id: string };
+    const { limit } = req.query as { limit?: string };
+    return api.integrationLog(id, limit ? Number(limit) : undefined);
   });
 
   app.post("/api/orchestrator/start", () => {
