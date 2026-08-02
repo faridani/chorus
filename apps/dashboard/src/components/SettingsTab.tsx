@@ -7,6 +7,8 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
   const [baseBranch, setBaseBranch] = useState(project.baseBranch);
   const [expectations, setExpectations] = useState(project.expectations);
   const [groundRules, setGroundRules] = useState<string[]>(project.groundRules);
+  const [setupCommand, setSetupCommand] = useState(project.setupCommand ?? "");
+  const [verifyCommands, setVerifyCommands] = useState<string[]>(project.verifyCommands ?? []);
   const [busy, setBusy] = useState(false);
 
   // Re-sync if the project reloads underneath us.
@@ -14,17 +16,21 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
     setBaseBranch(project.baseBranch);
     setExpectations(project.expectations);
     setGroundRules(project.groundRules);
+    setSetupCommand(project.setupCommand ?? "");
+    setVerifyCommands(project.verifyCommands ?? []);
   }, [project.id]);
 
   const dirty =
     baseBranch !== project.baseBranch ||
     expectations !== project.expectations ||
-    JSON.stringify(groundRules) !== JSON.stringify(project.groundRules);
+    JSON.stringify(groundRules) !== JSON.stringify(project.groundRules) ||
+    setupCommand !== (project.setupCommand ?? "") ||
+    JSON.stringify(verifyCommands) !== JSON.stringify(project.verifyCommands ?? []);
 
   const save = async () => {
     setBusy(true);
     try {
-      await api.updateProject(project.id, { baseBranch, expectations, groundRules });
+      await api.updateProject(project.id, { baseBranch, expectations, groundRules, setupCommand, verifyCommands });
       onSaved();
     } catch (err) {
       alert(String(err));
@@ -39,10 +45,6 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
         <label>Repository</label>
         <div className="ro">{project.repoUrl}</div>
       </div>
-      <div className="field" title={TIPS.integrationBranch}>
-        <label>Integration branch (read-only)</label>
-        <div className="ro">{project.integrationBranch}</div>
-      </div>
       <div className="field" title={TIPS.specPath}>
         <label>Spec path</label>
         <div className="ro">{project.specPath ?? "—"}</div>
@@ -52,8 +54,34 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
         <label>Base / main branch</label>
         <input value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} title={TIPS.baseBranch} />
         <div className="hint">
-          Used as the promote target (Approve) and for new clones. Applies going forward; the
-          existing integration branch is unchanged.
+          Ticket branches are cut from this branch and PRs target it. Applies going forward.
+        </div>
+      </div>
+
+      <div className="field" title={TIPS.setupCommand}>
+        <label>Setup command</label>
+        <input
+          value={setupCommand}
+          placeholder="npm install"
+          onChange={(e) => setSetupCommand(e.target.value)}
+          title={TIPS.setupCommand}
+        />
+        <div className="hint">
+          Run once in each fresh worktree so agents can build/test (a new worktree has no installed
+          deps). Auto-detected for Node repos.
+        </div>
+      </div>
+
+      <div className="field" title={TIPS.verifyCommands}>
+        <label>Verify commands (acceptance gate)</label>
+        <StringListEditor
+          items={verifyCommands}
+          onChange={setVerifyCommands}
+          placeholder="e.g. npm test"
+        />
+        <div className="hint">
+          Build/test/lint commands run before a PR. They gate every attempt: an evaluator runs them
+          and a reviewer judges the diff — both must pass or the ticket loops back with the failure.
         </div>
       </div>
 
@@ -77,8 +105,8 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
           placeholder="e.g. Always add tests for new behavior"
         />
         <div className="hint">
-          Added to every agent's guardrails. Built-in safety rules (never push, never touch the base
-          branch, commit your work) always apply and can't be removed.
+          Added to every agent's guardrails. Built-in safety rules (never push, never touch the
+          base branch, commit your work) always apply and can't be removed.
         </div>
       </div>
 
@@ -93,12 +121,14 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
 const TIPS = {
   repository:
     "The GitHub repository this project works on. Cloned via the gh CLI under your authenticated account. Read-only — it's fixed when the project is created.",
-  integrationBranch:
-    "The branch agents merge their completed, reviewed work into (created by Chorus, e.g. chorus/integration). It is NOT your main branch. Read-only. You test this branch, then promote it to the base branch with the Approve button.",
   specPath:
     "Path inside the repo to the specification Chorus read to generate tickets (e.g. docs/SPEC.md or SPEC.md). Read-only — detected when the repo is imported, or set when you paste a spec for a repo that had none.",
   baseBranch:
-    "Your repository's protected base branch (default: main). Chorus cuts the integration branch from it and, when you click Approve, merges integration back into it. Agents never modify it directly. Changing it applies going forward (used as the Approve/promote target and for new clones); the existing integration branch is left unchanged.",
+    "Your repository's base branch (default: main). Chorus cuts each ticket's branch fresh from the latest origin/<base> and, when the work is ready, opens a GitHub PR targeting this branch for you to merge manually. Agents never push or modify it directly. Changing it applies going forward.",
+  setupCommand:
+    "A one-time command run in each fresh worktree before the agent starts (e.g. `npm install`). A new git worktree does NOT share the main clone's node_modules, so without this the agent can't build or run tests. Auto-detected for Node repos; leave blank for none.",
+  verifyCommands:
+    "Ordered build/test/lint commands that define acceptance. Before any PR, Chorus runs them, an evaluator agent confirms them, and a reviewer agent judges the diff — all must pass or the ticket is sent back to the worker with the failure as the next instruction.",
   expectations:
     "A plain-language description of what this project is and what 'good' looks like — goals, priorities, and constraints. This text is injected verbatim into every agent's prompt so all agents share the same high-level intent beyond the per-ticket details.",
   groundRules:
