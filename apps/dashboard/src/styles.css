@@ -33,17 +33,16 @@ button:disabled { opacity: .5; cursor: default; }
 .body { display: grid; grid-template-columns: 280px 1fr 320px; flex: 1; overflow: hidden; }
 .sidebar, .events { background: var(--panel); border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
 .events { border-right: none; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
-.commits-pane { flex: 0 0 auto; max-height: 30%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.prs-pane { flex: 0 0 auto; max-height: 30%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
 .models-pane { flex: 0 0 auto; max-height: 35%; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
 .feed-pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
-/* integration-branch git log */
+/* open PRs panel */
 .muted.small { font-size: 11px; }
-ul.gitlog { list-style: none; padding: 0; margin: 0; }
-ul.gitlog li { display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-ul.gitlog .sha { font-family: ui-monospace, monospace; color: var(--accent); font-size: 11px; }
-ul.gitlog .gsubject { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-ul.gitlog .gmeta { grid-column: 2; color: var(--muted); font-size: 10px; }
+.pr-list { list-style: none; padding: 0; margin: 0; }
+.pr-list .pr-item { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.pr-list .pr-link { color: var(--accent); text-decoration: none; }
+.pr-list .pr-link:hover { text-decoration: underline; }
 
 /* models panel */
 .backends { list-style: none; padding: 0; margin: 0; }
@@ -143,12 +142,11 @@ h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
 .runbtn.on.pause { color: #e3b341; border-color: #5e4e2e; background: #2a2412; }
 .runbtn.on.stop { color: #f85149; border-color: #5e2e34; background: #2a1517; }
 .tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--panel2); border: 1px solid var(--border); }
-.status-ready, .status-merged { color: #7ee787; }
-.status-error, .status-failed, .status-conflicted, .status-blocked { color: #f85149; }
-.status-needs_spec, .status-needs_review, .status-in_progress { color: #e3b341; }
+.status-ready, .status-merged, .pr-state-merged { color: #7ee787; }
+.status-error, .status-failed, .status-blocked, .pr-state-closed { color: #f85149; }
+.status-needs_spec, .status-needs_review, .status-in_progress, .status-pr_open, .pr-state-open { color: #e3b341; }
 .muted { color: var(--muted); font-size: 12px; }
 .projhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.approve { margin-left: auto; background: #1f3d2b; border-color: #2e5e40; }
 table.tickets { width: 100%; border-collapse: collapse; }
 table.tickets th, table.tickets td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
 table.tickets td.drag-handle { width: 18px; cursor: grab; color: var(--muted); text-align: center; user-select: none; }
@@ -156,8 +154,10 @@ table.tickets td.drag-handle:active { cursor: grabbing; }
 table.tickets tr.dragging { opacity: 0.45; }
 table.tickets tr.dragover td { border-top: 2px solid var(--accent); }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.merges, .changelog, .roles { list-style: none; padding: 0; margin: 0; }
-.merges li, .changelog li, .roles li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.prs, .changelog, .roles, .journal { list-style: none; padding: 0; margin: 0; }
+.prs li, .changelog li, .roles li, .journal li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.journal-diag { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 11px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px; margin: 4px 0; max-height: 160px; overflow-y: auto; }
+.journal-proof { font-size: 11px; }
 .addticket { display: flex; gap: 6px; margin-bottom: 8px; }
 .addticket input { margin: 0; }
 .events ul { list-style: none; padding: 0; margin: 0; font-family: ui-monospace, monospace; font-size: 11px; }
@@ -231,3 +231,21 @@ tr.clickable:hover td { background: var(--panel2); }
 .modal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 .warn { background: #3a2e14; border: 1px solid #5e4e2e; color: #e3b341; padding: 8px; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+
+/* hamburger + global settings drawer */
+.hamburger { font-size: 18px; line-height: 1; padding: 4px 10px; }
+.drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 60; display: flex; justify-content: flex-end; }
+.drawer { background: var(--panel); border-left: 1px solid var(--border); width: min(420px, 92vw); height: 100%; padding: 16px 18px; overflow-y: auto; box-shadow: -8px 0 24px rgba(0,0,0,.35); }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.drawer-head h3 { margin: 0; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 16px; }
+.drawer-close { padding: 2px 8px; }
+.settings-list { display: flex; flex-direction: column; gap: 14px; }
+.setting-row { display: flex; flex-direction: column; gap: 4px; }
+.setting-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.setting-value { display: block; font-family: ui-monospace, monospace; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; word-break: break-all; }
+.setting-hint { font-size: 11px; color: var(--muted); }
+
+/* loop gallery */
+.loop-steps { margin: 8px 0 0; }
+.loop-step { padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; color: var(--text); }
+.loop-arrow { text-align: center; color: var(--muted); font-size: 12px; line-height: 1; margin: 3px 0; }
