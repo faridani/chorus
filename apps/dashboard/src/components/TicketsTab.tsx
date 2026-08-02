@@ -57,6 +57,7 @@ export function TicketsTab({
             <th>Now with</th>
             <th>Priority</th>
             <th>Status</th>
+            <th>PR</th>
           </tr>
         </thead>
         <tbody>
@@ -104,11 +105,25 @@ export function TicketsTab({
                 <span className={`tag status-${t.status}`}>{t.status}</span>
                 {isRunning(t) && <span className="tag running"> running</span>}
               </td>
+              <td>
+                {t.prUrl ? (
+                  <a
+                    href={t.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {t.prNumber ? `#${t.prNumber}` : "PR"}
+                  </a>
+                ) : (
+                  "—"
+                )}
+              </td>
             </tr>
           ))}
           {order.length === 0 && (
             <tr>
-              <td colSpan={5} className="muted">
+              <td colSpan={6} className="muted">
                 no tickets yet
               </td>
             </tr>
@@ -192,8 +207,8 @@ function TicketEditor({
           </div>
         </div>
         <div className="hint">
-          Every ticket is triaged by the orchestrator agent, which assigns it to a worker, merges
-          its work, or closes it. Assignment is managed automatically.
+          Every ticket is triaged by the orchestrator agent, which assigns it to a worker, opens a
+          PR for its work, or closes it. Assignment is managed automatically.
         </div>
 
         {ticket && (
