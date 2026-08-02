@@ -23,7 +23,7 @@ export function ProjectPanel({
   runningTaskIds: string[];
   onChange: () => void;
 }) {
-  const { project, tickets, roles, merges, changelog, suggestions } = detail;
+  const { project, tickets, roles, pullRequests, attemptJournal, changelog, suggestions } = detail;
   const [tab, setTab] = useState<Tab>("tickets");
 
   const needsSpec = project.status === "needs_spec";
@@ -33,18 +33,7 @@ export function ProjectPanel({
       <div className="projhead">
         <h2>{shortRepo(project.repoUrl)}</h2>
         <span className={`tag status-${project.status}`}>{project.status}</span>
-        <span className="muted">
-          integration: {project.integrationBranch} · base: {project.baseBranch}
-        </span>
-        <button
-          className="approve"
-          onClick={async () => {
-            const r = await api.approve(project.id);
-            alert(r.message);
-          }}
-        >
-          Approve → {project.baseBranch}
-        </button>
+        <span className="muted">base: {project.baseBranch} · PRs target this branch</span>
       </div>
 
       {needsSpec && <ProvideSpec id={project.id} onDone={onChange} />}
@@ -80,7 +69,13 @@ export function ProjectPanel({
           <StateMachineTab tickets={tickets} events={events} runningTaskIds={runningTaskIds} />
         )}
         {tab === "settings" && <SettingsTab project={project} onSaved={onChange} />}
-        {tab === "activity" && <ActivityTab merges={merges} changelog={changelog} />}
+        {tab === "activity" && (
+          <ActivityTab
+            pullRequests={pullRequests}
+            attemptJournal={attemptJournal}
+            changelog={changelog}
+          />
+        )}
         {tab === "suggestions" && (
           <SuggestionsTab projectId={project.id} suggestions={suggestions} onChange={onChange} />
         )}
