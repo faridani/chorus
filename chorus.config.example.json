@@ -2,7 +2,6 @@
   "dataDir": "/Users/you/.chorus",
   "port": 7878,
   "host": "127.0.0.1",
-  "integrationBranch": "chorus/integration",
   "maxConcurrentAgents": 2,
   "agent": {
     "maxWallClockMs": 2700000,
