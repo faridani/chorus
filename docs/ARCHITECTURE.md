@@ -9,23 +9,27 @@ Everything is TypeScript on Node 22; SQLite is the single source of truth.
 ticket (open)
    │  orchestrator.tick() picks highest-priority open ticket
    ▼
-git worktree add  →  chorus/ticket-<id>-a<attempt>  (cut from integration tip)
+git worktree add  →  chorus/ticket-<id>  (cut from origin/<base>, fetched first)
    │
    ▼
 backend.startRun()  →  codex exec --json --output-schema -o result.json
    │   (isolated worktree, full sandbox, group-killable, idle/wall timeouts)
    ▼
-result + git inspection  →  done-detection
-   │   clean exit + valid output (status=success) + real commit + clean tree?
-   ├─ no  → done-no-changes / partial / done-unverified / failed → needs_review (notify)
-   └─ yes → merge --no-ff into chorus/integration
+result + git inspection  →  done-detection, then orchestrator triage
+   │   work ready (committed + coherent)?
+   ├─ no  → assign again / close / needs_human (notify)
+   └─ yes → git push origin chorus/ticket-<id>  +  gh pr create --base <base>
               │
-              ├─ conflict → mark conflicted, leave branch, notify human
-              └─ merged   → changelog (DB + CHANGELOG.md commit), iMessage, cleanup worktree
+              ▼
+        ticket → pr_open (PR link stored + shown), iMessage "PR opened"
+              │
+              ▼
+        you merge the PR on GitHub  →  poller (gh pr view) flips ticket → merged
 ```
 
-`main` is only ever touched by the explicit **Approve** action, which does a
-local `--no-ff` merge of the integration branch into the base branch.
+`main` is never pushed to or merged by Chorus. Each ticket becomes a GitHub PR;
+merging it is always a manual human action on GitHub. Chorus polls open PRs and
+marks the ticket `merged` once GitHub reports the PR merged.
 
 ## Key design decisions
 
@@ -34,18 +38,18 @@ local `--no-ff` merge of the integration branch into the base branch.
   against a Zod schema is the result. The stream is parsed defensively
   (partial lines, non-JSON noise) and fully persisted as a raw log.
 - **"Done" is not a boolean.** Process exit means "the agent stopped," not
-  "the work is correct." Merge requires clean exit **and** a structured success
-  **and** a real new commit **and** a clean worktree. Rich terminal states
-  (`done-no-changes`, `partial`, `done-unverified`, `conflicted`, …) drive the
-  next action.
+  "the work is correct." Opening a PR requires clean exit **and** a structured
+  success **and** a real new commit. Rich terminal states (`done-no-changes`,
+  `partial`, `done-unverified`, …) drive the next action.
 - **One git mutex.** Parallel agents edit files in separate worktrees safely,
-  but every shared-ref operation (worktree add, fetch, merge) serializes
+  but every shared-ref operation (worktree add, fetch, push) serializes
   through a single mutex in `git-service` — nothing else shells out to git.
 - **Group-kill.** Codex spawns child processes; the runner spawns detached and
   signals the whole process group, so stop/pause/timeout never orphan work.
 - **PIDs are dead on boot.** SQLite is durable; processes are not. Restart
-  reconciliation re-derives each interrupted task's fate from git state, aborts
-  any dangling merge, and re-opens or flags work — it never reattaches a PID.
+  reconciliation re-derives each interrupted task's fate from git state and
+  re-opens or flags work — it never reattaches a PID. Tickets already in
+  `pr_open` survive a restart and the PR poller resumes watching them.
 - **Quota is account-global.** A quota-exhausted exit pauses *all* dispatch,
   preserves worktrees, and a single backoff scheduler resumes by re-running in
   the same worktree. The exhaustion signal is a config-tunable regex classifier.
