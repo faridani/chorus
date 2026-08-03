@@ -30,7 +30,7 @@ export type ChorusEvent =
       event: AgentEvent;
       at: number;
     }
-  | { type: "merge"; projectId: string; taskId: string; mergeId: string; at: number }
+  | { type: "pr"; projectId: string; ticketId: string; prId: string; at: number }
   | { type: "changelog"; projectId: string; entryId: string; at: number }
   | { type: "usage"; projectId: string | null; at: number }
   | { type: "quota"; state: "available" | "exhausted"; resumeAt: number | null; at: number }
