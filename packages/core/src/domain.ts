@@ -1,10 +1,4 @@
-import type {
-  MergeStatus,
-  QuotaState,
-  TaskState,
-  TerminalReason,
-  TicketStatus,
-} from "./state.js";
+import type { QuotaState, TaskState, TerminalReason, TicketStatus } from "./state.js";
 
 /** A project = one GitHub repo Chorus is working on. */
 export interface Project {
@@ -12,9 +6,7 @@ export interface Project {
   repoUrl: string;
   /** Local path of the canonical clone. */
   localPath: string;
-  /** Branch agents merge into (never `main`). */
-  integrationBranch: string;
-  /** Base branch the integration branch was cut from. */
+  /** Base branch that ticket branches are cut from and PRs target (e.g. `main`). */
   baseBranch: string;
   /** Path to the spec within the repo, if found (e.g. docs/SPEC.md). */
   specPath: string | null;
@@ -22,6 +14,10 @@ export interface Project {
   expectations: string;
   /** Project-wide ground rules every agent must follow (injected into prompts). */
   groundRules: string[];
+  /** One-time setup command run in each fresh worktree (e.g. `npm install`). */
+  setupCommand: string | null;
+  /** Ordered build/test/lint commands used to verify an attempt before a PR. */
+  verifyCommands: string[];
   status: "initializing" | "needs_spec" | "ready" | "error";
   /** Per-project dispatch control (independent of other projects). */
   runState: ProjectRunState;
@@ -87,6 +83,10 @@ export interface Ticket {
   branch: string | null;
   /** Persistent worktree path for this ticket's branch. */
   worktreePath: string | null;
+  /** URL of the GitHub PR opened for this ticket's branch, once opened. */
+  prUrl: string | null;
+  /** Number of the GitHub PR, once opened. */
+  prNumber: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -98,7 +98,7 @@ export interface TicketEvent {
   ticketId: string;
   /** Who produced it: a role name ("orchestrator"/worker) or "system". */
   actor: string;
-  kind: "triage" | "work" | "merge" | "close" | "note";
+  kind: "triage" | "work" | "pr" | "close" | "note";
   message: string;
   createdAt: number;
 }
@@ -115,7 +115,7 @@ export interface Suggestion {
 
 /** The structured decision the orchestrator agent returns when triaging a ticket. */
 export interface OrchestratorDecision {
-  action: "assign" | "merge" | "close" | "needs_human";
+  action: "assign" | "open_pr" | "close" | "needs_human";
   /** For "assign": the worker role to hand the ticket to. */
   assignee?: string;
   /** Optional reprioritization. */
@@ -161,26 +161,64 @@ export interface AgentRun {
   outputFilePath: string | null;
 }
 
-/** A record of an attempted merge of an agent branch into integration. */
-export interface Merge {
+/** A GitHub pull request opened for a ticket's branch. */
+export interface PullRequest {
   id: string;
-  taskId: string;
+  ticketId: string;
   projectId: string;
-  integrationBranch: string;
-  mergeCommit: string | null;
-  status: MergeStatus;
-  conflictFiles: string[];
+  /** The task (attempt) whose accepted branch this PR was opened from. */
+  taskId: string | null;
+  /** Web URL of the PR. */
+  url: string;
+  /** PR number, if known. */
+  number: number | null;
+  /** GitHub PR state: OPEN | MERGED | CLOSED. */
+  state: string;
   createdAt: number;
+  updatedAt: number;
 }
 
-/** A human-facing changelog entry, also persisted to the repo. */
+/** A human-facing changelog entry. */
 export interface ChangelogEntry {
   id: string;
   projectId: string;
   ticketId: string | null;
-  mergeId: string | null;
+  /** The pull request this entry relates to, if any. */
+  prId: string | null;
   entry: string;
   agentRole: string | null;
+  createdAt: number;
+}
+
+/**
+ * A structured, reflective record of one worker attempt: what was tried, how it
+ * was verified, why it failed (or the proof it passed), and what happens next.
+ * This is the loop's reflective memory — read back to seed the next attempt.
+ */
+export interface AttemptJournalEntry {
+  id: string;
+  taskId: string;
+  ticketId: string;
+  projectId: string;
+  attempt: number;
+  /** sha256 of the worker prompt that produced this attempt. */
+  promptHash: string | null;
+  /** sha256 of `git diff base..branch` after the attempt. */
+  diffHash: string | null;
+  /** Whether the programmatic verify commands all passed (null = not run). */
+  verifyPassed: boolean | null;
+  /** Truncated tail of the programmatic verify output. */
+  verifyOutput: string | null;
+  /** The evaluator's diagnosis of any failure. */
+  diagnosis: string | null;
+  /** What the loop decided to do next (e.g. "reassign: fix failing test X"). */
+  nextAction: string | null;
+  /** Structured evaluator verdict (JSON-serialized). */
+  evaluatorVerdict: string | null;
+  /** Structured reviewer verdict (JSON-serialized). */
+  reviewerVerdict: string | null;
+  /** On success: the PR url / passing-checks summary. */
+  proof: string | null;
   createdAt: number;
 }
 
@@ -194,18 +232,6 @@ export interface UsageEvent {
   outputTokens: number | null;
   detail: string | null;
   observedAt: number;
-}
-
-/** One commit in a branch's history (for the Integration Branch log view). */
-export interface CommitLogEntry {
-  hash: string;
-  shortHash: string;
-  subject: string;
-  author: string;
-  /** Human-relative date, e.g. "3 hours ago". */
-  relativeDate: string;
-  /** Commit time in ms since epoch. */
-  timestamp: number;
 }
 
 /** Account-global quota singleton. */
