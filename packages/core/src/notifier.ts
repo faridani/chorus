@@ -1,6 +1,6 @@
 /** A human-facing notification raised by the orchestrator. */
 export interface NotificationEvent {
-  kind: "merged" | "conflict" | "needs_review" | "quota_paused" | "error";
+  kind: "pr_opened" | "pr_merged" | "needs_review" | "quota_paused" | "error";
   projectId: string;
   title: string;
   body: string;
