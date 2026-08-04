@@ -25,7 +25,6 @@ test("project + ticket + task round-trip", () => {
     id: projectId,
     repoUrl: "owner/repo",
     localPath: "/tmp/x",
-    integrationBranch: "chorus/integration",
     baseBranch: "main",
     specPath: "docs/SPEC.md",
     expectations: "",
@@ -48,6 +47,8 @@ test("project + ticket + task round-trip", () => {
     source: "spec",
     branch: null,
     worktreePath: null,
+    prUrl: null,
+    prNumber: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -86,7 +87,6 @@ test("migration 0002: project round-trips expectations + ground rules", () => {
     id,
     repoUrl: "owner/repo",
     localPath: "/tmp/x",
-    integrationBranch: "chorus/integration",
     baseBranch: "main",
     specPath: null,
     expectations: "Build a great thing",
@@ -121,7 +121,6 @@ test("ticket delete + role update/delete", () => {
     id: projectId,
     repoUrl: "owner/repo",
     localPath: "/tmp/x",
-    integrationBranch: "chorus/integration",
     baseBranch: "main",
     specPath: null,
     expectations: "",
@@ -143,6 +142,8 @@ test("ticket delete + role update/delete", () => {
     source: "manual",
     branch: null,
     worktreePath: null,
+    prUrl: null,
+    prNumber: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -187,7 +188,6 @@ test("migration 0005: ticket branch/worktree, trail events, suggestions", () => 
     id: projectId,
     repoUrl: "owner/repo",
     localPath: "/tmp/x",
-    integrationBranch: "chorus/integration",
     baseBranch: "main",
     specPath: null,
     expectations: "",
@@ -208,6 +208,8 @@ test("migration 0005: ticket branch/worktree, trail events, suggestions", () => 
     source: "manual",
     branch: "chorus/ticket-x",
     worktreePath: "/tmp/wt",
+    prUrl: null,
+    prNumber: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -242,6 +244,144 @@ test("migration 0005: ticket branch/worktree, trail events, suggestions", () => 
   db.setSuggestionStatus(sid, "dismissed");
   assert.equal(db.listSuggestions(projectId, "open").length, 0);
   assert.equal(db.listSuggestions(projectId, "dismissed").length, 1);
+  db.close();
+});
+
+test("migration 0006: ticket pr fields + pull_requests round-trip", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    status: "ready",
+    runState: "running",
+    createdAt: Date.now(),
+  });
+  const ticketId = newId("tkt");
+  db.insertTicket({
+    id: ticketId,
+    projectId,
+    title: "t",
+    body: "b",
+    status: "pr_open",
+    roleName: "orchestrator",
+    priority: 0,
+    source: "manual",
+    branch: "chorus/ticket-x",
+    worktreePath: null,
+    prUrl: "https://github.com/owner/repo/pull/7",
+    prNumber: 7,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  const t = db.getTicket(ticketId)!;
+  assert.equal(t.prUrl, "https://github.com/owner/repo/pull/7");
+  assert.equal(t.prNumber, 7);
+
+  const prId = newId("pr");
+  db.insertPullRequest({
+    id: prId,
+    ticketId,
+    projectId,
+    url: "https://github.com/owner/repo/pull/7",
+    number: 7,
+    state: "OPEN",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  assert.equal(db.listPullRequests(projectId).length, 1);
+  assert.equal(db.listPullRequests(projectId)[0]?.state, "OPEN");
+  db.updatePullRequestState(prId, "MERGED");
+  assert.equal(db.listPullRequests(projectId)[0]?.state, "MERGED");
+
+  assert.equal(db.listTicketsByStatus(projectId, "pr_open").length, 1);
+  db.close();
+});
+
+test("migration 0007: project commands + attempt journal + pr task_id", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    setupCommand: "npm install",
+    verifyCommands: ["npm run build", "npm test"],
+    status: "ready",
+    runState: "running",
+    createdAt: Date.now(),
+  });
+  const p = db.getProject(projectId)!;
+  assert.equal(p.setupCommand, "npm install");
+  assert.deepEqual(p.verifyCommands, ["npm run build", "npm test"]);
+  db.updateProject(projectId, { verifyCommands: ["npm test"] });
+  assert.deepEqual(db.getProject(projectId)!.verifyCommands, ["npm test"]);
+
+  const ticketId = newId("tkt");
+  db.insertTicket({
+    id: ticketId,
+    projectId,
+    title: "t",
+    body: "b",
+    status: "open",
+    roleName: "software-dev",
+    priority: 0,
+    source: "manual",
+    branch: "chorus/ticket-x",
+    worktreePath: "/tmp/wt",
+    prUrl: null,
+    prNumber: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  const taskId = newId("task");
+  db.insertAttemptJournal({
+    id: newId("aj"),
+    taskId,
+    ticketId,
+    projectId,
+    attempt: 1,
+    promptHash: "abc123",
+    diffHash: "def456",
+    verifyPassed: false,
+    verifyOutput: "npm test\nFAIL src/x.test.ts",
+    diagnosis: "Test x expects Y",
+    nextAction: "reassign-to-worker",
+    evaluatorVerdict: JSON.stringify({ passed: false }),
+    reviewerVerdict: null,
+    proof: null,
+    createdAt: Date.now(),
+  });
+  const journal = db.listAttemptJournal(ticketId);
+  assert.equal(journal.length, 1);
+  assert.equal(journal[0]?.verifyPassed, false);
+  assert.equal(journal[0]?.diagnosis, "Test x expects Y");
+  assert.equal(db.latestAttemptJournal(ticketId)?.taskId, taskId);
+  assert.equal(db.listProjectAttemptJournal(projectId).length, 1);
+
+  // pull_requests.task_id round-trips.
+  db.insertPullRequest({
+    id: newId("pr"),
+    ticketId,
+    projectId,
+    taskId,
+    url: "https://github.com/owner/repo/pull/3",
+    number: 3,
+    state: "OPEN",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  assert.equal(db.listPullRequests(projectId)[0]?.taskId, taskId);
   db.close();
 });
 
