@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BackendRegistry } from "@chorus/backends";
@@ -5,7 +6,6 @@ import {
   type AgentTemplate,
   type BackendInfo,
   type ChorusBus,
-  type CommitLogEntry,
   type Config,
   type ControlApi,
   type CreateProjectInput,
@@ -43,15 +43,15 @@ export interface ControllerDeps {
 const DEFAULT_GROUND_RULES = [
   "Follow the project specification and the high-level expectations above.",
   "Write clear commit messages describing what changed and why.",
-  "Prefer small, focused changes that keep the integration branch releasable.",
+  "Prefer small, focused changes that keep each PR easy to review.",
 ];
 
 const DEFAULT_ROLES: UpsertRoleInput[] = [
   {
     name: ORCHESTRATOR_ROLE,
     description:
-      "Triages every ticket: decides whether to assign it to another agent, merge the work, or close it. Routes work and gates merges. Cannot be deleted.",
-    allowed: ["read the repo", "assign tickets to other agents", "merge approved work", "close tickets", "raise suggestions"],
+      "Triages every ticket: decides whether to assign it to another agent, open a PR for the work, or close it. Routes work and gates PRs. Cannot be deleted.",
+    allowed: ["read the repo", "assign tickets to other agents", "open PRs for approved work", "close tickets", "raise suggestions"],
     forbidden: ["write code directly"],
     backendId: "codex",
   },
@@ -63,6 +63,28 @@ const DEFAULT_ROLES: UpsertRoleInput[] = [
     backendId: "codex",
   },
 ];
+
+/**
+ * Best-effort detection of the setup + verify commands for a freshly cloned
+ * repo, so agents can build/test (the worktree starts with no deps installed).
+ * Currently understands Node projects via package.json scripts; other stacks
+ * leave these empty (the user can set them in Settings).
+ */
+function detectCommands(localPath: string): { setupCommand: string | null; verifyCommands: string[] } {
+  const pkgPath = join(localPath, "package.json");
+  if (!existsSync(pkgPath)) return { setupCommand: null, verifyCommands: [] };
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string> };
+    const scripts = pkg.scripts ?? {};
+    const verify: string[] = [];
+    if (scripts.build) verify.push("npm run build");
+    if (scripts.test) verify.push("npm test");
+    else if (scripts.lint) verify.push("npm run lint");
+    return { setupCommand: "npm install", verifyCommands: verify };
+  } catch {
+    return { setupCommand: "npm install", verifyCommands: [] };
+  }
+}
 
 /** Implements the commands the web layer issues. Owns project initialization. */
 export class AppController implements ControlApi {
@@ -114,11 +136,12 @@ export class AppController implements ControlApi {
       id,
       repoUrl: input.repoUrl,
       localPath,
-      integrationBranch: this.deps.config.integrationBranch,
       baseBranch: input.baseBranch?.trim() || "main",
       specPath: null,
       expectations: "",
       groundRules: DEFAULT_GROUND_RULES,
+      setupCommand: null,
+      verifyCommands: [],
       status: "initializing",
       runState: "running",
       createdAt: Date.now(),
@@ -134,13 +157,9 @@ export class AppController implements ControlApi {
     try {
       await this.deps.git.clone(project.repoUrl, project.localPath);
       const baseBranch = baseOverride ?? (await this.deps.git.detectDefaultBranch(project.localPath));
-      await this.deps.git.ensureIntegrationBranch(
-        project.localPath,
-        baseBranch,
-        project.integrationBranch,
-      );
       await this.deps.git.installPushGuard(project.localPath, [baseBranch, "main", "master"]);
-      this.deps.db.updateProject(project.id, { baseBranch });
+      const { setupCommand, verifyCommands } = detectCommands(project.localPath);
+      this.deps.db.updateProject(project.id, { baseBranch, setupCommand, verifyCommands });
 
       for (const role of DEFAULT_ROLES) this.seedRole(project.id, role);
 
@@ -210,6 +229,8 @@ export class AppController implements ControlApi {
       ...(patch.baseBranch !== undefined ? { baseBranch: patch.baseBranch.trim() || "main" } : {}),
       ...(patch.expectations !== undefined ? { expectations: patch.expectations } : {}),
       ...(patch.groundRules !== undefined ? { groundRules: patch.groundRules } : {}),
+      ...(patch.setupCommand !== undefined ? { setupCommand: patch.setupCommand.trim() || null } : {}),
+      ...(patch.verifyCommands !== undefined ? { verifyCommands: patch.verifyCommands } : {}),
     });
     this.emitProject(projectId);
     return Promise.resolve(this.deps.db.getProject(projectId)!);
@@ -254,6 +275,8 @@ export class AppController implements ControlApi {
       source: "manual",
       branch: null,
       worktreePath: null,
+      prUrl: null,
+      prNumber: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -370,43 +393,6 @@ export class AppController implements ControlApi {
   }
   runningTaskIds(): string[] {
     return this.deps.orchestrator.runningTaskIds();
-  }
-
-  async approveToMain(projectId: string): Promise<{ ok: boolean; message: string }> {
-    const project = this.deps.db.getProject(projectId);
-    if (!project) return { ok: false, message: "project not found" };
-    const outcome = await this.deps.git.mergeIntegrationToBase(
-      project.localPath,
-      project.baseBranch,
-      project.integrationBranch,
-    );
-    if (outcome.status === "conflicted") {
-      return {
-        ok: false,
-        message: `Conflicts merging into ${project.baseBranch}: ${outcome.conflictFiles.join(", ")}`,
-      };
-    }
-    await this.deps.notifier.notify({
-      kind: "merged",
-      projectId,
-      title: `Promoted to ${project.baseBranch}`,
-      body: `${project.integrationBranch} → ${project.baseBranch} (${outcome.mergeCommit?.slice(0, 8)}). Push is left to you.`,
-      at: Date.now(),
-    });
-    return {
-      ok: true,
-      message: `Merged ${project.integrationBranch} into ${project.baseBranch} locally (${outcome.mergeCommit?.slice(0, 8)}). Review and push when ready.`,
-    };
-  }
-
-  async integrationLog(projectId: string, limit = 30): Promise<CommitLogEntry[]> {
-    const project = this.deps.db.getProject(projectId);
-    if (!project) return [];
-    try {
-      return await this.deps.git.recentLog(project.localPath, project.integrationBranch, limit);
-    } catch {
-      return [];
-    }
   }
 
   private emitProject(projectId: string): void {
