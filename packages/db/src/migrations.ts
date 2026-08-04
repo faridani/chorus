@@ -172,6 +172,60 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_suggestions_project ON suggestions(project_id, status, created_at);
   `,
+
+  // 0006 — PR flow: drop the integration branch, track per-ticket PRs
+  `
+  ALTER TABLE projects DROP COLUMN integration_branch;
+
+  ALTER TABLE tickets ADD COLUMN pr_url TEXT;
+  ALTER TABLE tickets ADD COLUMN pr_number INTEGER;
+
+  DROP TABLE merges;
+  CREATE TABLE pull_requests (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    number INTEGER,
+    state TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_pull_requests_project ON pull_requests(project_id);
+
+  -- changelog.merge_id is renamed conceptually to pr_id; the column name stays
+  -- (no FK constraint existed), repurposed to hold a pull_requests.id.
+  ALTER TABLE changelog RENAME COLUMN merge_id TO pr_id;
+  `,
+
+  // 0007 — runnable worktrees + reflective memory: per-project commands,
+  // attempt journal, and PR→task traceability.
+  `
+  ALTER TABLE projects ADD COLUMN setup_command TEXT;
+  ALTER TABLE projects ADD COLUMN verify_commands TEXT;   -- JSON array
+
+  ALTER TABLE pull_requests ADD COLUMN task_id TEXT;
+
+  CREATE TABLE attempt_journal (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    attempt INTEGER NOT NULL,
+    prompt_hash TEXT,
+    diff_hash TEXT,
+    verify_passed INTEGER,          -- 0/1/null
+    verify_output TEXT,             -- truncated tail of programmatic verify
+    diagnosis TEXT,                 -- evaluator's failure diagnosis
+    next_action TEXT,               -- what the loop decided to do next
+    evaluator_verdict TEXT,         -- JSON
+    reviewer_verdict TEXT,          -- JSON
+    proof TEXT,                     -- PR url / passing-checks summary on success
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_attempt_journal_ticket ON attempt_journal(ticket_id, created_at);
+  CREATE INDEX idx_attempt_journal_project ON attempt_journal(project_id, created_at);
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {
