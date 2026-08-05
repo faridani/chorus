@@ -10,7 +10,10 @@ async function git(cwd: string, ...args: string[]) {
   await run("git", args, { cwd, throwOnError: true });
 }
 
-async function makeRepo(): Promise<{ repo: string; integration: string }> {
+async function makeRepo(): Promise<{ repo: string; base: string }> {
+  const origin = mkdtempSync(join(tmpdir(), "chorus-harden-origin-"));
+  await git(origin, "init", "-q", "--bare", "-b", "main");
+
   const repo = mkdtempSync(join(tmpdir(), "chorus-harden-"));
   await git(repo, "init", "-q", "-b", "main");
   await git(repo, "config", "user.email", "t@t.dev");
@@ -18,15 +21,16 @@ async function makeRepo(): Promise<{ repo: string; integration: string }> {
   writeFileSync(join(repo, "f.txt"), "hi\n");
   await git(repo, "add", ".");
   await git(repo, "commit", "-qm", "init");
-  await git(repo, "checkout", "-q", "-b", "chorus/integration");
-  return { repo, integration: "chorus/integration" };
+  await git(repo, "remote", "add", "origin", origin);
+  await git(repo, "push", "-q", "-u", "origin", "main");
+  return { repo, base: "main" };
 }
 
 test("installPushGuard writes a syntactically valid hook that blocks protected branches", async () => {
   const gs = new GitService();
   const { repo } = await makeRepo();
   // Includes a duplicate ("main") to exercise dedup.
-  await gs.installPushGuard(repo, ["main", "master", "chorus/integration", "main"]);
+  await gs.installPushGuard(repo, ["main", "master", "main"]);
   const hook = join(repo, ".git", "hooks", "pre-push");
 
   // Must be valid shell (the old impl emitted "pat) pat) pat)" → syntax error).
@@ -57,39 +61,39 @@ test("installPushGuard with no protected branches produces a valid pass-through 
 
 test("addWorktree recovers from a leftover worktree directory", async () => {
   const gs = new GitService();
-  const { repo, integration } = await makeRepo();
+  const { repo, base } = await makeRepo();
   const wt = join(repo, "..", `wt-leftover-${Date.now()}`);
   // Simulate a directory left behind by a crashed run.
   mkdirSync(wt, { recursive: true });
   writeFileSync(join(wt, "junk.txt"), "stale\n");
 
-  await gs.addWorktree(repo, wt, "chorus/ticket-leftover", integration);
+  await gs.addWorktree(repo, wt, "chorus/ticket-leftover", base);
   assert.equal(await gs.isWorktreeClean(wt), true);
 });
 
 test("commitFile is a no-op when nothing changed and surfaces the new commit when it does", async () => {
   const gs = new GitService();
   const { repo } = await makeRepo();
-  const before = await gs.headCommit(repo, "chorus/integration");
+  const before = await gs.headCommit(repo, "main");
 
-  const c1 = await gs.commitFile(repo, "CHANGELOG.md", "v1\n", "add changelog");
+  const c1 = await gs.commitFile(repo, "NOTES.md", "v1\n", "add notes");
   assert.notEqual(c1, before); // a real commit happened
 
   // Same content again → nothing staged → no new commit, returns current HEAD.
-  const c2 = await gs.commitFile(repo, "CHANGELOG.md", "v1\n", "noop");
+  const c2 = await gs.commitFile(repo, "NOTES.md", "v1\n", "noop");
   assert.equal(c2, c1);
 });
 
 test("commitFile(branch) commits on the target branch even if HEAD is elsewhere", async () => {
   const gs = new GitService();
-  const { repo } = await makeRepo(); // currently on chorus/integration
-  await git(repo, "checkout", "main"); // move HEAD off integration
+  const { repo } = await makeRepo(); // currently on main
+  await git(repo, "branch", "side"); // create a side branch off main
 
-  const c = await gs.commitFile(repo, "CHANGELOG.md", "log\n", "changelog", "chorus/integration");
-  // The commit lands on integration...
-  assert.equal(await gs.headCommit(repo, "chorus/integration"), c);
-  // ...and main does NOT have the changelog file.
-  const onMain = await run("git", ["cat-file", "-e", "main:CHANGELOG.md"], {
+  const c = await gs.commitFile(repo, "NOTES.md", "log\n", "notes", "side");
+  // The commit lands on `side`...
+  assert.equal(await gs.headCommit(repo, "side"), c);
+  // ...and main does NOT have the notes file.
+  const onMain = await run("git", ["cat-file", "-e", "main:NOTES.md"], {
     cwd: repo,
     throwOnError: false,
   });
