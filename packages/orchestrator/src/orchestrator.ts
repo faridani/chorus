@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BackendRegistry } from "@chorus/backends";
@@ -19,8 +20,11 @@ import {
 } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import type { GitService } from "@chorus/git-service";
-import { renderChangelog } from "./changelog.js";
+import { runShell } from "@chorus/proc";
+import { type EvaluatorVerdict, runEvaluator } from "./evaluate.js";
+import { buildManifest, type TaskManifest } from "./manifest.js";
 import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
+import { type ReviewerVerdict, runReviewer } from "./review.js";
 import { runTriage } from "./triage.js";
 
 export interface OrchestratorDeps {
@@ -35,8 +39,8 @@ export interface OrchestratorDeps {
 /**
  * The daemon dispatch loop. Processes tickets serially per project through a
  * per-project "orchestrator" triage agent: every ticket flows
- * orchestrator → worker → orchestrator (keep working / merge / close) → done.
- * The orchestrator agent gates merges; workers never merge themselves.
+ * orchestrator → worker → orchestrator (keep working / open PR / close) → done.
+ * The orchestrator agent gates PRs; workers never push or open PRs themselves.
  */
 export class Orchestrator {
   private state: OrchestratorState = "stopped";
@@ -44,6 +48,12 @@ export class Orchestrator {
   /** ticketId → active op (one per ticket; per-project serial). */
   private readonly active = new Map<string, { projectId: string; stop: () => Promise<void> }>();
   private ticking = false;
+  /** Last time open PRs were polled for merge (throttles the gh calls). */
+  private lastPrPollAt = 0;
+  /** How often to poll GitHub for PR merge state (ms). */
+  private static readonly PR_POLL_INTERVAL_MS = 30_000;
+  /** ticketId → the most recent worker attempt's metadata (for the journal). */
+  private readonly lastAttempt = new Map<string, { taskId: string; attempt: number; promptHash: string }>();
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -91,6 +101,13 @@ export class Orchestrator {
     try {
       if (this.state !== "running") return;
       this.reconcileQuota();
+
+      // Poll open PRs for merge (throttled) regardless of quota — read-only.
+      if (Date.now() - this.lastPrPollAt >= Orchestrator.PR_POLL_INTERVAL_MS) {
+        this.lastPrPollAt = Date.now();
+        await this.pollOpenPrs().catch((e) => console.error("[chorus] PR poll error:", e));
+      }
+
       if (this.deps.db.getQuota().state === "exhausted") return;
 
       // Resume quota-paused worker runs (per running project, if it's idle).
@@ -167,12 +184,12 @@ export class Orchestrator {
     if (ticket.branch) {
       const { commits, files } = await this.deps.git.branchSummary(
         project.localPath,
-        project.integrationBranch,
+        this.baseRef(project),
         ticket.branch,
       );
       workSummaryText =
         commits.length === 0
-          ? "Branch exists but has no commits beyond the integration branch."
+          ? "Branch exists but has no commits beyond the base branch."
           : `Commits:\n${commits.map((c) => `  - ${c}`).join("\n")}\nFiles changed:\n${files.map((f) => `  - ${f}`).join("\n")}`;
     }
 
@@ -269,8 +286,8 @@ export class Orchestrator {
         this.emitTicket(project.id, ticket.id);
         return;
       }
-      case "merge":
-        await this.mergeTicket(project, ticket);
+      case "open_pr":
+        await this.finishTicket(project, ticket);
         return;
       case "close":
         await this.closeTicket(project, ticket, "closed");
@@ -302,11 +319,15 @@ export class Orchestrator {
       ticket.worktreePath ?? join(this.deps.config.dataDir, "worktrees", project.id, ticket.id);
     let baseCommit: string;
     try {
-      baseCommit = await this.deps.git.headCommit(project.localPath, project.integrationBranch);
       if (!resume) {
-        await this.deps.git.addWorktree(project.localPath, worktreePath, branch, project.integrationBranch);
+        await this.deps.git.addWorktree(project.localPath, worktreePath, branch, project.baseBranch);
         this.deps.db.updateTicket(ticket.id, { branch, worktreePath });
+        // Make the worktree runnable so the agent can build/test/verify. A fresh
+        // worktree has no node_modules (git worktrees don't share the main
+        // clone's), so without this the agent can't run anything.
+        await this.runSetup(project, ticket, worktreePath);
       }
+      baseCommit = await this.deps.git.headCommit(project.localPath, this.baseRef(project));
     } catch (err) {
       this.trail(project.id, ticket.id, role.name, "note", `Failed to prepare worktree: ${String(err)}`);
       this.handBackToOrchestrator(project.id, ticket.id);
@@ -352,12 +373,22 @@ export class Orchestrator {
       outputFilePath: null,
     });
 
-    // Snapshot commit count so we can tell if this run produces NEW work.
-    const commitsBefore = (
-      await this.deps.git.branchSummary(project.localPath, project.integrationBranch, branch).catch(() => ({
-        commits: [],
-      }))
-    ).commits.length;
+    // Snapshot the branch state so we can tell if this run produces NEW work
+    // and feed a structured manifest (commands, criteria, prior failures) to the agent.
+    const branchState = await this.deps.git
+      .branchSummary(project.localPath, this.baseRef(project), branch)
+      .catch(() => ({ commits: [] as string[], files: [] as string[] }));
+    const commitsBefore = branchState.commits.length;
+    const attemptNo = this.workerAttempts(ticket.id);
+    const manifest = buildManifest({
+      project,
+      ticket,
+      attempt: attemptNo,
+      branch: branchState,
+      trail: this.deps.db.listTicketEvents(ticket.id),
+      latestJournal: this.deps.db.latestAttemptJournal(ticket.id),
+      artifactsDir: join(this.deps.config.dataDir, "runs", taskId, runId),
+    });
 
     const prompt = buildAgentPrompt({
       project,
@@ -366,6 +397,12 @@ export class Orchestrator {
       specExcerpt: this.readSpecExcerpt(project),
       resume,
       trail: this.deps.db.listTicketEvents(ticket.id),
+      manifest,
+    });
+    this.lastAttempt.set(ticket.id, {
+      taskId,
+      attempt: attemptNo,
+      promptHash: createHash("sha256").update(prompt).digest("hex").slice(0, 16),
     });
     const handle = backend.startRun({
       taskId,
@@ -426,7 +463,7 @@ export class Orchestrator {
     // the orchestrator, which decides whether to merge / keep working / close.
     const summary = result.payload?.summary ?? `(${result.terminalReason})`;
     const commitsAfter = (
-      await this.deps.git.branchSummary(project.localPath, project.integrationBranch, branch).catch(() => ({
+      await this.deps.git.branchSummary(project.localPath, this.baseRef(project), branch).catch(() => ({
         commits: [],
       }))
     ).commits.length;
@@ -446,66 +483,410 @@ export class Orchestrator {
     this.handBackToOrchestrator(project.id, ticket.id);
   }
 
-  // ---- terminal ticket actions ----
-  private async mergeTicket(project: Project, ticket: Ticket): Promise<void> {
+  // ---- acceptance gate + terminal ticket actions ----
+  /**
+   * The acceptance gate. The orchestrator decided the work looks ready; before
+   * opening a PR we (1) run the project's verify commands programmatically
+   * (deterministic backstop + evidence), (2) run the evaluator agent (runs the
+   * commands + checks acceptance criteria), and (3) run the reviewer agent
+   * (judges the diff). All three must pass. Every attempt is journaled. On
+   * failure the ticket goes back to the worker with the diagnosis; on success a
+   * PR is opened with a rich, reviewable body.
+   */
+  private async finishTicket(project: Project, ticket: Ticket): Promise<void> {
     if (!ticket.branch) {
-      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", "Nothing to merge; closing.");
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", "Nothing to open a PR for; closing.");
       await this.closeTicket(project, ticket, "closed");
       return;
     }
-    const hasCommits = await this.deps.git.hasNewCommits(
-      project.localPath,
-      project.integrationBranch,
-      ticket.branch,
-    );
-    if (!hasCommits) {
-      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", "No commits to merge; closing.");
+    if (!(await this.deps.git.hasNewCommits(project.localPath, this.baseRef(project), ticket.branch))) {
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", "No commits to open a PR for; closing.");
       await this.closeTicket(project, ticket, "closed");
       return;
     }
 
-    const outcome = await this.deps.git.mergeIntoIntegration(
-      project.localPath,
-      project.integrationBranch,
-      ticket.branch,
-      `chorus: ${ticket.title}\n\nTicket: ${ticket.id}`,
+    const wt =
+      ticket.worktreePath && existsSync(ticket.worktreePath) ? ticket.worktreePath : null;
+    const meta = this.lastAttempt.get(ticket.id);
+    const taskId = meta?.taskId ?? this.deps.db.listTasksForTicket(ticket.id).at(-1)?.id ?? null;
+    const attempt = meta?.attempt ?? this.workerAttempts(ticket.id);
+    const artifactsDir = join(this.deps.config.dataDir, "gate", ticket.id, newId("g"));
+
+    // 1) deterministic verify
+    const verify = await this.runVerify(project, wt);
+
+    // 2) evaluator agent (must be able to run commands → needs the worktree)
+    let evaluator: EvaluatorVerdict | null = null;
+    let evaluatorError: string | null = null;
+    if (wt) {
+      try {
+        evaluator = await runEvaluator({
+          cwd: wt,
+          artifactsDir,
+          prompt: this.buildEvaluatorPrompt(project, ticket, verify),
+          maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+          idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+          onEvent: (ev) => this.emitAgentEvent(project.id, ticket, "evaluator", ev),
+          onStart: (stop) => {
+            const slot = this.active.get(ticket.id);
+            if (slot) slot.stop = stop;
+          },
+        });
+      } catch (err) {
+        if (this.looksLikeQuota(String(err))) {
+          this.enterQuotaBackoff();
+          this.deps.db.updateTicket(ticket.id, { status: "open", roleName: ORCHESTRATOR_ROLE });
+          return;
+        }
+        // A non-quota crash must NOT be treated as approval — record it as a
+        // failure so the gate doesn't silently pass.
+        evaluatorError = String(err);
+        this.trail(project.id, ticket.id, "evaluator", "note", `Evaluator failed: ${evaluatorError}`);
+      }
+    }
+
+    // 3) reviewer agent (read-only; can run in the worktree or the main clone)
+    let reviewer: ReviewerVerdict | null = null;
+    let reviewerError: string | null = null;
+    try {
+      reviewer = await runReviewer({
+        cwd: wt ?? project.localPath,
+        artifactsDir,
+        prompt: this.buildReviewerPrompt(project, ticket),
+        maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+        idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+        onEvent: (ev) => this.emitAgentEvent(project.id, ticket, "reviewer", ev),
+        onStart: (stop) => {
+          const slot = this.active.get(ticket.id);
+          if (slot) slot.stop = stop;
+        },
+      });
+    } catch (err) {
+      if (this.looksLikeQuota(String(err))) {
+        this.enterQuotaBackoff();
+        this.deps.db.updateTicket(ticket.id, { status: "open", roleName: ORCHESTRATOR_ROLE });
+        return;
+      }
+      reviewerError = String(err);
+      this.trail(project.id, ticket.id, "reviewer", "note", `Reviewer failed: ${reviewerError}`);
+    }
+
+    const diff = await this.deps.git.diff(project.localPath, this.baseRef(project), ticket.branch).catch(() => "");
+    const diffHash = diff ? createHash("sha256").update(diff).digest("hex").slice(0, 16) : null;
+
+    // The gate is "all three must pass". A stage that errored out (other than
+    // quota, already handled) counts as a failure, never as silent approval.
+    const verifyFailed = verify.ran && !verify.passed;
+    const evalFailed = evaluatorError !== null || (evaluator !== null && !evaluator.passed);
+    const reviewFailed = reviewerError !== null || (reviewer !== null && !reviewer.approved);
+    const accepted = !verifyFailed && !evalFailed && !reviewFailed;
+
+    const diagnosisParts: string[] = [];
+    if (verifyFailed) diagnosisParts.push(`Verify commands failed:\n${verify.output.slice(-1500)}`);
+    if (evaluatorError) diagnosisParts.push(`Evaluator agent failed to run: ${evaluatorError}`);
+    else if (evaluator !== null && !evaluator.passed)
+      diagnosisParts.push(evaluator.diagnosis || (evaluator.failures ?? []).join("; "));
+    if (reviewerError) diagnosisParts.push(`Reviewer agent failed to run: ${reviewerError}`);
+    else if (reviewer !== null && !reviewer.approved)
+      diagnosisParts.push(`Reviewer did not approve. Risks: ${(reviewer.risks ?? []).join("; ") || "—"}`);
+    const diagnosis = diagnosisParts.filter(Boolean).join("\n\n") || null;
+
+    if (accepted) {
+      const prUrl = await this.openPrForTicket(project, ticket, { taskId, verify, reviewer });
+      this.writeJournal({
+        taskId, ticket, project, attempt, promptHash: meta?.promptHash ?? null, diffHash,
+        verify, diagnosis: null, nextAction: "open_pr", evaluator, reviewer,
+        proof: prUrl ?? "checks passed",
+      });
+      return;
+    }
+
+    this.writeJournal({
+      taskId, ticket, project, attempt, promptHash: meta?.promptHash ?? null, diffHash,
+      verify, diagnosis, nextAction: "reassign-to-worker", evaluator, reviewer, proof: null,
+    });
+    this.reassignWithFeedback(
+      project,
+      ticket,
+      diagnosis ?? "Verification/review did not pass; address the issues and re-verify before finishing.",
     );
-    const mergeId = newId("merge");
-    this.deps.db.insertMerge({
-      id: mergeId,
-      taskId: ticket.id,
-      projectId: project.id,
-      integrationBranch: project.integrationBranch,
-      mergeCommit: outcome.mergeCommit,
-      status: outcome.status,
-      conflictFiles: outcome.conflictFiles,
+  }
+
+  /** Run the project's verify commands in the worktree (stop at first failure). */
+  private async runVerify(
+    project: Project,
+    worktreePath: string | null,
+  ): Promise<{ ran: boolean; passed: boolean; results: { cmd: string; ok: boolean }[]; output: string }> {
+    const cmds = (project.verifyCommands ?? []).filter((c) => c.trim());
+    if (!worktreePath || cmds.length === 0) return { ran: false, passed: true, results: [], output: "" };
+    const results: { cmd: string; ok: boolean }[] = [];
+    const chunks: string[] = [];
+    let passed = true;
+    for (const cmd of cmds) {
+      const r = await runShell(cmd, worktreePath, { timeoutMs: this.deps.config.agent.maxWallClockMs });
+      results.push({ cmd, ok: r.ok });
+      chunks.push(`$ ${cmd}\n[${r.ok ? "ok" : "FAIL"}]\n${r.combined}`);
+      if (!r.ok) {
+        passed = false;
+        break; // first failure is the actionable one
+      }
+    }
+    return { ran: true, passed, results, output: chunks.join("\n\n").slice(-6000) };
+  }
+
+  /** One-time per-branch dependency/setup so the agent can actually build & test. */
+  private async runSetup(project: Project, ticket: Ticket, worktreePath: string): Promise<void> {
+    const cmd = project.setupCommand?.trim();
+    if (!cmd) return;
+    const r = await runShell(cmd, worktreePath, { timeoutMs: 20 * 60 * 1000 });
+    this.trail(
+      project.id,
+      ticket.id,
+      "system",
+      "note",
+      r.ok ? `Setup ok: \`${cmd}\`` : `Setup FAILED: \`${cmd}\`\n${r.combined.slice(-1000)}`,
+    );
+  }
+
+  /** Re-route a ticket to the worker that last touched it, with feedback to act on. */
+  private reassignWithFeedback(project: Project, ticket: Ticket, feedback: string): void {
+    const lastWorker = [...this.deps.db.listTicketEvents(ticket.id)]
+      .reverse()
+      .find((e) => e.kind === "work")?.actor;
+    const role = lastWorker ? this.deps.db.getRole(project.id, lastWorker) : undefined;
+    this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "triage", feedback);
+    this.deps.db.updateTicket(ticket.id, {
+      status: "open",
+      roleName: role ? role.name : ORCHESTRATOR_ROLE,
+    });
+    this.emitTicket(project.id, ticket.id);
+  }
+
+  private writeJournal(args: {
+    taskId: string | null;
+    ticket: Ticket;
+    project: Project;
+    attempt: number;
+    promptHash: string | null;
+    diffHash: string | null;
+    verify: { ran: boolean; passed: boolean; output: string };
+    diagnosis: string | null;
+    nextAction: string;
+    evaluator: EvaluatorVerdict | null;
+    reviewer: ReviewerVerdict | null;
+    proof: string | null;
+  }): void {
+    this.deps.db.insertAttemptJournal({
+      id: newId("aj"),
+      taskId: args.taskId ?? "unknown",
+      ticketId: args.ticket.id,
+      projectId: args.project.id,
+      attempt: args.attempt,
+      promptHash: args.promptHash,
+      diffHash: args.diffHash,
+      verifyPassed: args.verify.ran ? args.verify.passed : null,
+      verifyOutput: args.verify.output || null,
+      diagnosis: args.diagnosis,
+      nextAction: args.nextAction,
+      evaluatorVerdict: args.evaluator ? JSON.stringify(args.evaluator) : null,
+      reviewerVerdict: args.reviewer ? JSON.stringify(args.reviewer) : null,
+      proof: args.proof,
       createdAt: Date.now(),
     });
-    this.deps.bus.emit({ type: "merge", projectId: project.id, taskId: ticket.id, mergeId, at: Date.now() });
+  }
 
-    if (outcome.status === "conflicted") {
-      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", `Merge conflict: ${outcome.conflictFiles.join(", ")}`);
-      this.blockTicket(project, ticket, `Merge conflict in: ${outcome.conflictFiles.join(", ")}`);
-      return;
+  private buildEvaluatorPrompt(
+    project: Project,
+    ticket: Ticket,
+    verify: { ran: boolean; passed: boolean; output: string },
+  ): string {
+    const cmds = (project.verifyCommands ?? []).filter((c) => c.trim());
+    const L: string[] = [];
+    L.push("# You are the EVALUATOR agent");
+    L.push("Verify that the committed work in this worktree satisfies the ticket. Do not write code.");
+    L.push("");
+    L.push("## Ticket");
+    L.push(`${ticket.title}`);
+    L.push(ticket.body);
+    L.push("");
+    L.push("## Run these verify commands and report the result");
+    if (cmds.length) for (const c of cmds) L.push(`- \`${c}\``);
+    else L.push("- (no verify commands configured — inspect the diff and judge correctness)");
+    if (verify.ran) {
+      L.push("");
+      L.push("## Chorus already ran them; output (authoritative):");
+      L.push(verify.output);
+    }
+    L.push("");
+    L.push(
+      "Set `passed` true ONLY if every command succeeds and the ticket is genuinely satisfied. If not, give a precise `diagnosis` of the SPECIFIC next change needed.",
+    );
+    return L.join("\n");
+  }
+
+  private buildReviewerPrompt(project: Project, ticket: Ticket): string {
+    const L: string[] = [];
+    L.push("# You are the REVIEWER agent (read-only)");
+    L.push(
+      `Review the diff of branch \`${ticket.branch}\` vs \`origin/${project.baseBranch}\` (run \`git diff origin/${project.baseBranch}..${ticket.branch}\`).`,
+    );
+    L.push("Judge whether it correctly and completely satisfies the ticket and is safe to open as a PR.");
+    L.push("");
+    L.push("## Ticket");
+    L.push(`${ticket.title}`);
+    L.push(ticket.body);
+    L.push("");
+    L.push(
+      "Return `approved`, a one-paragraph `summary`, concrete `risks`, a `rollback` plan, and any `uncertainties`.",
+    );
+    return L.join("\n");
+  }
+
+  /**
+   * Push the ticket's branch and open (or update) a GitHub PR with a rich,
+   * reviewable body. Returns the PR url (or null if it could not be opened).
+   * Only called after the acceptance gate passes.
+   */
+  private async openPrForTicket(
+    project: Project,
+    ticket: Ticket,
+    accepted: {
+      taskId: string | null;
+      verify: { ran: boolean; results: { cmd: string; ok: boolean }[] };
+      reviewer: ReviewerVerdict | null;
+    },
+  ): Promise<string | null> {
+    if (!ticket.branch) return null;
+    let pr: { url: string; number: number | null; state: string };
+    try {
+      await this.deps.git.pushBranch(project.localPath, ticket.branch);
+      pr = await this.deps.git.openOrUpdatePr(
+        project.localPath,
+        ticket.branch,
+        project.baseBranch,
+        ticket.title,
+        this.buildPrBody(project, ticket, accepted),
+      );
+    } catch (err) {
+      this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", `Could not push/open PR: ${String(err)}`);
+      this.blockTicket(project, ticket, `Could not push the branch or open a PR: ${String(err)}`);
+      return null;
     }
 
-    const entry = {
+    const prId = newId("pr");
+    const now = Date.now();
+    this.deps.db.insertPullRequest({
+      id: prId,
+      ticketId: ticket.id,
+      projectId: project.id,
+      taskId: accepted.taskId,
+      url: pr.url,
+      number: pr.number,
+      state: pr.state,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.deps.bus.emit({ type: "pr", projectId: project.id, ticketId: ticket.id, prId, at: now });
+    this.deps.db.insertChangelog({
       id: newId("cl"),
       projectId: project.id,
       ticketId: ticket.id,
-      mergeId,
+      prId,
       entry: ticket.title,
       agentRole: ORCHESTRATOR_ROLE,
-      createdAt: Date.now(),
-    };
-    this.deps.db.insertChangelog(entry);
-    await this.persistChangelog(project);
-    this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "merge", `Merged into ${project.integrationBranch} (${outcome.mergeCommit?.slice(0, 8)}).`);
+      createdAt: now,
+    });
+
+    this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", `Opened PR against ${project.baseBranch}: ${pr.url}`);
+    // Keep `branch` (the poller queries the PR by head branch); free the worktree.
     await this.cleanupWorktree(project, ticket);
-    this.deps.db.updateTicket(ticket.id, { status: "merged", branch: null, worktreePath: null });
+    this.deps.db.updateTicket(ticket.id, {
+      status: "pr_open",
+      prUrl: pr.url,
+      prNumber: pr.number,
+      worktreePath: null,
+    });
+    this.lastAttempt.delete(ticket.id);
     this.emitTicket(project.id, ticket.id);
-    this.deps.bus.emit({ type: "changelog", projectId: project.id, entryId: entry.id, at: Date.now() });
-    await this.notify("merged", project, "Merged into integration", ticket.title);
+    await this.notify("pr_opened", project, "PR opened", `${ticket.title}\n${pr.url}`);
+    return pr.url;
+  }
+
+  /** Build a reviewable PR body: summary, ticket, checks, risks, rollback, uncertainty. */
+  private buildPrBody(
+    project: Project,
+    ticket: Ticket,
+    accepted: {
+      taskId: string | null;
+      verify: { ran: boolean; results: { cmd: string; ok: boolean }[] };
+      reviewer: ReviewerVerdict | null;
+    },
+  ): string {
+    const { reviewer, verify, taskId } = accepted;
+    const L: string[] = [];
+    if (reviewer?.summary) {
+      L.push("## Summary", reviewer.summary, "");
+    }
+    L.push("## Ticket", `${ticket.id}: ${ticket.title}`, "", ticket.body, "");
+    L.push("## How to verify");
+    const cmds = (project.verifyCommands ?? []).filter((c) => c.trim());
+    if (cmds.length) for (const c of cmds) L.push(`- \`${c}\``);
+    else L.push("- (no verify commands configured)");
+    L.push("");
+    L.push("## Checks");
+    if (verify.ran && verify.results.length)
+      for (const r of verify.results) L.push(`- ${r.ok ? "✅" : "❌"} \`${r.cmd}\``);
+    else L.push("- (verify commands not run)");
+    if (reviewer) {
+      if (reviewer.risks.length) {
+        L.push("", "## Risks");
+        for (const r of reviewer.risks) L.push(`- ${r}`);
+      }
+      if (reviewer.rollback?.trim()) L.push("", "## Rollback", reviewer.rollback.trim());
+      if (reviewer.uncertainties.length) {
+        L.push("", "## Uncertainty");
+        for (const u of reviewer.uncertainties) L.push(`- ${u}`);
+      }
+    }
+    L.push("", "---", `_Opened by Chorus for ticket ${ticket.id}${taskId ? ` (task ${taskId})` : ""}._`);
+    return L.join("\n");
+  }
+
+  /**
+   * Poll every "pr_open" ticket's PR on GitHub. When a PR is merged, flip the
+   * ticket to "merged"; when it's closed without merging, return it to the
+   * orchestrator for a fresh decision. Read-only `gh` calls; failures are
+   * swallowed so a transient error doesn't disrupt dispatch.
+   */
+  private async pollOpenPrs(): Promise<void> {
+    for (const project of this.deps.db.listProjects()) {
+      const open = this.deps.db.listTicketsByStatus(project.id, "pr_open");
+      for (const ticket of open) {
+        if (!ticket.branch) continue;
+        let state: Awaited<ReturnType<GitService["getPrState"]>>;
+        try {
+          state = await this.deps.git.getPrState(project.localPath, ticket.branch);
+        } catch {
+          continue;
+        }
+        if (!state) continue;
+        const merged = state.state === "MERGED" || state.mergedAt != null;
+        if (merged) {
+          this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", `PR merged on GitHub: ${state.url}`);
+          await this.cleanupWorktree(project, ticket);
+          this.deps.db.updateTicket(ticket.id, { status: "merged", branch: null, worktreePath: null });
+          this.emitTicket(project.id, ticket.id);
+          await this.notify("pr_merged", project, "PR merged", `${ticket.title}\n${state.url}`).catch(() => {});
+        } else if (state.state === "CLOSED") {
+          this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "pr", `PR closed without merging: ${state.url}`);
+          // The worktree was removed when the PR opened. Clear the branch too so
+          // a future attempt starts fresh (a stale branch with no worktree makes
+          // runWorker treat it as a resume and run in a directory that's gone).
+          this.deps.db.updateTicket(ticket.id, { branch: null });
+          this.handBackToOrchestrator(project.id, ticket.id);
+        }
+      }
+    }
   }
 
   private async closeTicket(project: Project, ticket: Ticket, status: "closed"): Promise<void> {
@@ -549,6 +930,8 @@ export class Orchestrator {
       source: "manual",
       branch: null,
       worktreePath: null,
+      prUrl: null,
+      prNumber: null,
       createdAt: now,
       updatedAt: now,
     });
@@ -681,19 +1064,9 @@ export class Orchestrator {
     this.deps.bus.emit({ type: "usage", projectId: project.id, at: Date.now() });
   }
 
-  private async persistChangelog(project: Project): Promise<void> {
-    const content = renderChangelog(this.deps.db.listChangelog(project.id, 1000));
-    try {
-      await this.deps.git.commitFile(
-        project.localPath,
-        "CHANGELOG.md",
-        content,
-        "chorus: update changelog",
-        project.integrationBranch,
-      );
-    } catch {
-      /* non-fatal */
-    }
+  /** Remote-tracking ref for the project's base branch (fetched in addWorktree). */
+  private baseRef(project: Project): string {
+    return `origin/${project.baseBranch}`;
   }
 
   private readSpecExcerpt(project: Project): string | null {
@@ -708,7 +1081,7 @@ export class Orchestrator {
   }
 
   private async notify(
-    kind: "merged" | "conflict" | "needs_review" | "quota_paused" | "error",
+    kind: "pr_opened" | "pr_merged" | "needs_review" | "quota_paused" | "error",
     project: Project,
     title: string,
     body: string,
