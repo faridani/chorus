@@ -6,7 +6,7 @@ import { StreamingProcess } from "@chorus/proc";
 import { z } from "zod";
 
 const DecisionZ = z.object({
-  action: z.enum(["assign", "merge", "close", "needs_human"]),
+  action: z.enum(["assign", "open_pr", "close", "needs_human"]),
   assignee: z.string().optional().default(""),
   priority: z.number().optional(),
   newTickets: z
@@ -32,9 +32,9 @@ const DECISION_JSON_SCHEMA = {
   properties: {
     action: {
       type: "string",
-      enum: ["assign", "merge", "close", "needs_human"],
+      enum: ["assign", "open_pr", "close", "needs_human"],
       description:
-        "assign = hand the ticket to a worker agent; merge = the work on the branch is ready, merge it and close; close = close the ticket with no merge; needs_human = stop and ask the human.",
+        "assign = hand the ticket to a worker agent; open_pr = the work on the branch is ready, push it and open a GitHub PR against the base branch; close = close the ticket with no PR; needs_human = stop and ask the human.",
     },
     assignee: {
       type: "string",
