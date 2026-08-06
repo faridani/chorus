@@ -1,0 +1,48 @@
+import { run, type RunResult } from "./run.js";
+
+export interface ShellResult extends RunResult {
+  /** The command that was run. */
+  command: string;
+  /** True when the command exited 0. */
+  ok: boolean;
+  /** Combined stdout+stderr tail, capped for logs/manifests. */
+  combined: string;
+}
+
+/**
+ * Run a shell command line (e.g. `npm install`, `npm run build`) to completion
+ * via the user's shell, so PATH/nvm/etc. resolve the way their terminal does.
+ * Never throws on non-zero exit — the caller inspects `ok`/`code`. Used for
+ * per-project setup and verify commands, which must be captured, not fatal.
+ *
+ * Shell choice is portable: `-l` (login) is only passed to bash/zsh. On hosts
+ * where `/bin/sh` is dash/ash, `-l` is rejected outright, so we fall back to a
+ * plain `-c` there rather than making every command look broken.
+ */
+export async function runShell(
+  command: string,
+  cwd: string,
+  opts: { timeoutMs?: number; tailBytes?: number } = {},
+): Promise<ShellResult> {
+  const shell = process.env.SHELL || "/bin/sh";
+  const useLogin = shell.includes("bash") || shell.includes("zsh");
+  const r = await run(shell, [useLogin ? "-lc" : "-c", command], {
+    cwd,
+    timeoutMs: opts.timeoutMs,
+    throwOnError: false,
+  }).catch(
+    (err): RunResult =>
+      // timeout / spawn error → synthesize a failed result rather than throwing.
+      (err?.result as RunResult) ?? {
+        code: null,
+        signal: null,
+        stdout: "",
+        stderr: String(err),
+      },
+  );
+  const cap = opts.tailBytes ?? 8000;
+  const combinedFull = [r.stdout, r.stderr].filter(Boolean).join("\n");
+  const combined =
+    combinedFull.length > cap ? combinedFull.slice(combinedFull.length - cap) : combinedFull;
+  return { ...r, command, ok: r.code === 0, combined };
+}
