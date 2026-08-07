@@ -104,6 +104,8 @@ export interface Role {
   description: string;
   allowed: string[];
   forbidden: string[];
+  allowedToolIds: string[];
+  forbiddenToolIds: string[];
   backendId: string;
   model?: string;
 }
@@ -113,6 +115,8 @@ export interface RoleInput {
   description: string;
   allowed: string[];
   forbidden: string[];
+  allowedToolIds: string[];
+  forbiddenToolIds: string[];
   backendId: string;
   model?: string;
 }
@@ -123,9 +127,22 @@ export interface AgentTemplate {
   description: string;
   allowed: string[];
   forbidden: string[];
+  allowedToolIds: string[];
+  forbiddenToolIds: string[];
   backendId: string;
   model?: string;
   createdAt: number;
+}
+
+export interface ToolDef {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  risk: "low" | "medium" | "high";
+  sideEffects: boolean;
+  availability: "available" | "planned";
+  usageNote: string;
 }
 
 export interface VersionInfo {
@@ -233,10 +250,17 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(role),
     }).then((r) => json<Role>(r)),
+  applyTemplate: (id: string, name: string) =>
+    fetch(`/api/projects/${id}/roles/from-template`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).then((r) => json<Role>(r)),
   deleteRole: (id: string, name: string) =>
     fetch(`/api/projects/${id}/roles/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
       json(r),
     ),
+  tools: () => fetch("/api/tools").then((r) => json<ToolDef[]>(r)),
   projectEvents: (id: string) =>
     fetch(`/api/projects/${id}/events`).then((r) => json<TicketEvent[]>(r)),
   dismissSuggestion: (id: string, sid: string) =>
