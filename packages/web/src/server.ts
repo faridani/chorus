@@ -82,6 +82,16 @@ export function createServer(deps: WebDeps): FastifyInstance {
     return { ok: true };
   });
 
+  // ---- global settings (read-only for now) ----
+  app.get("/api/settings", () => ({
+    dataDir: deps.config.dataDir,
+    worktreesDir: join(deps.config.dataDir, "worktrees"),
+    reposDir: join(deps.config.dataDir, "repos"),
+    host: deps.config.host,
+    port: deps.config.port,
+    maxConcurrentAgents: deps.config.maxConcurrentAgents,
+  }));
+
   app.get("/api/state", () => ({
     orchestrator: api.orchestratorState(),
     runningTasks: api.runningTaskIds(),
@@ -102,7 +112,8 @@ export function createServer(deps: WebDeps): FastifyInstance {
       project,
       tickets: tickets.map((t) => ({ ...t, tasks: db.listTasksForTicket(t.id) })),
       roles: db.listRoles(id),
-      merges: db.listMerges(id),
+      pullRequests: db.listPullRequests(id),
+      attemptJournal: db.listProjectAttemptJournal(id),
       changelog: db.listChangelog(id),
       suggestions: db.listSuggestions(id, "open"),
     };
@@ -141,7 +152,13 @@ export function createServer(deps: WebDeps): FastifyInstance {
 
   app.patch("/api/projects/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { baseBranch?: string; expectations?: string; groundRules?: string[] };
+    const body = req.body as {
+      baseBranch?: string;
+      expectations?: string;
+      groundRules?: string[];
+      setupCommand?: string;
+      verifyCommands?: string[];
+    };
     return api.updateProjectSettings(id, body ?? {});
   });
 
@@ -232,17 +249,6 @@ export function createServer(deps: WebDeps): FastifyInstance {
     const { id, name } = req.params as { id: string; name: string };
     await api.deleteRole(id, decodeURIComponent(name));
     return { ok: true };
-  });
-
-  app.post("/api/projects/:id/approve", async (req) => {
-    const { id } = req.params as { id: string };
-    return api.approveToMain(id);
-  });
-
-  app.get("/api/projects/:id/integration-log", (req) => {
-    const { id } = req.params as { id: string };
-    const { limit } = req.query as { limit?: string };
-    return api.integrationLog(id, limit ? Number(limit) : undefined);
   });
 
   app.post("/api/orchestrator/start", () => {
