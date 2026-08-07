@@ -6,6 +6,7 @@ import {
   type Project,
   type ProjectDetail,
   type TicketEvent,
+  type ToolDef,
   useEvents,
 } from "./api.js";
 import { AgentGallery } from "./components/AgentGallery.js";
@@ -15,6 +16,7 @@ import { LoopGallery } from "./components/LoopGallery.js";
 import { ModelsPanel } from "./components/ModelsPanel.js";
 import { OpenPrs } from "./components/OpenPrs.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
+import { ToolsGallery } from "./components/ToolsGallery.js";
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -25,13 +27,15 @@ export function App() {
   const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [leftTab, setLeftTab] = useState<"projects" | "gallery" | "loops">("projects");
+  const [leftTab, setLeftTab] = useState<"projects" | "gallery" | "loops" | "tools">("projects");
   const [backends, setBackends] = useState<BackendInfo[]>([]);
+  const [tools, setTools] = useState<ToolDef[]>([]);
   const [refreshingBackends, setRefreshingBackends] = useState(false);
   const seq = useRef(0);
 
   useEffect(() => {
     void api.backends().then(setBackends).catch(() => setBackends([]));
+    void api.tools().then(setTools).catch(() => setTools([]));
   }, []);
 
   const refreshBackends = useCallback(async () => {
@@ -133,6 +137,13 @@ export function App() {
             >
               Loop Gallery
             </button>
+            <button
+              className={`tabbtn ${leftTab === "tools" ? "active" : ""}`}
+              onClick={() => setLeftTab("tools")}
+              title="The source-defined catalog of Chorus tools agents can be granted or denied."
+            >
+              Tools Gallery
+            </button>
           </nav>
 
           {leftTab === "projects" ? (
@@ -153,9 +164,11 @@ export function App() {
               </ul>
             </>
           ) : leftTab === "gallery" ? (
-            <AgentGallery backends={backends} projects={projects} />
-          ) : (
+            <AgentGallery backends={backends} projects={projects} tools={tools} />
+          ) : leftTab === "loops" ? (
             <LoopGallery />
+          ) : (
+            <ToolsGallery tools={tools} />
           )}
         </aside>
 
@@ -164,6 +177,7 @@ export function App() {
             <ProjectPanel
               detail={detail}
               backends={backends}
+              tools={tools}
               events={projectEvents}
               runningTaskIds={state?.runningTasks ?? []}
               onChange={() => selected && refreshDetail(selected)}
