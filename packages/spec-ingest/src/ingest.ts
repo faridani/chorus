@@ -109,6 +109,8 @@ export class SpecIngestor {
       source: "spec" as const,
       branch: null,
       worktreePath: null,
+      prUrl: null,
+      prNumber: null,
       createdAt: now,
       updatedAt: now,
     }));
