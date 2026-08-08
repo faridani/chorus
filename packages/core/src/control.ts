@@ -60,6 +60,8 @@ export interface ControlApi {
 
   upsertRole(projectId: string, input: UpsertRoleInput): Promise<Role>;
   deleteRole(projectId: string, name: string): Promise<void>;
+  /** Create/update a project role from a gallery template, copying tool permissions. */
+  applyTemplate(projectId: string, templateName: string): Promise<Role>;
 
   startOrchestrator(): void;
   pauseOrchestrator(): void;
