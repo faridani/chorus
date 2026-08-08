@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type BackendInfo, type ProjectDetail, type TicketEvent } from "../api.js";
+import { api, type BackendInfo, type ProjectDetail, type TicketEvent, type ToolDef } from "../api.js";
 import { ActivityTab } from "./ActivityTab.js";
 import { AgentsTab } from "./AgentsTab.js";
 import { SettingsTab } from "./SettingsTab.js";
@@ -13,12 +13,14 @@ type Tab = "tickets" | "agents" | "state" | "settings" | "activity" | "suggestio
 export function ProjectPanel({
   detail,
   backends,
+  tools,
   events,
   runningTaskIds,
   onChange,
 }: {
   detail: ProjectDetail;
   backends: BackendInfo[];
+  tools: ToolDef[];
   events: TicketEvent[];
   runningTaskIds: string[];
   onChange: () => void;
@@ -63,7 +65,13 @@ export function ProjectPanel({
           />
         )}
         {tab === "agents" && (
-          <AgentsTab projectId={project.id} roles={roles} backends={backends} onChange={onChange} />
+          <AgentsTab
+            projectId={project.id}
+            roles={roles}
+            backends={backends}
+            tools={tools}
+            onChange={onChange}
+          />
         )}
         {tab === "state" && (
           <StateMachineTab tickets={tickets} events={events} runningTaskIds={runningTaskIds} />
