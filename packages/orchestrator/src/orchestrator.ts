@@ -201,6 +201,7 @@ export class Orchestrator {
       workSummary: workSummaryText,
       attempt,
       maxAttempts: this.deps.config.maxAttemptsPerTicket,
+      orchestratorRole: orchRole,
     });
 
     this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, {
