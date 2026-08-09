@@ -17,9 +17,13 @@ import {
   type ProjectSettingsInput,
   type UpsertAgentTemplateInput,
   type Role,
+  templateToRoleInput,
   type Ticket,
   type UpdateTicketInput,
   type UpsertRoleInput,
+  validateToolSelection,
+  CODING_TOOLS,
+  ORCHESTRATOR_TOOLS,
 } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import type { GitService } from "@chorus/git-service";
@@ -53,6 +57,8 @@ const DEFAULT_ROLES: UpsertRoleInput[] = [
       "Triages every ticket: decides whether to assign it to another agent, open a PR for the work, or close it. Routes work and gates PRs. Cannot be deleted.",
     allowed: ["read the repo", "assign tickets to other agents", "open PRs for approved work", "close tickets", "raise suggestions"],
     forbidden: ["write code directly"],
+    allowedToolIds: ORCHESTRATOR_TOOLS,
+    forbiddenToolIds: ["repo.modify", "repo.commit"],
     backendId: "codex",
   },
   {
@@ -60,6 +66,8 @@ const DEFAULT_ROLES: UpsertRoleInput[] = [
     description: "Implements tickets end-to-end with tests, following the project spec.",
     allowed: ["read and write code", "run tests and builds", "create files", "refactor touched code"],
     forbidden: ["push to remote", "modify the main branch", "change CI secrets"],
+    allowedToolIds: CODING_TOOLS,
+    forbiddenToolIds: [],
     backendId: "codex",
   },
 ];
@@ -107,7 +115,14 @@ export class AppController implements ControlApi {
     }
   }
 
+  /** Reject unknown tool ids or an id that is both allowed and forbidden. */
+  private assertValidTools(input: { allowedToolIds?: string[]; forbiddenToolIds?: string[] }): void {
+    const v = validateToolSelection(input.allowedToolIds ?? [], input.forbiddenToolIds ?? []);
+    if (!v.ok) throw Object.assign(new Error(v.error), { statusCode: 400 });
+  }
+
   upsertAgentTemplate(input: UpsertAgentTemplateInput): Promise<AgentTemplate> {
+    this.assertValidTools(input);
     const existing = this.deps.db.getAgentTemplate(input.name);
     if (existing) {
       const updated: AgentTemplate = { ...existing, ...input };
@@ -342,6 +357,7 @@ export class AppController implements ControlApi {
   }
 
   upsertRole(projectId: string, input: UpsertRoleInput): Promise<Role> {
+    this.assertValidTools(input);
     const existing = this.deps.db.getRole(projectId, input.name);
     if (existing) {
       const updated: Role = { ...existing, ...input };
@@ -352,6 +368,15 @@ export class AppController implements ControlApi {
     const role = this.seedRole(projectId, input);
     this.emitProject(projectId);
     return Promise.resolve(role);
+  }
+
+  /** Create/update a project role from a gallery template, copying tool permissions. */
+  applyTemplate(projectId: string, templateName: string): Promise<Role> {
+    const template = this.deps.db.getAgentTemplate(templateName);
+    if (!template) {
+      throw Object.assign(new Error(`No such agent template: ${templateName}`), { statusCode: 404 });
+    }
+    return this.upsertRole(projectId, templateToRoleInput(template));
   }
 
   deleteRole(projectId: string, name: string): Promise<void> {
