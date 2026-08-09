@@ -226,6 +226,14 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX idx_attempt_journal_ticket ON attempt_journal(ticket_id, created_at);
   CREATE INDEX idx_attempt_journal_project ON attempt_journal(project_id, created_at);
   `,
+
+  // 0008 — first-class tool permissions on roles + agent templates.
+  `
+  ALTER TABLE roles ADD COLUMN allowed_tool_ids TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE roles ADD COLUMN forbidden_tool_ids TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE agent_templates ADD COLUMN allowed_tool_ids TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE agent_templates ADD COLUMN forbidden_tool_ids TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {
