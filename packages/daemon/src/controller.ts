@@ -75,20 +75,32 @@ const DEFAULT_ROLES: UpsertRoleInput[] = [
 /**
  * Best-effort detection of the setup + verify commands for a freshly cloned
  * repo, so agents can build/test (the worktree starts with no deps installed).
- * Currently understands Node projects via package.json scripts; other stacks
- * leave these empty (the user can set them in Settings).
+ * Understands Node projects via package.json scripts; other stacks leave these
+ * empty (the user can set them in Settings).
+ *
+ * When the repo has a `build` script, setup also builds — many repos (incl.
+ * TS monorepos that resolve cross-package imports to gitignored `dist`) need a
+ * build before tests/imports work, so a worktree that only `npm install`ed
+ * would fail confusingly.
  */
-function detectCommands(localPath: string): { setupCommand: string | null; verifyCommands: string[] } {
+export function detectCommands(localPath: string): {
+  setupCommand: string | null;
+  verifyCommands: string[];
+} {
   const pkgPath = join(localPath, "package.json");
   if (!existsSync(pkgPath)) return { setupCommand: null, verifyCommands: [] };
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string> };
     const scripts = pkg.scripts ?? {};
+    const hasBuild = !!scripts.build;
     const verify: string[] = [];
-    if (scripts.build) verify.push("npm run build");
+    if (hasBuild) verify.push("npm run build");
     if (scripts.test) verify.push("npm test");
     else if (scripts.lint) verify.push("npm run lint");
-    return { setupCommand: "npm install", verifyCommands: verify };
+    return {
+      setupCommand: hasBuild ? "npm install && npm run build" : "npm install",
+      verifyCommands: verify,
+    };
   } catch {
     return { setupCommand: "npm install", verifyCommands: [] };
   }
@@ -112,6 +124,21 @@ export class AppController implements ControlApi {
   ensureProjectAgents(): void {
     for (const project of this.deps.db.listProjects()) {
       for (const role of DEFAULT_ROLES) this.seedRole(project.id, role);
+    }
+  }
+
+  /**
+   * Backfill auto-detected setup/verify commands for existing projects that
+   * haven't been through command detection yet (created before it existed).
+   * Runs once per project (gated by `commandsDetected`) so it never clobbers a
+   * user who intentionally cleared their commands, and avoids per-boot disk I/O.
+   */
+  backfillProjectCommands(): void {
+    for (const project of this.deps.db.listProjects()) {
+      if (project.commandsDetected) continue;
+      const { setupCommand, verifyCommands } = detectCommands(project.localPath);
+      this.deps.db.updateProject(project.id, { setupCommand, verifyCommands, commandsDetected: true });
+      this.emitProject(project.id);
     }
   }
 
