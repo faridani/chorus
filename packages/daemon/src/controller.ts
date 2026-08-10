@@ -357,6 +357,9 @@ export class AppController implements ControlApi {
   }
 
   upsertRole(projectId: string, input: UpsertRoleInput): Promise<Role> {
+    if (!this.deps.db.getProject(projectId)) {
+      throw Object.assign(new Error(`No such project: ${projectId}`), { statusCode: 404 });
+    }
     this.assertValidTools(input);
     const existing = this.deps.db.getRole(projectId, input.name);
     if (existing) {
