@@ -265,8 +265,15 @@ export function validateToolSelection(
   allowed: string[],
   forbidden: string[],
 ): { ok: true } | { ok: false; error: string } {
+  // HTTP bodies aren't schema-validated, so guard the shape before iterating —
+  // a non-array/non-string field should be a clean error, not a 500.
+  if (!Array.isArray(allowed) || !Array.isArray(forbidden)) {
+    return { ok: false, error: "Allowed and forbidden tools must be arrays of strings" };
+  }
   for (const id of [...allowed, ...forbidden]) {
-    if (!TOOL_IDS.has(id)) return { ok: false, error: `Unknown tool id: ${id}` };
+    if (typeof id !== "string" || !TOOL_IDS.has(id)) {
+      return { ok: false, error: `Unknown tool id: ${String(id)}` };
+    }
   }
   const allowedSet = new Set(allowed);
   const overlap = forbidden.find((id) => allowedSet.has(id));
