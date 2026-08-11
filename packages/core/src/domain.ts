@@ -18,6 +18,8 @@ export interface Project {
   setupCommand: string | null;
   /** Ordered build/test/lint commands used to verify an attempt before a PR. */
   verifyCommands: string[];
+  /** Whether command auto-detection has run for this project (once-only backfill gate). */
+  commandsDetected: boolean;
   status: "initializing" | "needs_spec" | "ready" | "error";
   /** Per-project dispatch control (independent of other projects). */
   runState: ProjectRunState;
