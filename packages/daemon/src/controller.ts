@@ -130,14 +130,21 @@ export class AppController implements ControlApi {
   /**
    * Backfill auto-detected setup/verify commands for existing projects that
    * haven't been through command detection yet (created before it existed).
-   * Runs once per project (gated by `commandsDetected`) so it never clobbers a
-   * user who intentionally cleared their commands, and avoids per-boot disk I/O.
+   * Runs once per project (gated by `commandsDetected`). Only fills in commands
+   * for projects that have NONE — never overwrites commands a user (or a prior
+   * manual config) already set, even when detection comes up empty.
    */
   backfillProjectCommands(): void {
     for (const project of this.deps.db.listProjects()) {
       if (project.commandsDetected) continue;
-      const { setupCommand, verifyCommands } = detectCommands(project.localPath);
-      this.deps.db.updateProject(project.id, { setupCommand, verifyCommands, commandsDetected: true });
+      const hasCommands = !!project.setupCommand || (project.verifyCommands?.length ?? 0) > 0;
+      const detected = hasCommands ? null : detectCommands(project.localPath);
+      this.deps.db.updateProject(project.id, {
+        ...(detected && (detected.setupCommand || detected.verifyCommands.length > 0)
+          ? { setupCommand: detected.setupCommand, verifyCommands: detected.verifyCommands }
+          : {}),
+        commandsDetected: true,
+      });
       this.emitProject(project.id);
     }
   }
