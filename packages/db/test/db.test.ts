@@ -451,6 +451,29 @@ test("migration 0008: tool permissions default empty + round-trip on role & temp
   db.close();
 });
 
+test("migration 0009: commands_detected defaults false + round-trips", () => {
+  const db = freshDb();
+  const id = newId("proj");
+  db.insertProject({
+    id,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    setupCommand: null,
+    verifyCommands: [],
+    status: "ready",
+    runState: "running",
+    createdAt: Date.now(),
+  } as never); // omit commandsDetected → defaults false
+  assert.equal(db.getProject(id)!.commandsDetected, false);
+  db.updateProject(id, { commandsDetected: true });
+  assert.equal(db.getProject(id)!.commandsDetected, true);
+  db.close();
+});
+
 test("quota singleton defaults and updates", () => {
   const db = freshDb();
   assert.equal(db.getQuota().state, "available");
