@@ -327,6 +327,11 @@ export class Orchestrator {
         // worktree has no node_modules (git worktrees don't share the main
         // clone's), so without this the agent can't run anything.
         await this.runSetup(project, ticket, worktreePath);
+      } else if (this.needsSetup(project, worktreePath)) {
+        // Resuming into a worktree that predates a setup command (e.g. the
+        // command was backfilled after the worktree was created) — install deps
+        // now so the verify gate doesn't run against a worktree with no deps.
+        await this.runSetup(project, ticket, worktreePath);
       }
       baseCommit = await this.deps.git.headCommit(project.localPath, this.baseRef(project));
     } catch (err) {
@@ -633,6 +638,18 @@ export class Orchestrator {
       }
     }
     return { ran: true, passed, results, output: chunks.join("\n\n").slice(-6000) };
+  }
+
+  /**
+   * Whether a resumed worktree still needs setup run: there's a setup command,
+   * the worktree exists, but its `node_modules` is absent (e.g. the command was
+   * backfilled after this worktree was created). Heuristic but npm-shaped, which
+   * matches the detected setup commands.
+   */
+  private needsSetup(project: Project, worktreePath: string): boolean {
+    if (!project.setupCommand?.trim()) return false;
+    if (!existsSync(worktreePath)) return false;
+    return !existsSync(join(worktreePath, "node_modules"));
   }
 
   /** One-time per-branch dependency/setup so the agent can actually build & test. */
