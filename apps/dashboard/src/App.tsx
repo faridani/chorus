@@ -15,6 +15,7 @@ import { GlobalSettings } from "./components/GlobalSettings.js";
 import { LoopGallery } from "./components/LoopGallery.js";
 import { ModelsPanel } from "./components/ModelsPanel.js";
 import { OpenPrs } from "./components/OpenPrs.js";
+import { DebugTracesModal } from "./components/DebugTracesModal.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 import { ToolsGallery } from "./components/ToolsGallery.js";
 
@@ -27,6 +28,7 @@ export function App() {
   const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [debug, setDebug] = useState<{ ticketId: string | null; ticketTitle?: string } | null>(null);
   const [leftTab, setLeftTab] = useState<"projects" | "gallery" | "loops" | "tools">("projects");
   const [backends, setBackends] = useState<BackendInfo[]>([]);
   const [tools, setTools] = useState<ToolDef[]>([]);
@@ -181,6 +183,7 @@ export function App() {
               events={projectEvents}
               runningTaskIds={state?.runningTasks ?? []}
               onChange={() => selected && refreshDetail(selected)}
+              onDebugTicket={(ticketId, ticketTitle) => setDebug({ ticketId, ticketTitle })}
             />
           ) : (
             <p className="empty">Select or create a project.</p>
@@ -219,6 +222,14 @@ export function App() {
               ) : (
                 <span className="muted"> — all projects</span>
               )}
+              <button
+                className="debugbtn"
+                disabled={!selected}
+                title={selected ? "Diagnose recent agent/orchestrator activity" : "Select a project first"}
+                onClick={() => setDebug({ ticketId: null })}
+              >
+                Debug Traces
+              </button>
             </h3>
             <EventFeed
               entries={
@@ -232,6 +243,23 @@ export function App() {
       </div>
 
       {showSettings && <GlobalSettings onClose={() => setShowSettings(false)} />}
+
+      {debug && selected && (
+        <DebugTracesModal
+          projectId={selected}
+          ticketId={debug.ticketId}
+          ticketTitle={debug.ticketTitle}
+          liveEvents={feed
+            .filter(({ e }) => !e.projectId || e.projectId === selected)
+            .slice(0, 200)
+            .map(({ e }) => e)}
+          onClose={() => setDebug(null)}
+          onTicketCreated={() => {
+            void refreshTop();
+            if (selected) void refreshDetail(selected);
+          }}
+        />
+      )}
 
       {showNew && (
         <NewProject
