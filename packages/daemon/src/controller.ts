@@ -375,7 +375,11 @@ export class AppController implements ControlApi {
       ...(patch.reopen ? { status: "open" as const } : {}),
     });
     this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
-    if (patch.reopen) void this.deps.orchestrator.tick();
+    if (patch.reopen) {
+      // Re-attempt the PR directly rather than re-triaging stale failures.
+      this.deps.orchestrator.requestReattempt(ticketId);
+      void this.deps.orchestrator.tick();
+    }
     return Promise.resolve(this.deps.db.getTicket(ticketId)!);
   }
 
