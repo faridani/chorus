@@ -54,6 +54,16 @@ export interface ChangelogEntry {
   createdAt: number;
 }
 
+export interface DiagnosisResult {
+  status: "working_as_expected" | "needs_ticket" | "uncertain";
+  summary: string;
+  evidence: string[];
+  risks: string[];
+  recommendedAction: string;
+  ticket: { title: string; body: string; priority: number; roleName: string };
+  confidence: number;
+}
+
 export interface AttemptJournalEntry {
   id: string;
   taskId: string;
@@ -220,12 +230,27 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     }).then((r) => json<Project>(r)),
-  addTicket: (id: string, t: { title: string; body: string; roleName?: string; priority?: number }) =>
+  addTicket: (
+    id: string,
+    t: { title: string; body: string; roleName?: string; priority?: number; fromDiagnostic?: boolean },
+  ) =>
     fetch(`/api/projects/${id}/tickets`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(t),
     }).then((r) => json(r)),
+  debugTraces: (id: string, liveEvents: unknown[]) =>
+    fetch(`/api/projects/${id}/debug-traces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ liveEvents }),
+    }).then((r) => json<DiagnosisResult>(r)),
+  debugTracesTicket: (id: string, ticketId: string, liveEvents: unknown[]) =>
+    fetch(`/api/projects/${id}/tickets/${ticketId}/debug-traces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ liveEvents }),
+    }).then((r) => json<DiagnosisResult>(r)),
   updateTicket: (
     id: string,
     ticketId: string,
