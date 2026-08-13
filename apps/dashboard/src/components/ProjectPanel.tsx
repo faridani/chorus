@@ -17,6 +17,7 @@ export function ProjectPanel({
   events,
   runningTaskIds,
   onChange,
+  onDebugTicket,
 }: {
   detail: ProjectDetail;
   backends: BackendInfo[];
@@ -24,6 +25,7 @@ export function ProjectPanel({
   events: TicketEvent[];
   runningTaskIds: string[];
   onChange: () => void;
+  onDebugTicket: (ticketId: string, ticketTitle: string) => void;
 }) {
   const { project, tickets, roles, pullRequests, attemptJournal, changelog, suggestions } = detail;
   const [tab, setTab] = useState<Tab>("tickets");
@@ -74,7 +76,12 @@ export function ProjectPanel({
           />
         )}
         {tab === "state" && (
-          <StateMachineTab tickets={tickets} events={events} runningTaskIds={runningTaskIds} />
+          <StateMachineTab
+            tickets={tickets}
+            events={events}
+            runningTaskIds={runningTaskIds}
+            onDebugTicket={onDebugTicket}
+          />
         )}
         {tab === "settings" && <SettingsTab project={project} onSaved={onChange} />}
         {tab === "activity" && (
