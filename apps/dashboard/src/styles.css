@@ -272,3 +272,17 @@ tr.clickable:hover td { background: var(--panel2); }
 .toolperm-btn.on.disallowed { color: #f85149; border-color: #5e2e34; background: #2a1517; }
 .toolperm-btn.on.unspecified { color: var(--text); }
 .agenttools, .gi-tools { font-family: ui-monospace, monospace; font-size: 11px; margin-top: 4px; }
+
+/* Debug Traces */
+.debugbtn { margin-left: 8px; font-size: 11px; padding: 2px 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.debugbtn:hover:not(:disabled) { border-color: var(--accent); }
+.debugbtn:disabled { opacity: .5; cursor: default; }
+.diag label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 0 4px; }
+.diag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.diag-list { margin: 0; padding-left: 18px; }
+.diag-list li { font-size: 13px; padding: 2px 0; }
+.diag-proposal { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.diag-success { color: #7ee787; font-size: 13px; }
+.tag.diag-working_as_expected { color: #7ee787; }
+.tag.diag-needs_ticket { color: #e3b341; }
+.tag.diag-uncertain { color: var(--muted); }
