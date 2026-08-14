@@ -1,4 +1,5 @@
 import type { BackendInfo } from "./backend-info.js";
+import type { DiagnosisResult } from "./diagnostics.js";
 import type { AgentTemplate, Project, ProjectRunState, Role, Ticket } from "./domain.js";
 import type { OrchestratorState } from "./state.js";
 
@@ -15,6 +16,8 @@ export interface CreateTicketInput {
   body: string;
   roleName?: string;
   priority?: number;
+  /** Filed from a Debug Traces diagnosis — records an audit trail entry. */
+  fromDiagnostic?: boolean;
 }
 
 export interface UpdateTicketInput {
@@ -75,6 +78,16 @@ export interface ControlApi {
 
   /** Dismiss an orchestrator suggestion. */
   dismissSuggestion(projectId: string, suggestionId: string): Promise<void>;
+
+  /**
+   * Read-only "Debug Traces" diagnosis of recent activity. `ticketId` null =
+   * project scope. `liveEvents` is the dashboard's client-buffered feed snapshot.
+   */
+  runDebugTraces(
+    projectId: string,
+    ticketId: string | null,
+    liveEvents: unknown[],
+  ): Promise<DiagnosisResult>;
 
   /** Backends/models detected on the host (for the Models panel + dropdowns). */
   listBackends(): BackendInfo[];
