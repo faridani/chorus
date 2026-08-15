@@ -188,14 +188,44 @@ export function createServer(deps: WebDeps): FastifyInstance {
 
   app.post("/api/projects/:id/tickets", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { title?: string; body?: string; roleName?: string; priority?: number };
+    const body = req.body as {
+      title?: string;
+      body?: string;
+      roleName?: string;
+      priority?: number;
+      fromDiagnostic?: boolean;
+    };
     if (!body?.title || !body?.body) return reply.code(400).send({ error: "title and body required" });
     return api.addTicket(id, {
       title: body.title,
       body: body.body,
       roleName: body.roleName,
       priority: body.priority,
+      fromDiagnostic: body.fromDiagnostic,
     });
+  });
+
+  // ---- Debug Traces (read-only diagnosis of recent activity) ----
+  app.post("/api/projects/:id/debug-traces", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { liveEvents?: unknown[] };
+    try {
+      return await api.runDebugTraces(id, null, body.liveEvents ?? []);
+    } catch (err) {
+      const code = (err as { statusCode?: number })?.statusCode ?? 502;
+      return reply.code(code).send({ error: `Diagnosis failed: ${String(err)}` });
+    }
+  });
+
+  app.post("/api/projects/:id/tickets/:ticketId/debug-traces", async (req, reply) => {
+    const { id, ticketId } = req.params as { id: string; ticketId: string };
+    const body = (req.body ?? {}) as { liveEvents?: unknown[] };
+    try {
+      return await api.runDebugTraces(id, ticketId, body.liveEvents ?? []);
+    } catch (err) {
+      const code = (err as { statusCode?: number })?.statusCode ?? 502;
+      return reply.code(code).send({ error: `Diagnosis failed: ${String(err)}` });
+    }
   });
 
   app.put("/api/projects/:id/tickets/:ticketId", async (req) => {
