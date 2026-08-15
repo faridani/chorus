@@ -246,6 +246,7 @@ export function App() {
 
       {debug && selected && (
         <DebugTracesModal
+          key={`${selected}-${debug.ticketId ?? "project"}`}
           projectId={selected}
           ticketId={debug.ticketId}
           ticketTitle={debug.ticketTitle}
