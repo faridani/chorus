@@ -76,12 +76,49 @@ export async function runStructured<T>(
   }
 
   const exit = await proc.exit;
-  if (exit.code !== 0) {
-    throw new Error(`${label} run failed (${exit.code}): ${exit.stderrTail.slice(-500)}`);
+  // Prefer the structured output file: codex commonly writes the final result and
+  // then exits non-zero or lingers until we kill it. A valid result is success
+  // regardless of exit code — discarding it caused spurious evaluator/reviewer
+  // failures. Only when there's no usable output do we report a real failure.
+  const result = parseStructuredOutput(outputPath, zodSchema);
+  if (result.ok) return result.data;
+
+  throw new Error(
+    `${label} run failed (${exit.outcome}, code=${exit.code}): ${result.error}; ${cleanStderr(exit.stderrTail)}`,
+  );
+}
+
+/** Codex prints this benign banner on every run; it is not a failure cause. */
+const BENIGN_STDERR = /reading additional input from stdin/i;
+
+function cleanStderr(tail: string): string {
+  const filtered = tail
+    .split("\n")
+    .filter((l) => l.trim() && !BENIGN_STDERR.test(l))
+    .join("\n")
+    .slice(-500);
+  return filtered || "(no error output)";
+}
+
+/** Read + Zod-validate the `-o` output file. Never throws. */
+export function parseStructuredOutput<T>(
+  outputPath: string,
+  zodSchema: z.ZodType<T, z.ZodTypeDef, any>,
+): { ok: true; data: T } | { ok: false; error: string } {
+  let raw: string;
+  try {
+    raw = readFileSync(outputPath, "utf8");
+  } catch {
+    return { ok: false, error: "no output file produced" };
   }
-  const parsed = zodSchema.safeParse(JSON.parse(readFileSync(outputPath, "utf8")));
-  if (!parsed.success) {
-    throw new Error(`${label} produced invalid output: ${parsed.error.message}`);
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (e) {
+    return { ok: false, error: `output is not valid JSON: ${String(e)}` };
   }
-  return parsed.data;
+  const parsed = zodSchema.safeParse(json);
+  return parsed.success
+    ? { ok: true, data: parsed.data }
+    : { ok: false, error: `output failed schema validation: ${parsed.error.message}` };
 }
