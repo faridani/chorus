@@ -5,6 +5,14 @@ import type { AgentEvent } from "@chorus/core";
 import { StreamingProcess } from "@chorus/proc";
 import type { z } from "zod";
 
+/**
+ * Appended to structured-output prompts so the model narrates progress as prose
+ * instead of repeatedly emitting the result schema (which floods the live feed
+ * with fake interim verdicts and can be mistaken for the real result).
+ */
+export const PROSE_NARRATION_RULE =
+  "Narrate your reasoning and progress in plain prose. Emit the required JSON object EXACTLY ONCE — as your final message — never as interim 'in progress' updates.";
+
 export interface StructuredRunOptions {
   /** Working directory (the ticket's worktree). */
   cwd: string;
