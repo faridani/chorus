@@ -112,6 +112,22 @@ export function detectCommands(localPath: string): {
   }
 }
 
+interface SafeAgentEvent {
+  kind?: string;
+  /** reasoning / message text */
+  text?: string;
+  /** command-event fields */
+  command?: string;
+  status?: string;
+  exitCode?: number;
+  /** log line */
+  line?: string;
+  /** quota_warning message */
+  message?: string;
+  /** file_change paths */
+  files?: string[];
+}
+
 interface SafeEvent {
   type?: string;
   at?: number;
@@ -122,10 +138,14 @@ interface SafeEvent {
   state?: string;
   ticketTitle?: string;
   title?: string;
-  event?: { kind?: string; text?: string };
+  event?: SafeAgentEvent;
 }
 
-/** Reduce an untrusted live-event to a small set of safe fields (no secrets/env). */
+/**
+ * Reduce an untrusted live-event to a bounded set of safe fields (no secrets/env).
+ * Keeps the per-kind details the diagnostician needs (failed commands, log lines,
+ * quota warnings, changed files) rather than only kind+text.
+ */
 function sanitizeEvent(e: unknown): SafeEvent {
   if (!e || typeof e !== "object") return {};
   const r = e as Record<string, unknown>;
@@ -141,10 +161,17 @@ function sanitizeEvent(e: unknown): SafeEvent {
   if (typeof r.title === "string") out.title = r.title.slice(0, 200);
   const ev = r.event as Record<string, unknown> | undefined;
   if (ev && typeof ev === "object") {
-    out.event = {
-      kind: typeof ev.kind === "string" ? ev.kind : undefined,
-      text: typeof ev.text === "string" ? ev.text.slice(0, 500) : undefined,
-    };
+    const se: SafeAgentEvent = {};
+    if (typeof ev.kind === "string") se.kind = ev.kind;
+    if (typeof ev.text === "string") se.text = ev.text.slice(0, 500);
+    if (typeof ev.command === "string") se.command = ev.command.slice(0, 300);
+    if (typeof ev.status === "string") se.status = ev.status;
+    if (typeof ev.exitCode === "number") se.exitCode = ev.exitCode;
+    if (typeof ev.line === "string") se.line = ev.line.slice(0, 300);
+    if (typeof ev.message === "string") se.message = ev.message.slice(0, 300);
+    if (Array.isArray(ev.files))
+      se.files = ev.files.filter((f): f is string => typeof f === "string").slice(0, 20);
+    out.event = se;
   }
   return out;
 }
@@ -535,6 +562,15 @@ export class AppController implements ControlApi {
   ): Promise<DiagnosisResult> {
     const project = this.deps.db.getProject(projectId);
     if (!project) throw Object.assign(new Error(`No such project: ${projectId}`), { statusCode: 404 });
+    // Validate ticket ownership before building context — never diagnose another
+    // project's ticket via this project's URL (data isolation), and don't waste a
+    // model run on a non-existent ticket.
+    if (ticketId) {
+      const t = this.deps.db.getTicket(ticketId);
+      if (!t || t.projectId !== projectId) {
+        throw Object.assign(new Error(`No such ticket: ${ticketId}`), { statusCode: 404 });
+      }
+    }
     const context = this.buildTraceContext(project, ticketId, liveEvents);
     const workerRoleNames = this.deps.db
       .listRoles(projectId)
