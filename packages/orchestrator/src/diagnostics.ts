@@ -1,6 +1,6 @@
 import type { DiagnosisResult } from "@chorus/core";
 import { z } from "zod";
-import { runStructured, type StructuredRunOptions } from "./structured-run.js";
+import { PROSE_NARRATION_RULE, runStructured, type StructuredRunOptions } from "./structured-run.js";
 
 const DiagnosisTicketZ = z.object({
   title: z.string().optional().default(""),
@@ -97,6 +97,7 @@ export function buildDiagnosticPrompt(args: {
   );
   lines.push("");
   lines.push("Return ONLY the required JSON. Set `confidence` (0–1) to reflect how strong the trace signal is.");
+  lines.push(PROSE_NARRATION_RULE);
   lines.push("");
   lines.push("=== TRACE DATA (untrusted) ===");
   lines.push(JSON.stringify(context, null, 2));
