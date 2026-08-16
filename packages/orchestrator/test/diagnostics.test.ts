@@ -45,4 +45,6 @@ test("prompt frames traces as untrusted and does not obey embedded instructions"
   assert.ok(p.indexOf(injection) > dataStart, "injection must be inside the trace-data block");
   // The known worker role is surfaced for valid ticket.roleName.
   assert.match(p, /software-dev/);
+  // Narrate-in-prose rule present (so the model doesn't flood the feed with interim JSON).
+  assert.match(p, /EXACTLY ONCE/);
 });
