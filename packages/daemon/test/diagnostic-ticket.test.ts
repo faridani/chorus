@@ -65,9 +65,41 @@ test("runDebugTraces enriches + returns the (mocked) model result", async () => 
     return CANNED;
   };
   const ctrl = makeController(db, mock);
-  const out = await ctrl.runDebugTraces(projectId, null, [{ type: "agent_event", projectId }]);
+  const out = await ctrl.runDebugTraces(projectId, null, [
+    { type: "agent_event", projectId, event: { kind: "command", command: "npm test", exitCode: 1 } },
+  ]);
   assert.deepEqual(out, CANNED);
   assert.ok(received.prompt?.includes("TRACE DATA"), "prompt should contain the trace block");
+  // The sanitizer preserves command-event details the diagnostician needs.
+  assert.ok(received.prompt?.includes("npm test"), "should preserve the failed command");
+  assert.ok(received.prompt?.includes("exitCode"), "should preserve the exit code");
+  db.close();
+});
+
+test("runDebugTraces 404s for a ticket not in the project", async () => {
+  const db = freshDb();
+  const projectId = seedProject(db);
+  const otherId = seedProject(db);
+  // A ticket that belongs to a different project.
+  const tid = newId("tkt");
+  db.insertTicket({
+    id: tid,
+    projectId: otherId,
+    title: "t",
+    body: "b",
+    status: "open",
+    roleName: null,
+    priority: 0,
+    source: "manual",
+    branch: null,
+    worktreePath: null,
+    prUrl: null,
+    prNumber: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  const ctrl = makeController(db, async () => CANNED);
+  await assert.rejects(() => ctrl.runDebugTraces(projectId, tid, []), /No such ticket/);
   db.close();
 });
 
