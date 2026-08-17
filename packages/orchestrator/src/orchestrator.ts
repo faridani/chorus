@@ -57,8 +57,8 @@ export class Orchestrator {
   private readonly lastAttempt = new Map<string, { taskId: string; attempt: number; promptHash: string }>();
   /** Tickets a human just reopened: re-attempt the PR rather than re-triaging stale failures. */
   private readonly reattemptPr = new Set<string>();
-  /** ticketId → consecutive gate interruptions (killed/errored review), to bound gate retries. */
-  private readonly gateRetries = new Map<string, number>();
+  /** ticketId → consecutive gate interruptions for a given worker attempt (resets when a new attempt runs). */
+  private readonly gateRetries = new Map<string, { attempt: number; retries: number }>();
   /** Max consecutive gate interruptions before parking the ticket for a human. */
   private static readonly MAX_GATE_RETRIES = 3;
 
@@ -674,7 +674,9 @@ export class Orchestrator {
     // Interruption only (a gate agent was killed/errored, but verify passed and
     // nothing was rejected): re-run the GATE — do NOT redo the implementation.
     // Bounded so a persistent kill source can't loop forever.
-    const retries = (this.gateRetries.get(ticket.id) ?? 0) + 1;
+    // Count interruptions per worker attempt: a new attempt (work changed) resets it.
+    const prev = this.gateRetries.get(ticket.id);
+    const retries = prev && prev.attempt === attempt ? prev.retries + 1 : 1;
     if (retries > Orchestrator.MAX_GATE_RETRIES) {
       this.gateRetries.delete(ticket.id);
       journal("blocked", null);
@@ -685,7 +687,7 @@ export class Orchestrator {
       );
       return;
     }
-    this.gateRetries.set(ticket.id, retries);
+    this.gateRetries.set(ticket.id, { attempt, retries });
     journal("retry-gate", null);
     this.trail(
       project.id,
