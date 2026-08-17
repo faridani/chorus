@@ -32,7 +32,12 @@ const KNOWN_BACKENDS: KnownBackend[] = [
     label: "Codex",
     bin: "codex",
     implemented: true,
-    models: ["gpt-5.5", "gpt-5.5-codex", "gpt-5", "o3", "o4-mini"],
+    // Only models accepted by Codex on a ChatGPT subscription account. The
+    // `-codex` variants and `gpt-5`/`o3`/`o4-mini` are API-key-only and 400 with
+    // "not supported when using Codex with a ChatGPT account" — advertising them
+    // led operators to pin a model that fails every run. detectBackends() also
+    // prepends whatever `~/.codex/config.toml` sets as the default.
+    models: ["gpt-5.5"],
     detectDefaultModel: codexDefaultModel,
   },
   {
