@@ -13,6 +13,16 @@ import type { z } from "zod";
 export const PROSE_NARRATION_RULE =
   "Narrate your reasoning and progress in plain prose. Emit the required JSON object EXACTLY ONCE — as your final message — never as interim 'in progress' updates.";
 
+/**
+ * Appended to read-only agents' prompts. They run in a `read-only` sandbox, so
+ * build/test/install commands fail on write-denial (e.g. test suites that
+ * mkdtemp). Without this, an agent that "verifies by running the tests" sees a
+ * sandbox failure and mis-reads it as a real test failure (hallucinated bug /
+ * wasted reassign loops). Chorus runs verification separately and authoritatively.
+ */
+export const READ_ONLY_RULE =
+  "You run in a READ-ONLY sandbox: you may read files and run read-only commands (e.g. `git diff`, `git log`, `cat`), but you CANNOT write files or run build/test/install commands such as `npm install`, `npm run build`, or `npm test` — they FAIL on sandbox write-denial, NOT because anything is broken. Do NOT attempt them. Chorus runs verification separately; treat its results as authoritative and base your judgment on the diff, the work summary, and the trail.";
+
 export interface StructuredRunOptions {
   /** Working directory (the ticket's worktree). */
   cwd: string;
