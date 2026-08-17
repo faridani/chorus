@@ -1,6 +1,6 @@
 import { getTool, type Project, type Role, type Ticket, type TicketEvent } from "@chorus/core";
 import { type TaskManifest, renderManifestMarkdown } from "./manifest.js";
-import { PROSE_NARRATION_RULE } from "./structured-run.js";
+import { PROSE_NARRATION_RULE, READ_ONLY_RULE } from "./structured-run.js";
 
 /**
  * Render the "Chorus tools" section: which catalog tools the agent is granted
@@ -68,6 +68,8 @@ export function buildOrchestratorPrompt(args: {
   lines.push(
     "You triage one ticket and decide what happens next. You do not write code yourself.",
   );
+  lines.push("");
+  lines.push(READ_ONLY_RULE);
   lines.push("");
   lines.push("## Project");
   lines.push(`Repository: ${project.repoUrl}`);
