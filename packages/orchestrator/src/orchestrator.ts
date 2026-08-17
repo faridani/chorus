@@ -57,6 +57,10 @@ export class Orchestrator {
   private readonly lastAttempt = new Map<string, { taskId: string; attempt: number; promptHash: string }>();
   /** Tickets a human just reopened: re-attempt the PR rather than re-triaging stale failures. */
   private readonly reattemptPr = new Set<string>();
+  /** ticketId → consecutive gate interruptions (killed/errored review), to bound gate retries. */
+  private readonly gateRetries = new Map<string, number>();
+  /** Max consecutive gate interruptions before parking the ticket for a human. */
+  private static readonly MAX_GATE_RETRIES = 3;
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -617,42 +621,81 @@ export class Orchestrator {
     const diff = await this.deps.git.diff(project.localPath, this.baseRef(project), ticket.branch).catch(() => "");
     const diffHash = diff ? createHash("sha256").update(diff).digest("hex").slice(0, 16) : null;
 
-    // The gate is "all three must pass". A stage that errored out (other than
-    // quota, already handled) counts as a failure, never as silent approval.
+    // Distinguish a genuine REJECTION (verify failed, or an agent verdict said
+    // not-passed/not-approved — the work needs changes) from an INTERRUPTION (a
+    // gate agent was killed/errored — e.g. a daemon restart or project stop mid-
+    // run). An interruption must NOT send the worker to redo passing work; it
+    // should just re-run the gate.
     const verifyFailed = verify.ran && !verify.passed;
-    const evalFailed = evaluatorError !== null || (evaluator !== null && !evaluator.passed);
-    const reviewFailed = reviewerError !== null || (reviewer !== null && !reviewer.approved);
-    const accepted = !verifyFailed && !evalFailed && !reviewFailed;
+    const evalRejected = evaluator !== null && !evaluator.passed;
+    const reviewRejected = reviewer !== null && !reviewer.approved;
+    const rejected = verifyFailed || evalRejected || reviewRejected;
+    const interrupted = evaluatorError !== null || reviewerError !== null;
 
-    const diagnosisParts: string[] = [];
-    if (verifyFailed) diagnosisParts.push(`Verify commands failed:\n${verify.output.slice(-1500)}`);
-    if (evaluatorError) diagnosisParts.push(`Evaluator agent failed to run: ${evaluatorError}`);
-    else if (evaluator !== null && !evaluator.passed)
-      diagnosisParts.push(evaluator.diagnosis || (evaluator.failures ?? []).join("; "));
-    if (reviewerError) diagnosisParts.push(`Reviewer agent failed to run: ${reviewerError}`);
-    else if (reviewer !== null && !reviewer.approved)
-      diagnosisParts.push(`Reviewer did not approve. Risks: ${(reviewer.risks ?? []).join("; ") || "—"}`);
-    const diagnosis = diagnosisParts.filter(Boolean).join("\n\n") || null;
+    const rejectionParts: string[] = [];
+    if (verifyFailed) rejectionParts.push(`Verify commands failed:\n${verify.output.slice(-1500)}`);
+    if (evalRejected) rejectionParts.push(evaluator?.diagnosis || (evaluator?.failures ?? []).join("; "));
+    if (reviewRejected)
+      rejectionParts.push(`Reviewer did not approve. Risks: ${(reviewer?.risks ?? []).join("; ") || "—"}`);
+    const interruptParts: string[] = [];
+    if (evaluatorError) interruptParts.push(`Evaluator interrupted: ${evaluatorError}`);
+    if (reviewerError) interruptParts.push(`Reviewer interrupted: ${reviewerError}`);
+    const fullDiagnosis = [...rejectionParts, ...interruptParts].filter(Boolean).join("\n\n") || null;
 
-    if (accepted) {
-      const prUrl = await this.openPrForTicket(project, ticket, { taskId, verify, reviewer });
+    const journal = (nextAction: string, proof: string | null) =>
       this.writeJournal({
         taskId, ticket, project, attempt, promptHash: meta?.promptHash ?? null, diffHash,
-        verify, diagnosis: null, nextAction: "open_pr", evaluator, reviewer,
-        proof: prUrl ?? "checks passed",
+        verify, diagnosis: fullDiagnosis, nextAction, evaluator, reviewer, proof,
       });
+
+    // Accepted: verify passed and every gate stage that ran approved (no rejection,
+    // no interruption).
+    if (!rejected && !interrupted) {
+      this.gateRetries.delete(ticket.id);
+      const prUrl = await this.openPrForTicket(project, ticket, { taskId, verify, reviewer });
+      journal("open_pr", prUrl ?? "checks passed");
       return;
     }
 
-    this.writeJournal({
-      taskId, ticket, project, attempt, promptHash: meta?.promptHash ?? null, diffHash,
-      verify, diagnosis, nextAction: "reassign-to-worker", evaluator, reviewer, proof: null,
-    });
-    this.reassignWithFeedback(
-      project,
-      ticket,
-      diagnosis ?? "Verification/review did not pass; address the issues and re-verify before finishing.",
+    // A real rejection takes precedence over an interruption: the work needs
+    // changes, so hand it back to the worker with the rejection diagnosis.
+    if (rejected) {
+      this.gateRetries.delete(ticket.id);
+      journal("reassign-to-worker", null);
+      this.reassignWithFeedback(
+        project,
+        ticket,
+        rejectionParts.filter(Boolean).join("\n\n") ||
+          "Verification/review did not pass; address the issues and re-verify before finishing.",
+      );
+      return;
+    }
+
+    // Interruption only (a gate agent was killed/errored, but verify passed and
+    // nothing was rejected): re-run the GATE — do NOT redo the implementation.
+    // Bounded so a persistent kill source can't loop forever.
+    const retries = (this.gateRetries.get(ticket.id) ?? 0) + 1;
+    if (retries > Orchestrator.MAX_GATE_RETRIES) {
+      this.gateRetries.delete(ticket.id);
+      journal("blocked", null);
+      this.blockTicket(
+        project,
+        ticket,
+        `Acceptance gate kept getting interrupted (${Orchestrator.MAX_GATE_RETRIES}× — e.g. restarts/stops mid-review). Last: ${fullDiagnosis ?? "unknown"}`,
+      );
+      return;
+    }
+    this.gateRetries.set(ticket.id, retries);
+    journal("retry-gate", null);
+    this.trail(
+      project.id,
+      ticket.id,
+      ORCHESTRATOR_ROLE,
+      "note",
+      `Gate interrupted (try ${retries}/${Orchestrator.MAX_GATE_RETRIES}); committed work passed verify — re-running the review, not redoing the work.`,
     );
+    this.requestReattempt(ticket.id);
+    this.handBackToOrchestrator(project.id, ticket.id);
   }
 
   /** Run the project's verify commands in the worktree (stop at first failure). */
@@ -764,18 +807,30 @@ export class Orchestrator {
     L.push(`${ticket.title}`);
     L.push(ticket.body);
     L.push("");
-    L.push("## Run these verify commands and report the result");
-    if (cmds.length) for (const c of cmds) L.push(`- \`${c}\``);
-    else L.push("- (no verify commands configured — inspect the diff and judge correctness)");
     if (verify.ran) {
+      // Chorus already ran the verify commands deterministically; that output is
+      // authoritative. Do NOT re-run them (it just doubles slow build/test time
+      // and widens the window where a restart can interrupt this run).
+      L.push("## Verify commands — ALREADY RUN by Chorus (authoritative; do NOT re-run)");
+      if (cmds.length) for (const c of cmds) L.push(`- \`${c}\``);
       L.push("");
-      L.push("## Chorus already ran them; output (authoritative):");
+      L.push("Output:");
       L.push(verify.output);
+      L.push("");
+      L.push(
+        "Judge from this output plus inspecting the committed diff/acceptance criteria. Set `passed` true ONLY if the commands all succeeded AND the ticket is genuinely satisfied; otherwise give a precise `diagnosis` of the SPECIFIC next change needed.",
+      );
+    } else {
+      L.push("## No verify commands were run — inspect the diff and judge correctness");
+      if (cmds.length) {
+        L.push("Configured verify commands (run them if useful):");
+        for (const c of cmds) L.push(`- \`${c}\``);
+      }
+      L.push("");
+      L.push(
+        "Set `passed` true ONLY if the ticket is genuinely satisfied; otherwise give a precise `diagnosis` of the SPECIFIC next change needed.",
+      );
     }
-    L.push("");
-    L.push(
-      "Set `passed` true ONLY if every command succeeds and the ticket is genuinely satisfied. If not, give a precise `diagnosis` of the SPECIFIC next change needed.",
-    );
     L.push(PROSE_NARRATION_RULE);
     return L.join("\n");
   }
