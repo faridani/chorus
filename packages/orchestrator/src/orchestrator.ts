@@ -506,6 +506,38 @@ export class Orchestrator {
       return; // ticket stays in_progress; resume loop re-runs the worker
     }
 
+    // Backstop: if the worker edited files but didn't commit them, capture that
+    // work now. Uncommitted changes are invisible to the acceptance gate (which
+    // judges the committed branch) and are lost on the next reset — exactly the
+    // failure we saw where a requested fix sat uncommitted in the worktree while
+    // the gate kept rejecting the stale HEAD. `git add -A` honors .gitignore, so
+    // build artifacts / node_modules aren't swept in.
+    if (!(await this.deps.git.isWorktreeClean(worktreePath))) {
+      try {
+        const head = await this.deps.git.commitAll(
+          worktreePath,
+          `${ticket.title}\n\n[chorus] auto-committed changes ${role.name} left uncommitted`,
+        );
+        if (head) {
+          this.trail(
+            project.id,
+            ticket.id,
+            role.name,
+            "work",
+            "Auto-committed changes the worker left uncommitted in the worktree.",
+          );
+        }
+      } catch (err) {
+        this.trail(
+          project.id,
+          ticket.id,
+          role.name,
+          "work",
+          `Could not auto-commit leftover worktree changes: ${String(err)}`,
+        );
+      }
+    }
+
     // Any other terminal outcome: record the worker's result and hand back to
     // the orchestrator, which decides whether to merge / keep working / close.
     const summary = result.payload?.summary ?? `(${result.terminalReason})`;
