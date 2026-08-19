@@ -113,9 +113,9 @@ export function extractUsage(obj: unknown): UsageCounters | null {
 function findUsage(obj: unknown, depth: number): UsageCounters | null {
   if (depth > 5 || typeof obj !== "object" || obj === null) return null;
   const rec = obj as Record<string, unknown>;
-  const input = numField(rec, ["input_tokens", "prompt_tokens", "inputTokens"]);
-  const output = numField(rec, ["output_tokens", "completion_tokens", "outputTokens"]);
-  const total = numField(rec, ["total_tokens", "totalTokens", "tokens", "token_count"]);
+  const input = numField(rec, ["input_tokens", "prompt_tokens", "inputTokens", "prompt"]);
+  const output = numField(rec, ["output_tokens", "completion_tokens", "outputTokens", "candidates"]);
+  const total = numField(rec, ["total_tokens", "totalTokens", "tokens", "token_count", "total"]);
   if (input !== undefined || output !== undefined || total !== undefined) {
     return { inputTokens: input, outputTokens: output, totalTokens: total ?? sum(input, output), raw: rec };
   }
