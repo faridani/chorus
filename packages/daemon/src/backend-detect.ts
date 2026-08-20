@@ -44,14 +44,14 @@ const KNOWN_BACKENDS: KnownBackend[] = [
     id: "claude",
     label: "Claude",
     bin: "claude",
-    implemented: false,
+    implemented: true,
     models: ["opus", "sonnet", "haiku"],
   },
   {
     id: "gemini",
     label: "Gemini",
     bin: "gemini",
-    implemented: false,
+    implemented: true,
     models: ["gemini-2.5-pro", "gemini-2.5-flash"],
   },
 ];
