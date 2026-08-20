@@ -84,6 +84,7 @@ export class GeminiBackend implements AIBackend {
         "json",
         "--approval-mode",
         "yolo",
+        "--skip-trust",
         ...(model ? ["-m", model] : []),
       ],
     });
