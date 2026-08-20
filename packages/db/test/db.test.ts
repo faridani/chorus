@@ -168,13 +168,14 @@ test("ticket delete + role update/delete", () => {
     description: "updated",
     allowed: ["run tests", "file bugs"],
     forbidden: ["edit prod"],
-    backendId: "codex",
-    model: "gpt-x",
+    backendId: "claude",
+    model: "sonnet",
   });
   const r = db.getRole(projectId, "qa")!;
   assert.equal(r.description, "updated");
   assert.deepEqual(r.allowed, ["run tests", "file bugs"]);
-  assert.equal(r.model, "gpt-x");
+  assert.equal(r.backendId, "claude");
+  assert.equal(r.model, "sonnet");
 
   db.deleteRole(projectId, "qa");
   assert.equal(db.getRole(projectId, "qa"), undefined);
@@ -442,12 +443,15 @@ test("migration 0008: tool permissions default empty + round-trip on role & temp
     forbidden: [],
     allowedToolIds: ["repo.read", "verify.run"],
     forbiddenToolIds: ["repo.modify"],
-    backendId: "codex",
+    backendId: "gemini",
+    model: "gemini-2.5-flash",
     createdAt: Date.now(),
   });
   const tmpl = db.getAgentTemplate("qa")!;
   assert.deepEqual(tmpl.allowedToolIds, ["repo.read", "verify.run"]);
   assert.deepEqual(tmpl.forbiddenToolIds, ["repo.modify"]);
+  assert.equal(tmpl.backendId, "gemini");
+  assert.equal(tmpl.model, "gemini-2.5-flash");
   db.close();
 });
 
