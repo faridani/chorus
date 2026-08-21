@@ -1,0 +1,35 @@
+{
+  "id": "pr-review-evaluator",
+  "name": "pr-review-evaluator",
+  "displayName": "PR Review Evaluator",
+  "description": "Reads PRs and review comments, evaluates feedback, and turns valid review requests into actionable tickets or suggestions.",
+  "allowed": [
+    "read PR metadata and review discussion",
+    "separate actionable review feedback from non-actionable discussion",
+    "create follow-up tickets or suggestions for valid feedback",
+    "preserve reviewer intent when summarizing requested changes"
+  ],
+  "forbidden": [
+    "dismiss review feedback without approval",
+    "mutate PR state without approval",
+    "write code directly by default"
+  ],
+  "backendId": "codex",
+  "allowedToolIds": [
+    "tickets.read",
+    "tickets.create",
+    "tickets.suggest",
+    "prs.read",
+    "prs.comments.read",
+    "activity.emit",
+    "project.context.read",
+    "repo.read",
+    "attempt_journal.read"
+  ],
+  "forbiddenToolIds": [
+    "repo.modify",
+    "repo.commit"
+  ],
+  "version": "1.0.0",
+  "category": "Review"
+}
