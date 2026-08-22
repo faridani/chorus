@@ -124,7 +124,7 @@ function NewAgentChooser({
     setBusy(true);
     try {
       // Server copies tool permissions from the template too.
-      await api.applyTemplate(projectId, t.name);
+      await api.applyTemplate(projectId, t);
       onAdded();
     } catch (err) {
       alert(String(err));
@@ -150,10 +150,16 @@ function NewAgentChooser({
           {templates.map((t) => {
             const added = existing.has(t.name);
             return (
-              <li key={t.id}>
+              <li key={`${t.source}:${t.id}`}>
                 <div className="ci-text">
-                  <strong>{t.name}</strong>{" "}
+                  <strong>{t.displayName || t.name}</strong>{" "}
+                  <span className={`tag source-tag source-${t.source}`}>
+                    {t.source === "builtin" ? "Built-in" : "Custom"}
+                  </span>{" "}
                   <span className="muted">[{t.backendId}{t.model ? ` · ${t.model}` : ""}]</span>
+                  <div className="muted">
+                    <code>{t.name}</code> · {t.category}{t.version ? ` · v${t.version}` : ""}
+                  </div>
                   <div className="muted">{t.description || "—"}</div>
                 </div>
                 <button disabled={busy || added} onClick={() => add(t)}>
