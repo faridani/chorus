@@ -134,6 +134,7 @@ export interface RoleInput {
 export interface AgentTemplate {
   id: string;
   name: string;
+  displayName: string;
   description: string;
   allowed: string[];
   forbidden: string[];
@@ -141,7 +142,11 @@ export interface AgentTemplate {
   forbiddenToolIds: string[];
   backendId: string;
   model?: string;
-  createdAt: number;
+  category: string;
+  version?: string;
+  source: "builtin" | "custom";
+  readOnly: boolean;
+  createdAt?: number;
 }
 
 export interface ToolDef {
@@ -275,12 +280,17 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(role),
     }).then((r) => json<Role>(r)),
-  applyTemplate: (id: string, name: string) =>
-    fetch(`/api/projects/${id}/roles/from-template`, {
+  applyTemplate: (id: string, template: AgentTemplate | string) => {
+    const body =
+      typeof template === "string"
+        ? { name: template }
+        : { id: template.id, name: template.name, source: template.source };
+    return fetch(`/api/projects/${id}/roles/from-template`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
-    }).then((r) => json<Role>(r)),
+      body: JSON.stringify(body),
+    }).then((r) => json<Role>(r));
+  },
   deleteRole: (id: string, name: string) =>
     fetch(`/api/projects/${id}/roles/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
       json(r),
