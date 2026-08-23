@@ -1,5 +1,5 @@
 import type { UpsertRoleInput } from "./control.js";
-import type { AgentTemplate } from "./domain.js";
+import type { AgentGalleryTemplate, AgentTemplate } from "./domain.js";
 
 /**
  * The Chorus tool catalog: a source-owned, typed registry of capabilities an
@@ -319,7 +319,19 @@ export const ORCHESTRATOR_TOOLS: string[] = [
  * Build the role input from a gallery template, copying tool permissions too.
  * Pure + testable; used by the controller's applyTemplate.
  */
-export function templateToRoleInput(t: AgentTemplate): UpsertRoleInput {
+export function templateToRoleInput(
+  t: Pick<
+    AgentTemplate | AgentGalleryTemplate,
+    | "name"
+    | "description"
+    | "allowed"
+    | "forbidden"
+    | "allowedToolIds"
+    | "forbiddenToolIds"
+    | "backendId"
+    | "model"
+  >,
+): UpsertRoleInput {
   return {
     name: t.name,
     description: t.description,
