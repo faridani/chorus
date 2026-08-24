@@ -1,6 +1,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { type ChorusBus, type Config, type ControlApi, TOOL_CATALOG } from "@chorus/core";
+import {
+  type AgentTemplateSource,
+  type ChorusBus,
+  type Config,
+  type ControlApi,
+  customAgentTemplateToGalleryTemplate,
+  listAgentGalleryTemplates,
+  TOOL_CATALOG,
+} from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -57,7 +65,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   app.get("/api/tools", () => TOOL_CATALOG);
 
   // ---- agent gallery (global templates) ----
-  app.get("/api/agent-templates", () => db.listAgentTemplates());
+  app.get("/api/agent-templates", () => listAgentGalleryTemplates(db.listAgentTemplates()));
 
   app.post("/api/agent-templates", async (req, reply) => {
     const body = req.body as {
@@ -71,7 +79,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
       model?: string;
     };
     if (!body?.name) return reply.code(400).send({ error: "name required" });
-    return api.upsertAgentTemplate({
+    const template = await api.upsertAgentTemplate({
       name: body.name,
       description: body.description ?? "",
       allowed: body.allowed ?? [],
@@ -81,6 +89,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
       backendId: body.backendId ?? "codex",
       model: body.model,
     });
+    return customAgentTemplateToGalleryTemplate(template);
   });
 
   app.delete("/api/agent-templates/:name", async (req) => {
@@ -289,9 +298,12 @@ export function createServer(deps: WebDeps): FastifyInstance {
   // Create/update a project role from a gallery template (copies tool permissions).
   app.post("/api/projects/:id/roles/from-template", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { name?: string };
-    if (!body?.name) return reply.code(400).send({ error: "name required" });
-    return api.applyTemplate(id, body.name);
+    const body = req.body as { id?: string; name?: string; source?: AgentTemplateSource };
+    if (body?.source && body.source !== "builtin" && body.source !== "custom") {
+      return reply.code(400).send({ error: "source must be builtin|custom" });
+    }
+    if (!body?.name && !body?.id) return reply.code(400).send({ error: "name or id required" });
+    return api.applyTemplate(id, { id: body.id, name: body.name, source: body.source });
   });
 
   app.delete("/api/projects/:id/roles/:name", async (req) => {
