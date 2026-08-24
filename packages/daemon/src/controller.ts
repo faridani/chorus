@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { BackendRegistry } from "@chorus/backends";
 import {
   type AgentTemplate,
+  type ApplyAgentTemplateInput,
   type BackendInfo,
   type ChorusBus,
   type Config,
@@ -24,6 +25,7 @@ import {
   type UpsertRoleInput,
   validateToolSelection,
   CODING_TOOLS,
+  getBuiltInAgentTemplate,
   ORCHESTRATOR_TOOLS,
 } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
@@ -529,12 +531,24 @@ export class AppController implements ControlApi {
   }
 
   /** Create/update a project role from a gallery template, copying tool permissions. */
-  applyTemplate(projectId: string, templateName: string): Promise<Role> {
-    const template = this.deps.db.getAgentTemplate(templateName);
+  applyTemplate(projectId: string, templateRef: string | ApplyAgentTemplateInput): Promise<Role> {
+    const ref = typeof templateRef === "string" ? { name: templateRef } : templateRef;
+    const template = this.resolveTemplateRef(ref);
     if (!template) {
-      throw Object.assign(new Error(`No such agent template: ${templateName}`), { statusCode: 404 });
+      const label = ref.id ?? ref.name ?? "(missing name)";
+      throw Object.assign(new Error(`No such agent template: ${label}`), { statusCode: 404 });
     }
     return this.upsertRole(projectId, templateToRoleInput(template));
+  }
+
+  private resolveTemplateRef(ref: ApplyAgentTemplateInput): AgentTemplate | ReturnType<typeof getBuiltInAgentTemplate> {
+    if (ref.source === "builtin") return getBuiltInAgentTemplate({ id: ref.id, name: ref.name });
+    if (ref.source === "custom") return ref.name ? this.deps.db.getAgentTemplate(ref.name) : undefined;
+
+    // Backward compatibility for old clients: a bare name means "custom if it
+    // exists, otherwise built-in". New dashboard calls send source explicitly.
+    const custom = ref.name ? this.deps.db.getAgentTemplate(ref.name) : undefined;
+    return custom ?? getBuiltInAgentTemplate({ id: ref.id, name: ref.name });
   }
 
   deleteRole(projectId: string, name: string): Promise<void> {
