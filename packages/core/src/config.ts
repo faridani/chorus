@@ -25,6 +25,8 @@ export const ConfigSchema = z.object({
       model: z.string().optional(),
       /** Reasoning summary verbosity streamed to the live feed. */
       reasoningSummary: z.enum(["auto", "concise", "detailed", "none"]).default("auto"),
+      /** Self-update CLI backends (claude/codex) once per process before first use. */
+      autoUpdateCli: z.boolean().default(true),
     })
     .default({}),
   diagnostics: z
