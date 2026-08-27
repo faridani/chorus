@@ -76,6 +76,23 @@ export class GitService {
     });
   }
 
+  /**
+   * Bring the main clone's working tree up to the latest `origin/<baseBranch>`.
+   * The clone is read-only context for the orchestrator (it inspects it to plan
+   * delegation); a clone left at its original checkout goes stale as the base
+   * branch advances, so the orchestrator would reason about outdated code.
+   * Best-effort: if the fetch/reset fails (e.g. offline) we keep the prior
+   * checkout rather than aborting the session.
+   */
+  async syncToBase(localPath: string, baseBranch: string): Promise<void> {
+    await this.mutex.run(async () => {
+      await this.gitUnlocked(["fetch", "origin", baseBranch], localPath, false);
+      await this.gitUnlocked(["reset", "--hard", `origin/${baseBranch}`], localPath, false);
+      // Drop stray untracked files left by an old checkout (ignored files kept).
+      await this.gitUnlocked(["clean", "-fd"], localPath, false);
+    });
+  }
+
   async removeWorktree(localPath: string, worktreePath: string): Promise<void> {
     await this.mutex.run(async () => {
       await this.gitUnlocked(["worktree", "remove", "--force", worktreePath], localPath, false);
