@@ -29,6 +29,26 @@ export const ConfigSchema = z.object({
       autoUpdateCli: z.boolean().default(true),
     })
     .default({}),
+  orchestrator: z
+    .object({
+      /**
+       * "autonomous": the orchestrator runs as a codex agent that calls spoke
+       * agents (and verify/PR actions) as MCP tools, deciding turn-by-turn.
+       * "hybrid": the legacy one-shot triage decision + TypeScript state machine.
+       */
+      mode: z.enum(["hybrid", "autonomous"]).default("autonomous"),
+      /** Hard cap on spoke-agent runs per autonomous session (cost/loop guard). */
+      maxSpokeAgentsPerSession: z.number().int().positive().default(12),
+      /** Max spoke agents running concurrently within one session. */
+      maxParallelSpokeAgents: z.number().int().positive().default(3),
+      /** Wall-clock cap for one autonomous orchestrator session. */
+      sessionWallClockMs: z
+        .number()
+        .int()
+        .positive()
+        .default(4 * 60 * 60 * 1000),
+    })
+    .default({}),
   diagnostics: z
     .object({
       /** Model for the read-only Debug Traces diagnostician (empty = CLI default). */
