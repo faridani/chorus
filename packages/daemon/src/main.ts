@@ -91,6 +91,7 @@ async function main(): Promise<void> {
     config,
     version,
     dashboardDir: resolveDashboardDir(),
+    sessionApi: orchestrator,
   });
   await app.listen({ host: config.host, port: config.port });
   console.log(`[chorus] dashboard on http://${config.host}:${config.port}`);
