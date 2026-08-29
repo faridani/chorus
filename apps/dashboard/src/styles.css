@@ -116,6 +116,51 @@ button:disabled { opacity: .5; cursor: default; }
 @keyframes smblink { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(110,168,254,0.5); } 50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(110,168,254,0.15); } }
 .sm-arrow { color: var(--muted); font-size: 16px; padding: 0 2px; }
 
+/* per-ticket views: toggle + hub-and-spoke + DAG + activity log */
+.sm-toggle { display: inline-flex; margin-left: 10px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; vertical-align: middle; }
+.sm-tog { background: transparent; border: none; padding: 3px 10px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.sm-tog.active { background: var(--accent); color: #fff; }
+
+.hubspoke { width: 100%; max-width: 480px; height: auto; display: block; margin: 6px auto 10px; }
+.hs-link { stroke: var(--border); stroke-width: 1.5; }
+.hs-node rect { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+.hs-node.hub rect { fill: #16202e; stroke: var(--accent); stroke-width: 2; }
+.hs-node .hs-label { fill: var(--text); font-size: 12px; font-weight: 600; }
+.hs-node:hover rect { stroke: var(--accent); }
+.hs-node.selected rect { stroke: var(--accent); stroke-width: 2.5; }
+.hs-edit { fill: var(--muted); font-size: 13px; cursor: pointer; }
+.hs-edit:hover { fill: var(--accent); }
+
+.dagflow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0 10px; }
+.dag-node { display: inline-flex; flex-direction: column; gap: 2px; max-width: 240px; padding: 6px 8px; border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; background: var(--bg); color: var(--text); text-align: left; cursor: pointer; font-family: inherit; }
+.dag-node:hover { border-color: var(--accent); }
+.dag-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.dag-node.kind-triage { border-left-color: #8957e5; }
+.dag-node.kind-work { border-left-color: #2f81f7; }
+.dag-node.kind-pr { border-left-color: #3fb950; }
+.dag-node.kind-close { border-left-color: #8a93a3; }
+.dag-node.kind-note { border-left-color: #e3b341; }
+.dag-actor { font-weight: 600; font-size: 12px; }
+.dag-msg { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.dag-edit { color: var(--muted); cursor: pointer; user-select: none; }
+.dag-edit:hover { color: var(--accent); }
+
+/* active-agent pulse (both views) */
+.sm-pulse { animation: smpulse 1.2s ease-in-out infinite; }
+.hs-node.sm-pulse rect { stroke: var(--accent); }
+@keyframes smpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* per-agent activity log */
+.sm-log { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
+.sm-log-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.sm-log-empty { font-size: 12px; color: var(--muted); }
+.linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
+.sm-log-list { list-style: none; padding: 0; margin: 0; max-height: 260px; overflow-y: auto; }
+.sm-log-line { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font-size: 12px; }
+.sm-log-line .ts { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.sm-log-line .ico { width: 16px; text-align: center; }
+.sm-log-text { overflow-wrap: anywhere; }
+
 /* suggestions */
 .suggestions { list-style: none; padding: 0; margin: 0; }
 .suggestions li { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
