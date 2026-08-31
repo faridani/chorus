@@ -479,6 +479,7 @@ class Orchestrator:
                 "description": role.get("description") or "",
                 "allowed_actions": list(role.get("allowed_actions_json") or []),
                 "forbidden_actions": list(role.get("forbidden_actions_json") or []),
+                "tool_permissions": _tool_permissions_for_role(project, role),
             },
             "agent": {
                 "id": agent["id"],
@@ -706,6 +707,65 @@ def _guardrails_for_role(
     return guardrails
 
 
+def _tool_permissions_for_role(
+    project: Mapping[str, object],
+    role: Mapping[str, object],
+) -> list[dict[str, str]]:
+    metadata = _mapping_or_empty(project.get("metadata_json"))
+    catalog_names = _action_names_from_catalog(metadata.get("available_actions"))
+    allowed_names = _action_names_from_role(role, "allowed_actions_json")
+    forbidden_names = _action_names_from_role(role, "forbidden_actions_json")
+    allowed = set(allowed_names)
+    forbidden = set(forbidden_names)
+
+    ordered_names: list[str] = []
+    seen: set[str] = set()
+    for name in [*catalog_names, *allowed_names, *forbidden_names]:
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered_names.append(name)
+
+    permissions: list[dict[str, str]] = []
+    for name in ordered_names:
+        if name in allowed:
+            state = "allowed"
+        elif name in forbidden:
+            state = "disallowed"
+        else:
+            state = "unspecified"
+        permissions.append({"name": name, "state": state})
+    return permissions
+
+
+def _action_names_from_catalog(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    names: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item:
+            names.append(item)
+            continue
+        if not isinstance(item, Mapping):
+            continue
+        # Prefer the stable identifier (id/action) over the human display
+        # `name`, since role allow/forbid lists key on the stable identifier.
+        for key in ("id", "action", "name"):
+            name = item.get(key)
+            if isinstance(name, str) and name:
+                names.append(name)
+                break
+    return names
+
+
+def _action_names_from_role(role: Mapping[str, object], key: str) -> list[str]:
+    value = role.get(key)
+    if not isinstance(value, list):
+        return []
+    return [name for name in value if isinstance(name, str) and name]
+
+
 def _build_agent_prompt(context: Mapping[str, object]) -> str:
     project = _mapping_or_empty(context.get("project"))
     project_context = _mapping_or_empty(context.get("project_context"))
@@ -734,6 +794,7 @@ def _build_agent_prompt(context: Mapping[str, object]) -> str:
             f"Description: {role.get('description')}",
             f"Allowed actions: {json.dumps(role.get('allowed_actions') or [])}",
             f"Forbidden actions: {json.dumps(role.get('forbidden_actions') or [])}",
+            f"Tool permissions: {json.dumps(role.get('tool_permissions') or [])}",
             "",
             "## Guardrails",
             json.dumps(context.get("guardrails") or [], indent=2, sort_keys=True),
