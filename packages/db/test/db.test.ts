@@ -415,6 +415,11 @@ test("migration 0008: tool permissions default empty + round-trip on role & temp
   } as never);
   assert.deepEqual(db.getRole(projectId, "legacy")!.allowedToolIds, []);
   assert.deepEqual(db.getRole(projectId, "legacy")!.forbiddenToolIds, []);
+  db.raw
+    .prepare("UPDATE roles SET allowed_tool_ids='not-json', forbidden_tool_ids='null' WHERE id=?")
+    .run(roleId);
+  assert.deepEqual(db.getRole(projectId, "legacy")!.allowedToolIds, []);
+  assert.deepEqual(db.getRole(projectId, "legacy")!.forbiddenToolIds, []);
 
   // Round-trip non-empty tool ids on a role.
   db.insertRole({
@@ -452,6 +457,11 @@ test("migration 0008: tool permissions default empty + round-trip on role & temp
   assert.deepEqual(tmpl.forbiddenToolIds, ["repo.modify"]);
   assert.equal(tmpl.backendId, "gemini");
   assert.equal(tmpl.model, "gemini-2.5-flash");
+  db.raw
+    .prepare("UPDATE agent_templates SET allowed_tool_ids='{}', forbidden_tool_ids='not-json' WHERE id=?")
+    .run(tmpl.id);
+  assert.deepEqual(db.getAgentTemplate("qa")!.allowedToolIds, []);
+  assert.deepEqual(db.getAgentTemplate("qa")!.forbiddenToolIds, []);
   db.close();
 });
 
