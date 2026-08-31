@@ -36,6 +36,13 @@ export interface ToolDef {
   usageNote: string;
 }
 
+export type ToolPermissionState = "allowed" | "disallowed" | "unspecified";
+
+export interface ResolvedToolPermission {
+  tool: ToolDef;
+  state: ToolPermissionState;
+}
+
 export const TOOL_CATALOG: readonly ToolDef[] = [
   // tickets
   {
@@ -256,6 +263,33 @@ export function getTool(id: string): ToolDef | undefined {
   return TOOL_CATALOG.find((t) => t.id === id);
 }
 
+export function normalizeToolIds(ids: unknown): string[] {
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((id): id is string => typeof id === "string");
+}
+
+/**
+ * Resolve per-agent tool permissions against the current source catalog.
+ * Catalog tools absent from both persisted lists are intentionally
+ * `unspecified`, which covers newly added tools and legacy records.
+ */
+export function resolveToolPermissions(
+  allowed: unknown,
+  forbidden: unknown,
+  catalog: readonly ToolDef[] = TOOL_CATALOG,
+): ResolvedToolPermission[] {
+  const allowedSet = new Set(normalizeToolIds(allowed));
+  const forbiddenSet = new Set(normalizeToolIds(forbidden));
+  return catalog.map((tool) => ({
+    tool,
+    state: allowedSet.has(tool.id)
+      ? "allowed"
+      : forbiddenSet.has(tool.id)
+        ? "disallowed"
+        : "unspecified",
+  }));
+}
+
 /**
  * Validate a tool selection: every id must exist in the catalog, and no id may
  * be both allowed and forbidden. Pure + synchronous so it's trivially testable
@@ -322,23 +356,19 @@ export const ORCHESTRATOR_TOOLS: string[] = [
 export function templateToRoleInput(
   t: Pick<
     AgentTemplate | AgentGalleryTemplate,
-    | "name"
-    | "description"
-    | "allowed"
-    | "forbidden"
-    | "allowedToolIds"
-    | "forbiddenToolIds"
-    | "backendId"
-    | "model"
-  >,
+    "name" | "description" | "allowed" | "forbidden" | "backendId" | "model"
+  > & {
+    allowedToolIds?: unknown;
+    forbiddenToolIds?: unknown;
+  },
 ): UpsertRoleInput {
   return {
     name: t.name,
     description: t.description,
     allowed: [...t.allowed],
     forbidden: [...t.forbidden],
-    allowedToolIds: [...t.allowedToolIds],
-    forbiddenToolIds: [...t.forbiddenToolIds],
+    allowedToolIds: normalizeToolIds(t.allowedToolIds),
+    forbiddenToolIds: normalizeToolIds(t.forbiddenToolIds),
     backendId: t.backendId,
     model: t.model,
   };
