@@ -1,4 +1,5 @@
 import type { AgentResult, AgentRunSpec, AIBackend, ChorusBus } from "@chorus/core";
+import { looksLikeJsonObject } from "./structured-run.js";
 
 /**
  * Shared "run one agent process to completion" core, used by both the hybrid
@@ -25,6 +26,9 @@ export async function runAgentProcess(args: {
   args.onHandle?.(handle);
   const drain = (async () => {
     for await (const ev of handle.events) {
+      // Skip schema-shaped JSON the model streams as interim "messages"; the
+      // authoritative result comes from the output file, not these events.
+      if (ev.kind === "message" && looksLikeJsonObject(ev.text)) continue;
       args.bus.emit({
         type: "agent_event",
         projectId: args.projectId,
