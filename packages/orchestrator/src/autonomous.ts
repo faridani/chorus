@@ -161,10 +161,17 @@ export function buildSpokeAgentPrompt(args: {
     for (const f of role.forbidden) L.push(`- ${f}`);
     L.push("");
   }
+  const coding = isCodingRole(role);
   L.push("## Global rules");
   L.push("- Work ONLY inside the current working directory (your worktree).");
-  L.push("- Commit ALL your changes on the current branch. NEVER run `git push` or open a PR — the orchestrator does that.");
-  L.push("- Make the smallest change that satisfies the instruction; run the project's checks before finishing.");
+  if (coding) {
+    L.push("- Commit ALL your changes on the current branch. NEVER run `git push` or open a PR — the orchestrator does that.");
+    L.push("- Make the smallest change that satisfies the instruction; run the project's checks before finishing.");
+  } else {
+    L.push(
+      "- This is a read-only, advisory task. Investigate and reason, but do NOT edit files, commit, or run build/test/install commands (e.g. `npm test`). Deliver your full answer in the result below — there is nothing to commit.",
+    );
+  }
   L.push("");
   L.push("## Ticket");
   L.push(`${ticket.title}`);
@@ -185,9 +192,43 @@ export function buildSpokeAgentPrompt(args: {
     L.push("");
   }
   L.push("## When you finish");
-  L.push(
-    'Return a single JSON object: { "status": "success" | "no_changes" | "blocked", "summary": string, "filesChanged": string[], "notes": string }. status=success means work is done and committed; no_changes means nothing was needed; blocked means you could not proceed (explain in notes).',
-  );
+  if (coding) {
+    L.push(
+      'Return a single JSON object: { "status": "success" | "no_changes" | "blocked", "summary": string, "filesChanged": string[], "notes": string }. status=success means work is done and committed; no_changes means nothing was needed; blocked means you could not proceed (explain in notes).',
+    );
+  } else {
+    L.push(
+      'Return a single JSON object: { "status": "success" | "blocked", "summary": string, "filesChanged": string[], "notes": string }. Put your idea / findings / recommendation in `summary` (with any detail in `notes`) and leave `filesChanged` empty — advisory work commits nothing. status=success means you produced the requested analysis; blocked means you could not (explain in notes).',
+    );
+  }
   L.push("Narrate progress in prose; emit the JSON object exactly once, as your final message.");
   return L.join("\n");
+}
+
+/**
+ * Whether a role may change the repo. Coding roles get commit/verify guidance;
+ * advisory roles (planning, review, ideation, security analysis) are read-only
+ * and deliver findings in their result instead of committing.
+ *
+ * The inference is deliberately conservative about the read-only verdict: a
+ * role is only treated as advisory when there is an EXPLICIT signal for it.
+ * Legacy roles predating the tool-permission migration carry empty tool lists
+ * (the migration defaults both columns to `[]`) — classifying those as advisory
+ * would silently stop upgraded `software-dev` agents from committing, so an
+ * unconfigured role stays coding.
+ */
+export function isCodingRole(role: Role): boolean {
+  const allowed = role.allowedToolIds ?? [];
+  const forbidden = role.forbiddenToolIds ?? [];
+  // Explicitly granted write capability → coding.
+  if (allowed.includes("repo.modify") || allowed.includes("repo.commit")) return true;
+  // Explicitly denied write capability → advisory/read-only (the built-in
+  // advisory agents forbid repo.modify/repo.commit).
+  if (forbidden.includes("repo.modify") || forbidden.includes("repo.commit")) return false;
+  // No tool permissions configured at all (legacy/unmigrated role): we can't
+  // infer intent, so preserve the original behavior and treat it as coding.
+  if (allowed.length === 0 && forbidden.length === 0) return true;
+  // An explicit, non-empty selection that omits the write tools is an
+  // intentionally advisory role (e.g. product-designer: read + suggest only).
+  return false;
 }
