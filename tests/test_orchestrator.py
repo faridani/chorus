@@ -218,6 +218,86 @@ class OrchestratorLoopTests(unittest.TestCase):
         self.assertIn("Implement orchestrator task loop", self.backend.starts[0]["prompt"])
         self.assertEqual(str(self.repo_path), self.backend.starts[0]["repo_path"])
 
+    def test_task_context_includes_tool_permission_states_from_catalog(self) -> None:
+        self.store.projects.update(
+            self.project["id"],
+            metadata_json={
+                "available_actions": [
+                    "edit_files",
+                    {"name": "git_push"},
+                    {"id": "open_pr"},
+                ]
+            },
+        )
+        selected = create_ticket(
+            self.store,
+            project_id=self.project["id"],
+            title="Use structured tool permissions",
+            assigned_role_id=self.dev_role["id"],
+            status="ready",
+            priority=1,
+        )
+
+        result = Orchestrator(self.store, backends={"fake": self.backend}).run_once(
+            self.project["id"]
+        )
+
+        self.assertEqual(1, len(result["started"]))
+        task = self.store.tasks.require(result["started_task_ids"][0])
+        self.assertEqual(selected["id"], task["ticket_id"])
+
+        permissions = task["context_json"]["role"]["tool_permissions"]
+        states = {permission["name"]: permission["state"] for permission in permissions}
+        self.assertEqual("allowed", states["edit_files"])
+        self.assertEqual("disallowed", states["git_push"])
+        self.assertEqual("unspecified", states["open_pr"])
+        self.assertEqual(
+            ["edit_files", "git_push", "open_pr", "run_tests", "commit", "merge_main"],
+            [permission["name"] for permission in permissions],
+        )
+        self.assertIn("Tool permissions: ", self.backend.starts[0]["prompt"])
+        self.assertIn(
+            '"name": "open_pr", "state": "unspecified"',
+            self.backend.starts[0]["prompt"],
+        )
+
+    def test_run_once_marks_catalog_tools_unspecified_without_role_action_lists(self) -> None:
+        self.store.projects.update(
+            self.project["id"],
+            metadata_json={"available_actions": [{"action": "open_pr"}]},
+        )
+        self.store.agents.create(
+            project_id=self.project["id"],
+            role_id=self.qa_role["id"],
+            name="qa-1",
+            backend="fake",
+            status="idle",
+        )
+        ticket = create_ticket(
+            self.store,
+            project_id=self.project["id"],
+            title="Verify legacy role actions",
+            assigned_role_id=self.qa_role["id"],
+            status="ready",
+            priority=1,
+        )
+
+        result = Orchestrator(self.store, backends={"fake": self.backend}).run_once(
+            self.project["id"]
+        )
+
+        self.assertEqual(1, len(result["started"]))
+        task = self.store.tasks.require(result["started_task_ids"][0])
+        self.assertEqual(ticket["id"], task["ticket_id"])
+        self.assertEqual(
+            [{"name": "open_pr", "state": "unspecified"}],
+            task["context_json"]["role"]["tool_permissions"],
+        )
+        self.assertIn(
+            'Tool permissions: [{"name": "open_pr", "state": "unspecified"}]',
+            self.backend.starts[0]["prompt"],
+        )
+
     def test_run_once_reconciles_finished_agent_run(self) -> None:
         ticket = create_ticket(
             self.store,
