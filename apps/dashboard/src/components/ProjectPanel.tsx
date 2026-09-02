@@ -69,6 +69,8 @@ export function ProjectPanel({
             tickets={tickets}
             events={events}
             runningTaskIds={runningTaskIds}
+            idleIdeation={project.idleIdeation}
+            idleIdeationCount={project.idleIdeationCount}
             onChange={onChange}
           />
         )}
