@@ -7,17 +7,40 @@ export function TicketsTab({
   tickets,
   events,
   runningTaskIds,
+  idleIdeation,
+  idleIdeationCount,
   onChange,
 }: {
   projectId: string;
   tickets: Ticket[];
   events: TicketEvent[];
   runningTaskIds: string[];
+  idleIdeation: boolean;
+  idleIdeationCount: number;
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState<Ticket | "new" | null>(null);
   const running = new Set(runningTaskIds); // ticket ids currently being acted on
   const isRunning = (t: Ticket) => running.has(t.id);
+
+  // Idle-ideation control: optimistic local state, persisted on change.
+  const [ideateOn, setIdeateOn] = useState(idleIdeation);
+  const [ideateN, setIdeateN] = useState(String(idleIdeationCount));
+  useEffect(() => setIdeateOn(idleIdeation), [idleIdeation]);
+  useEffect(() => setIdeateN(String(idleIdeationCount)), [idleIdeationCount]);
+  const clampN = (v: string) => Math.min(10, Math.max(1, Math.floor(Number(v)) || 1));
+  const saveIdeation = (patch: { idleIdeation?: boolean; idleIdeationCount?: number }) =>
+    void api.updateProject(projectId, patch).then(onChange).catch((err) => alert(String(err)));
+  const toggleIdeate = () => {
+    const next = !ideateOn;
+    setIdeateOn(next);
+    saveIdeation({ idleIdeation: next });
+  };
+  const commitN = () => {
+    const n = clampN(ideateN);
+    setIdeateN(String(n));
+    if (n !== idleIdeationCount) saveIdeation({ idleIdeationCount: n });
+  };
 
   // Local order so drag-and-drop feels instant; re-synced when the prop changes.
   const [order, setOrder] = useState<Ticket[]>(tickets);
@@ -45,14 +68,43 @@ export function TicketsTab({
     <div>
       <div className="tabhead">
         <h3>Tickets ({tickets.length})</h3>
-        <button className="primary" onClick={() => setEditing("new")}>
-          + New ticket
-        </button>
+        <div className="tabhead-actions">
+          <div className="ideate-ctl" title="When the queue is empty, automatically generate this many follow-up tickets.">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={ideateOn}
+              className={`switch ${ideateOn ? "on" : ""}`}
+              onClick={toggleIdeate}
+            >
+              <span className="switch-knob" />
+            </button>
+            <span className="ideate-label">
+              automatically ideate and create
+              <input
+                type="number"
+                min={1}
+                max={10}
+                className="ideate-n"
+                value={ideateN}
+                disabled={!ideateOn}
+                onChange={(e) => setIdeateN(e.target.value)}
+                onBlur={commitN}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+              tickets when idle
+            </span>
+          </div>
+          <button className="primary" onClick={() => setEditing("new")}>
+            + New ticket
+          </button>
+        </div>
       </div>
       <table className="tickets">
         <thead>
           <tr>
             <th aria-label="reorder" />
+            <th aria-label="star" />
             <th>Title</th>
             <th>Now with</th>
             <th>Priority</th>
@@ -97,6 +149,22 @@ export function TicketsTab({
                 }}
               >
                 ⠿
+              </td>
+              <td className="star-cell" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  className={`star-btn ${t.starred ? "on" : ""}`}
+                  aria-pressed={t.starred}
+                  title={t.starred ? "Starred — click to unstar" : "Click to star"}
+                  onClick={() =>
+                    void api
+                      .setTicketStarred(projectId, t.id, !t.starred)
+                      .then(onChange)
+                      .catch((err) => alert(String(err)))
+                  }
+                >
+                  {t.starred ? "★" : "☆"}
+                </button>
               </td>
               <td>{t.title}</td>
               <td>{t.roleName ?? "—"}</td>
