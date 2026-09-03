@@ -23,6 +23,10 @@ export interface Project {
   status: "initializing" | "needs_spec" | "ready" | "error";
   /** Per-project dispatch control (independent of other projects). */
   runState: ProjectRunState;
+  /** When idle (queue drained), auto-generate follow-up tickets. Off by default. */
+  idleIdeation: boolean;
+  /** How many tickets to ideate per idle pass when `idleIdeation` is on (1–10). */
+  idleIdeationCount: number;
   createdAt: number;
 }
 
@@ -122,6 +126,8 @@ export interface Ticket {
   prUrl: string | null;
   /** Number of the GitHub PR, once opened. */
   prNumber: number | null;
+  /** User-set flag to mark a ticket for attention. Display-only; no behavior. */
+  starred: boolean;
   createdAt: number;
   updatedAt: number;
 }
