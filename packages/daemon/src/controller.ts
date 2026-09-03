@@ -290,6 +290,8 @@ export class AppController implements ControlApi {
       commandsDetected: false,
       status: "initializing",
       runState: "running",
+      idleIdeation: false,
+      idleIdeationCount: 1,
       createdAt: Date.now(),
     };
     this.deps.db.insertProject(project);
@@ -382,6 +384,10 @@ export class AppController implements ControlApi {
       ...(patch.groundRules !== undefined ? { groundRules: patch.groundRules } : {}),
       ...(patch.setupCommand !== undefined ? { setupCommand: patch.setupCommand.trim() || null } : {}),
       ...(patch.verifyCommands !== undefined ? { verifyCommands: patch.verifyCommands } : {}),
+      ...(patch.idleIdeation !== undefined ? { idleIdeation: patch.idleIdeation } : {}),
+      ...(patch.idleIdeationCount !== undefined
+        ? { idleIdeationCount: Math.min(10, Math.max(1, Math.floor(patch.idleIdeationCount) || 1)) }
+        : {}),
     });
     this.emitProject(projectId);
     return Promise.resolve(this.deps.db.getProject(projectId)!);
@@ -433,6 +439,7 @@ export class AppController implements ControlApi {
       worktreePath: null,
       prUrl: null,
       prNumber: null,
+      starred: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -471,6 +478,15 @@ export class AppController implements ControlApi {
       this.deps.orchestrator.requestReattempt(ticketId);
       void this.deps.orchestrator.tick();
     }
+    return Promise.resolve(this.deps.db.getTicket(ticketId)!);
+  }
+
+  setTicketStarred(projectId: string, ticketId: string, starred: boolean): Promise<Ticket> {
+    const ticket = this.deps.db.getTicket(ticketId);
+    if (!ticket || ticket.projectId !== projectId) throw new Error("ticket not found");
+    // Starring is display-only metadata — allowed even while the agent runs.
+    this.deps.db.updateTicket(ticketId, { starred });
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
     return Promise.resolve(this.deps.db.getTicket(ticketId)!);
   }
 
