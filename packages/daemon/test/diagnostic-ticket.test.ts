@@ -130,6 +130,41 @@ test("filing a diagnostic ticket: orchestrator by default + audit event", async 
   db.close();
 });
 
+test("setTicketStarred toggles the flag even while the ticket's agent is running", async () => {
+  const db = freshDb();
+  const projectId = seedProject(db);
+  const ctrl = makeController(db);
+  const t = await ctrl.addTicket(projectId, { title: "Star me", body: "b" });
+  assert.equal(t.starred, false);
+
+  // A controller whose orchestrator reports this ticket as actively running —
+  // updateTicket would 409 here, but starring must still work.
+  const events: string[] = [];
+  const bus = new ChorusBus();
+  bus.on((e) => e.type === "ticket_changed" && events.push(e.ticketId));
+  const runningCtrl = new AppController({
+    db,
+    bus,
+    git: {} as never,
+    backends: {} as never,
+    orchestrator: { runningTaskIds: () => [t.id], tick: () => {} } as never,
+    notifier: {} as never,
+    config: { dataDir: "/tmp", agent: {} } as never,
+    detectedBackends: [],
+  });
+
+  const starred = await runningCtrl.setTicketStarred(projectId, t.id, true);
+  assert.equal(starred.starred, true);
+  assert.equal(db.getTicket(t.id)?.starred, true);
+  assert.ok(events.includes(t.id), "emits ticket_changed");
+
+  const unstarred = await runningCtrl.setTicketStarred(projectId, t.id, false);
+  assert.equal(unstarred.starred, false);
+
+  assert.throws(() => runningCtrl.setTicketStarred("proj_nope", t.id, true), /ticket not found/);
+  db.close();
+});
+
 test("filing honors a valid proposed role, ignores an invalid one", async () => {
   const db = freshDb();
   const projectId = seedProject(db);
