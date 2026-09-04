@@ -7,3 +7,4 @@ export * from "./manifest.js";
 export * from "./evaluate.js";
 export * from "./review.js";
 export * from "./diagnostics.js";
+export * from "./ticket-generation.js";
