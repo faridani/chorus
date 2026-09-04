@@ -111,6 +111,7 @@ export class SpecIngestor {
       worktreePath: null,
       prUrl: null,
       prNumber: null,
+      starred: false,
       createdAt: now,
       updatedAt: now,
     }));
