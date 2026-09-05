@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import type { Role, Ticket, TicketEvent } from "../api.js";
 import {
   activeAgents,
+  agentActivity,
   buildDag,
   type FeedItem,
   spokeAgents,
+  stepActivity,
 } from "../stateMachineModel.js";
 import { AgentActivityLog } from "./AgentActivityLog.js";
 import { DagView } from "./DagView.js";
@@ -84,19 +86,50 @@ function TicketStateMachine({
   onEditAgent: (roleName: string) => void;
 }) {
   const [view, setView] = useState<"hub" | "dag">("hub");
-  const [selected, setSelected] = useState<string | null>(null);
+  // Selection is per-view and uses different keys: the hub-and-spoke view
+  // selects an agent by name; the DAG selects a turn by step id. They are
+  // intentionally not shared — the two views are different projections.
+  const [hubSel, setHubSel] = useState<string | null>(null);
+  const [dagSel, setDagSel] = useState<string | null>(null);
 
   // Memoized so the 3s ticking clock (which only changes `now`) doesn't re-run
   // these filters/sorts over the (potentially large) events/feed arrays.
   const agents = useMemo(() => spokeAgents(roles, events, ticket.id, feed), [roles, events, ticket.id, feed]);
   const editable = useMemo(() => new Set(agents.filter((a) => a.editable).map((a) => a.name)), [agents]);
-  const dag = useMemo(() => buildDag(events, ticket.id), [events, ticket.id]);
+  const dag = useMemo(
+    () => buildDag(events, ticket.id, new Set(roles.map((r) => r.name))),
+    [events, ticket.id, roles],
+  );
   // Depends on `now`, so recomputed each tick (cheap: a single pass over feed).
   const active = activeAgents(feed, ticket.id, runningTaskIds, now);
   const isWorking = runningTaskIds.includes(ticket.id);
 
-  // Default the log to the most recent actor so it's useful before any click.
-  const effectiveSelected = selected ?? dag[dag.length - 1]?.actor ?? null;
+  // Hub: default to the most recent actor. DAG: default to the last (current) step.
+  const lastNode = dag[dag.length - 1] ?? null;
+  const effectiveHub = hubSel ?? lastNode?.actor ?? null;
+  const effectiveStepId = dagSel ?? lastNode?.id ?? null;
+  // In the DAG, only the current (last) turn pulses — not every box of that
+  // actor. That's the per-step semantics the hub-and-spoke view doesn't have.
+  const activeStepId =
+    isWorking && lastNode && active.has(lastNode.actor) ? lastNode.id : null;
+
+  // The log content differs by view: the hub shows an agent's whole-ticket
+  // history; the DAG shows just the selected turn's slice.
+  const { logItems, logLabel, logEditTarget } = useMemo(() => {
+    if (view === "dag") {
+      const node = dag.find((n) => n.id === effectiveStepId) ?? null;
+      return {
+        logItems: node ? stepActivity(events, feed, ticket.id, node) : [],
+        logLabel: node ? `${node.actor}${node.count > 1 ? ` ×${node.count}` : ""}` : null,
+        logEditTarget: node?.editable ? node.actor : null,
+      };
+    }
+    return {
+      logItems: effectiveHub ? agentActivity(events, feed, ticket.id, effectiveHub) : [],
+      logLabel: effectiveHub,
+      logEditTarget: effectiveHub && editable.has(effectiveHub) ? effectiveHub : null,
+    };
+  }, [view, dag, effectiveStepId, effectiveHub, events, feed, ticket.id, editable]);
 
   return (
     <div className="sm-ticket">
@@ -133,27 +166,24 @@ function TicketStateMachine({
         <HubSpokeView
           agents={agents}
           active={active}
-          selected={effectiveSelected}
-          onSelect={setSelected}
+          selected={effectiveHub}
+          onSelect={setHubSel}
           onEdit={onEditAgent}
         />
       ) : (
         <DagView
           nodes={dag}
-          editable={editable}
-          active={active}
-          selected={effectiveSelected}
-          onSelect={setSelected}
+          activeStepId={activeStepId}
+          selectedStepId={effectiveStepId}
+          onSelect={setDagSel}
           onEdit={onEditAgent}
         />
       )}
 
       <AgentActivityLog
-        events={events}
-        feed={feed}
-        ticketId={ticket.id}
-        agent={effectiveSelected}
-        editable={!!effectiveSelected && editable.has(effectiveSelected)}
+        items={logItems}
+        label={logLabel}
+        editTarget={logEditTarget}
         onEdit={onEditAgent}
       />
     </div>
