@@ -1,6 +1,4 @@
-import { useMemo } from "react";
-import type { TicketEvent } from "../api.js";
-import { agentActivity, type FeedItem } from "../stateMachineModel.js";
+import type { ActivityItem } from "../stateMachineModel.js";
 
 const ICON: Record<string, string> = {
   reasoning: "💭",
@@ -17,43 +15,40 @@ const ICON: Record<string, string> = {
   note: "📝",
 };
 
-/** The activity log under the diagram, scoped to the selected agent. */
+/**
+ * Renders a pre-computed activity log under the diagram. The caller decides the
+ * scope: the hub-and-spoke view passes an agent's whole-ticket history, while
+ * the DAG view passes a single turn's slice — this component just renders.
+ */
 export function AgentActivityLog({
-  events,
-  feed,
-  ticketId,
-  agent,
-  editable,
+  items,
+  label,
+  editTarget,
   onEdit,
 }: {
-  events: TicketEvent[];
-  feed: FeedItem[];
-  ticketId: string;
-  agent: string | null;
-  editable: boolean;
+  /** Time-ordered activity to show (already scoped by the caller). */
+  items: ActivityItem[];
+  /** Heading subject (agent/step actor); null shows the "click above" prompt. */
+  label: string | null;
+  /** Role name to edit, or null when this subject isn't an editable role. */
+  editTarget: string | null;
   onEdit: (name: string) => void;
 }) {
-  // Memoized so the parent's 3s tick doesn't re-merge/re-sort every render.
-  // Hook runs unconditionally (before the early return) per the rules of hooks.
-  const items = useMemo(
-    () => (agent ? agentActivity(events, feed, ticketId, agent) : []),
-    [events, feed, ticketId, agent],
-  );
-  if (!agent) {
+  if (!label) {
     return <p className="sm-log-empty">Click an agent above to see its activity.</p>;
   }
   return (
     <div className="sm-log">
       <div className="sm-log-head">
-        <strong>Activity: {agent}</strong>
-        {editable && (
-          <button type="button" className="linkbtn" onClick={() => onEdit(agent)}>
+        <strong>Activity: {label}</strong>
+        {editTarget && (
+          <button type="button" className="linkbtn" onClick={() => onEdit(editTarget)}>
             Edit agent →
           </button>
         )}
       </div>
       {items.length === 0 ? (
-        <p className="sm-log-empty">No activity recorded yet for {agent}.</p>
+        <p className="sm-log-empty">No activity recorded yet for {label}.</p>
       ) : (
         <ul className="sm-log-list">
           {items.map((it) => (
