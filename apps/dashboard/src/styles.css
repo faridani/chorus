@@ -300,6 +300,9 @@ tr.clickable:hover td { background: var(--panel2); }
 .modal input, .modal textarea, .modal select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px; }
 .modal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+.cleanup-modal code { font-family: ui-monospace, monospace; color: #f8a39a; }
+.modal label.checkrow { display: flex; align-items: center; gap: 8px; margin: 10px 0; text-transform: none; letter-spacing: 0; color: var(--text); font-size: 13px; }
+.modal label.checkrow input { width: auto; flex: none; }
 .warn { background: #3a2e14; border: 1px solid #5e4e2e; color: #e3b341; padding: 8px; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
 
 /* hamburger + global settings drawer */
