@@ -3,47 +3,48 @@ import type { DagNode } from "../stateMachineModel.js";
 
 /**
  * Linear DAG view: the actual run sequence (orchestrator → spoke → orchestrator
- * → …), consecutive same-actor steps collapsed into one node. Clicking a node
- * selects it (drives the activity log); the ✎ jumps to the agent editor.
+ * → …), consecutive same-actor steps collapsed into one node. Every hand-off is
+ * its own box, identified by step id (not actor) — so a return to the same actor
+ * is a distinct, separately-selectable node. Clicking a node selects that step
+ * (drives the per-turn activity log); the ✎ jumps to the agent editor. This view
+ * is independent of the hub-and-spoke participant model.
  */
 export function DagView({
   nodes,
-  editable,
-  active,
-  selected,
+  activeStepId,
+  selectedStepId,
   onSelect,
   onEdit,
 }: {
   nodes: DagNode[];
-  editable: Set<string>;
-  active: Set<string>;
-  selected: string | null;
-  onSelect: (name: string) => void;
-  onEdit: (name: string) => void;
+  activeStepId: string | null;
+  selectedStepId: string | null;
+  onSelect: (stepId: string) => void;
+  onEdit: (actor: string) => void;
 }) {
   if (nodes.length === 0) {
     return <p className="sm-log-empty">No runs yet — the DAG appears as agents work the ticket.</p>;
   }
-  const editClick = (name: string) => (e: MouseEvent) => {
+  const editClick = (actor: string) => (e: MouseEvent) => {
     e.stopPropagation();
-    onEdit(name);
+    onEdit(actor);
   };
   return (
     <div className="dagflow">
       {nodes.map((n, i) => (
-        <span key={`${n.actor}-${i}`} className="dag-step-wrap">
+        <span key={n.id} className="dag-step-wrap">
           <button
             type="button"
-            className={`dag-node kind-${n.kind}${active.has(n.actor) ? " sm-pulse" : ""}${
-              selected === n.actor ? " selected" : ""
+            className={`dag-node kind-${n.kind}${activeStepId === n.id ? " sm-pulse" : ""}${
+              selectedStepId === n.id ? " selected" : ""
             }`}
             title={n.lastMessage}
-            onClick={() => onSelect(n.actor)}
+            onClick={() => onSelect(n.id)}
           >
             <span className="dag-actor">
               {n.actor}
               {n.count > 1 ? ` ×${n.count}` : ""}
-              {editable.has(n.actor) && (
+              {n.editable && (
                 <span className="dag-edit" onClick={editClick(n.actor)} aria-label={`Edit ${n.actor}`}>
                   {" "}
                   ✎
