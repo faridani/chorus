@@ -9,6 +9,8 @@ import {
   type ChorusBus,
   type Config,
   type ControlApi,
+  type CleanupTicketsInput,
+  type CleanupTicketsResult,
   type CreateProjectInput,
   type CreateTicketInput,
   type DiagnosisResult,
@@ -27,6 +29,7 @@ import {
   CODING_TOOLS,
   getBuiltInAgentTemplate,
   ORCHESTRATOR_TOOLS,
+  TICKET_CLEANUP_CONFIRMATION,
 } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
 import type { GitService } from "@chorus/git-service";
@@ -518,6 +521,84 @@ export class AppController implements ControlApi {
     this.deps.db.deleteTicket(ticketId);
     this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
     return Promise.resolve();
+  }
+
+  async cleanupTickets(projectId: string, input: CleanupTicketsInput): Promise<CleanupTicketsResult> {
+    if (input?.confirmation !== TICKET_CLEANUP_CONFIRMATION) {
+      throw Object.assign(new Error(`Type ${TICKET_CLEANUP_CONFIRMATION} to clean up tickets.`), {
+        statusCode: 400,
+      });
+    }
+
+    const project = this.deps.db.getProject(projectId);
+    if (!project) throw new Error("project not found");
+    const tickets = this.deps.db.listTickets(projectId);
+    const running = new Set(this.deps.orchestrator.runningTaskIds());
+    const runningTicket = tickets.find((ticket) => running.has(ticket.id));
+    if (runningTicket) {
+      throw Object.assign(new Error("Cannot clean up tickets while an agent is running."), {
+        statusCode: 409,
+      });
+    }
+
+    const removeBranches = !!input.removeBranches;
+    const removePullRequests = !!input.removePullRequests;
+    let closedPullRequests = 0;
+    let removedBranches = 0;
+
+    if (removePullRequests || removeBranches) {
+      const branchCleanup = new Set<string>();
+      for (const ticket of tickets) {
+        if (removePullRequests) {
+          const prRef = ticket.prUrl ?? (ticket.prNumber != null ? String(ticket.prNumber) : ticket.branch);
+          if (prRef && (await this.deps.git.closePullRequest(project.localPath, prRef))) {
+            closedPullRequests += 1;
+          }
+        }
+        if (removeBranches) {
+          if (ticket.worktreePath) {
+            try {
+              await this.deps.git.removeWorktree(project.localPath, ticket.worktreePath);
+            } catch {
+              /* Missing/stale worktrees should not block branch cleanup. */
+            }
+          }
+          for (const branch of this.ticketBranches(ticket)) {
+            const trimmed = branch.trim();
+            if (this.canDeleteCleanupBranch(trimmed, project.baseBranch)) branchCleanup.add(trimmed);
+          }
+        }
+      }
+
+      for (const branch of branchCleanup) {
+        if (await this.deps.git.deleteBranch(project.localPath, branch)) removedBranches += 1;
+      }
+    }
+
+    for (const ticket of tickets) {
+      this.deps.db.deleteTicket(ticket.id);
+      this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId: ticket.id, at: Date.now() });
+    }
+    this.emitProject(projectId);
+    return { deletedTickets: tickets.length, closedPullRequests, removedBranches };
+  }
+
+  private ticketBranches(ticket: Ticket): string[] {
+    const branches = new Set<string>();
+    if (ticket.branch) branches.add(ticket.branch);
+    for (const task of this.deps.db.listTasksForTicket(ticket.id)) {
+      if (task.branch) branches.add(task.branch);
+    }
+    return [...branches];
+  }
+
+  private canDeleteCleanupBranch(branch: string, baseBranch: string): boolean {
+    return (
+      branch.startsWith("chorus/") &&
+      branch !== baseBranch.trim() &&
+      branch !== "main" &&
+      branch !== "master"
+    );
   }
 
   /** Reject mutations to a ticket whose agent is actively running. */
