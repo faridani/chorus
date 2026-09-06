@@ -29,6 +29,23 @@ export interface UpdateTicketInput {
   reopen?: boolean;
 }
 
+export interface CleanupTicketsInput {
+  /** Exact confirmation string required before destructive ticket cleanup. */
+  confirmation: string;
+  /** Close open GitHub pull requests associated with worked tickets. */
+  removePullRequests?: boolean;
+  /** Remove ticket worktrees plus local/remote branches associated with worked tickets. */
+  removeBranches?: boolean;
+}
+
+export const TICKET_CLEANUP_CONFIRMATION = "DELETE";
+
+export interface CleanupTicketsResult {
+  deletedTickets: number;
+  closedPullRequests: number;
+  removedBranches: number;
+}
+
 export interface ProjectSettingsInput {
   baseBranch?: string;
   expectations?: string;
@@ -73,6 +90,8 @@ export interface ControlApi {
   /** Star / unstar a ticket. Display-only flag; allowed at any time. */
   setTicketStarred(projectId: string, ticketId: string, starred: boolean): Promise<Ticket>;
   deleteTicket(projectId: string, ticketId: string): Promise<void>;
+  /** Destructively remove every ticket in a project, with optional branch/PR cleanup. */
+  cleanupTickets(projectId: string, input: CleanupTicketsInput): Promise<CleanupTicketsResult>;
   /** Reorder a project's tickets; `orderedIds` is top→bottom (top = highest priority). */
   reorderTickets(projectId: string, orderedIds: string[]): Promise<void>;
 
