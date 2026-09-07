@@ -284,6 +284,18 @@ export class GitService {
       let deleted = false;
       await this.gitUnlocked(["worktree", "prune"], localPath, false);
 
+      // A branch that's still checked out in a worktree can't be deleted
+      // (`git branch -D` errors). Remove the worktree holding it first — for the
+      // cleanup path the worktree is being discarded along with the branch.
+      const list = await this.gitUnlocked(["worktree", "list", "--porcelain"], localPath, false);
+      if (list.code === 0) {
+        const held = worktreePathForBranch(list.stdout, trimmed);
+        if (held) {
+          await this.gitUnlocked(["worktree", "remove", "--force", held], localPath, false);
+          await this.gitUnlocked(["worktree", "prune"], localPath, false);
+        }
+      }
+
       const local = await this.gitUnlocked(["show-ref", "--verify", `refs/heads/${trimmed}`], localPath, false);
       if (local.code === 0) {
         const r = await this.gitUnlocked(["branch", "-D", trimmed], localPath, false);
@@ -393,4 +405,24 @@ exit 0
   private gitUnlocked(args: string[], cwd: string, throwOnError: boolean) {
     return run("git", args, { cwd, throwOnError });
   }
+}
+
+/**
+ * Parse `git worktree list --porcelain` output and return the path of the
+ * worktree that has `branch` checked out, or null. Porcelain blocks are
+ * newline-separated; each has a `worktree <path>` line and (when on a branch) a
+ * `branch refs/heads/<name>` line.
+ */
+export function worktreePathForBranch(porcelain: string, branch: string): string | null {
+  let currentPath: string | null = null;
+  for (const raw of porcelain.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("worktree ")) currentPath = line.slice("worktree ".length);
+    else if (line === "") currentPath = null;
+    else if (line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length);
+      if (currentPath && (ref === `refs/heads/${branch}` || ref === branch)) return currentPath;
+    }
+  }
+  return null;
 }
