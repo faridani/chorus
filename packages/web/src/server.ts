@@ -307,6 +307,20 @@ export function createServer(deps: WebDeps): FastifyInstance {
     return { ok: true };
   });
 
+  app.post("/api/projects/:id/tickets/cleanup", async (req) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      confirmation?: string;
+      removeBranches?: boolean;
+      removePullRequests?: boolean;
+    };
+    return api.cleanupTickets(id, {
+      confirmation: typeof body.confirmation === "string" ? body.confirmation : "",
+      removeBranches: !!body.removeBranches,
+      removePullRequests: !!body.removePullRequests,
+    });
+  });
+
   app.delete("/api/projects/:id/tickets/:ticketId", async (req) => {
     const { id, ticketId } = req.params as { id: string; ticketId: string };
     await api.deleteTicket(id, ticketId);
