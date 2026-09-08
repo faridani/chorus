@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { api, type Project } from "../api.js";
 import { StringListEditor } from "./StringListEditor.js";
 
-/** Edit base branch, high-level expectations, and project ground rules. */
+/** Edit base branch, setup command, and verify commands. (Expectations and
+ * ground rules live in the Goals tab.) */
 export function SettingsTab({ project, onSaved }: { project: Project; onSaved: () => void }) {
   const [baseBranch, setBaseBranch] = useState(project.baseBranch);
-  const [expectations, setExpectations] = useState(project.expectations);
-  const [groundRules, setGroundRules] = useState<string[]>(project.groundRules);
   const [setupCommand, setSetupCommand] = useState(project.setupCommand ?? "");
   const [verifyCommands, setVerifyCommands] = useState<string[]>(project.verifyCommands ?? []);
   const [busy, setBusy] = useState(false);
@@ -14,23 +13,19 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
   // Re-sync if the project reloads underneath us.
   useEffect(() => {
     setBaseBranch(project.baseBranch);
-    setExpectations(project.expectations);
-    setGroundRules(project.groundRules);
     setSetupCommand(project.setupCommand ?? "");
     setVerifyCommands(project.verifyCommands ?? []);
   }, [project.id]);
 
   const dirty =
     baseBranch !== project.baseBranch ||
-    expectations !== project.expectations ||
-    JSON.stringify(groundRules) !== JSON.stringify(project.groundRules) ||
     setupCommand !== (project.setupCommand ?? "") ||
     JSON.stringify(verifyCommands) !== JSON.stringify(project.verifyCommands ?? []);
 
   const save = async () => {
     setBusy(true);
     try {
-      await api.updateProject(project.id, { baseBranch, expectations, groundRules, setupCommand, verifyCommands });
+      await api.updateProject(project.id, { baseBranch, setupCommand, verifyCommands });
       onSaved();
     } catch (err) {
       alert(String(err));
@@ -82,31 +77,6 @@ export function SettingsTab({ project, onSaved }: { project: Project; onSaved: (
         <div className="hint">
           Build/test/lint commands run before a PR. They gate every attempt: an evaluator runs them
           and a reviewer judges the diff — both must pass or the ticket loops back with the failure.
-        </div>
-      </div>
-
-      <div className="field" title={TIPS.expectations}>
-        <label>High-level expectations</label>
-        <textarea
-          rows={5}
-          value={expectations}
-          placeholder="What is this project for? What does 'good' look like? Constraints, priorities…"
-          onChange={(e) => setExpectations(e.target.value)}
-          title={TIPS.expectations}
-        />
-        <div className="hint">Injected into every agent's prompt.</div>
-      </div>
-
-      <div className="field" title={TIPS.groundRules}>
-        <label>Ground rules (project-wide guardrails)</label>
-        <StringListEditor
-          items={groundRules}
-          onChange={setGroundRules}
-          placeholder="e.g. Always add tests for new behavior"
-        />
-        <div className="hint">
-          Added to every agent's guardrails. Built-in safety rules (never push, never touch the
-          base branch, commit your work) always apply and can't be removed.
         </div>
       </div>
 
