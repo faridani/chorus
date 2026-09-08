@@ -237,6 +237,11 @@ export function createServer(deps: WebDeps): FastifyInstance {
     return { ok: true };
   });
 
+  app.get("/api/projects/:id/spec", (req) => {
+    const { id } = req.params as { id: string };
+    return api.readProjectSpec(id);
+  });
+
   app.post("/api/projects/:id/tickets", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = req.body as {
