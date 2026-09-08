@@ -80,6 +80,8 @@ export interface ControlApi {
   createProject(input: CreateProjectInput): Promise<Project>;
   /** Provide/refresh a spec for a project that had none, then (re)ingest. */
   provideSpec(projectId: string, specText: string): Promise<void>;
+  /** Read the project's spec file (path + contents) from its checkout. */
+  readProjectSpec(projectId: string): Promise<{ path: string | null; content: string | null }>;
   /** Update base branch / expectations / ground rules (applies going forward). */
   updateProjectSettings(projectId: string, patch: ProjectSettingsInput): Promise<Project>;
   /** Start / pause / stop dispatch for a single project independently. */
