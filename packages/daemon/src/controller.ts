@@ -362,6 +362,20 @@ export class AppController implements ControlApi {
     this.emitProject(projectId);
   }
 
+  readProjectSpec(projectId: string): Promise<{ path: string | null; content: string | null }> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project) throw new Error("project not found");
+    const path = project.specPath ?? null;
+    if (!path) return Promise.resolve({ path: null, content: null });
+    const full = join(project.localPath, path);
+    if (!existsSync(full)) return Promise.resolve({ path, content: null });
+    try {
+      return Promise.resolve({ path, content: readFileSync(full, "utf8") });
+    } catch {
+      return Promise.resolve({ path, content: null });
+    }
+  }
+
   private async writeSpec(project: Project, specText: string): Promise<void> {
     const rel = "docs/SPEC.md";
     const full = join(project.localPath, rel);
