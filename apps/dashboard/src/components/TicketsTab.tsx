@@ -104,7 +104,12 @@ export function TicketsTab({
           <button className="danger" disabled={tickets.length === 0} onClick={() => setCleanupOpen(true)}>
             Clean up
           </button>
-          <button className="primary" onClick={() => setEditing("new")}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => setEditing("new")}
+            title="Create a new ticket for the orchestrator to triage and assign."
+          >
             + New ticket
           </button>
         </div>
