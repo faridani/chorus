@@ -304,6 +304,10 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ starred }),
     }).then((r) => json<Ticket>(r)),
+  addressPrComments: (id: string, ticketId: string) =>
+    fetch(`/api/projects/${id}/tickets/${ticketId}/address-pr-comments`, { method: "POST" }).then(
+      (r) => json<{ started: boolean }>(r),
+    ),
   upsertRole: (id: string, role: RoleInput) =>
     fetch(`/api/projects/${id}/roles`, {
       method: "POST",
