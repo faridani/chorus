@@ -29,6 +29,22 @@ export function TicketsTab({
   const running = new Set(runningTaskIds); // ticket ids currently being acted on
   const isRunning = (t: Ticket) => running.has(t.id);
 
+  // Ticket whose "Address PR comments" request is being submitted.
+  const [addrPending, setAddrPending] = useState<string | null>(null);
+  const addressPrComments = (t: Ticket) => {
+    setAddrPending(t.id);
+    void api
+      .addressPrComments(projectId, t.id)
+      .then(() => {
+        onChange();
+        alert(
+          "An agent is now addressing this PR's review comments. Watch the ticket's activity and the PR for the result.",
+        );
+      })
+      .catch((err) => alert(String(err)))
+      .finally(() => setAddrPending(null));
+  };
+
   // Idle-ideation control: optimistic local state, persisted on change.
   const [ideateOn, setIdeateOn] = useState(idleIdeation);
   const [ideateN, setIdeateN] = useState(String(idleIdeationCount));
@@ -124,6 +140,7 @@ export function TicketsTab({
             <th>Priority</th>
             <th>Status</th>
             <th>PR</th>
+            <th>Address PR Reviews</th>
           </tr>
         </thead>
         <tbody>
@@ -189,14 +206,30 @@ export function TicketsTab({
               </td>
               <td>
                 {t.prUrl ? (
-                  <a
-                    href={t.prUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+                  <a href={t.prUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
                     {t.prNumber ? `#${t.prNumber}` : "PR"}
                   </a>
+                ) : t.prNumber != null ? (
+                  `#${t.prNumber}`
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="addr-pr-cell">
+                {t.prUrl || t.prNumber != null ? (
+                  <button
+                    type="button"
+                    className="addr-pr-btn"
+                    disabled={addrPending === t.id}
+                    aria-label="Address PR reviews"
+                    title="Have an agent study this PR's review comments, address the ones it agrees with, push the changes, and post a summary comment (explaining any it disagrees with)."
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      addressPrComments(t);
+                    }}
+                  >
+                    {addrPending === t.id ? "⏳" : "💬"}
+                  </button>
                 ) : (
                   "—"
                 )}
@@ -205,7 +238,7 @@ export function TicketsTab({
           ))}
           {order.length === 0 && (
             <tr>
-              <td colSpan={7} className="muted">
+              <td colSpan={8} className="muted">
                 no tickets yet
               </td>
             </tr>
