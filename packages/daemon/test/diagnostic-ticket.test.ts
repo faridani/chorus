@@ -165,6 +165,19 @@ test("setTicketStarred toggles the flag even while the ticket's agent is running
   db.close();
 });
 
+test("addressPrComments rejects tickets without a PR and an unknown project", async () => {
+  const db = freshDb();
+  const projectId = seedProject(db);
+  const ctrl = makeController(db);
+  const t = await ctrl.addTicket(projectId, { title: "No PR yet", body: "b" });
+
+  // No PR on the ticket → 400-style guard.
+  assert.throws(() => ctrl.addressPrComments(projectId, t.id), /no pull request/i);
+  // Wrong project → not found.
+  assert.throws(() => ctrl.addressPrComments("proj_nope", t.id), /ticket not found/);
+  db.close();
+});
+
 test("filing honors a valid proposed role, ignores an invalid one", async () => {
   const db = freshDb();
   const projectId = seedProject(db);
