@@ -19,6 +19,9 @@ import { DebugTracesModal } from "./components/DebugTracesModal.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 import { ToolsGallery } from "./components/ToolsGallery.js";
 
+/** Expanded width of the right pane; must match `--events-pane-width` in styles.css. */
+const EVENTS_PANE_WIDTH = 320;
+
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -33,7 +36,10 @@ export function App() {
   const [backends, setBackends] = useState<BackendInfo[]>([]);
   const [tools, setTools] = useState<ToolDef[]>([]);
   const [refreshingBackends, setRefreshingBackends] = useState(false);
+  const [rightPaneOpen, setRightPaneOpen] = useState(true);
   const seq = useRef(0);
+  const rightPaneRef = useRef<HTMLElement | null>(null);
+  const rightPaneHandleRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     void api.backends().then(setBackends).catch(() => setBackends([]));
@@ -77,6 +83,14 @@ export function App() {
     if (selected) void refreshDetail(selected);
   });
 
+  useEffect(() => {
+    if (rightPaneOpen) return;
+    const active = document.activeElement;
+    if (active && rightPaneRef.current?.contains(active)) {
+      rightPaneHandleRef.current?.focus();
+    }
+  }, [rightPaneOpen]);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -115,7 +129,7 @@ export function App() {
         </button>
       </header>
 
-      <div className="body">
+      <div className={`body ${rightPaneOpen ? "right-pane-open" : "right-pane-collapsed"}`}>
         <aside className="sidebar">
           <nav className="tabs">
             <button
@@ -191,64 +205,100 @@ export function App() {
           )}
         </main>
 
-        <aside className="events">
-          <section className="prs-pane">
-            <h3>
-              Open PRs
-              {selected && detail ? (
-                <span className="muted"> — {detail.project.baseBranch}</span>
-              ) : null}
-            </h3>
-            <OpenPrs tickets={detail?.tickets ?? []} hasProject={!!selected} />
-          </section>
-          <section className="models-pane">
-            <h3>
-              Models
-              <button
-                className={`runbtn refresh ${refreshingBackends ? "spinning" : ""}`}
-                onClick={refreshBackends}
-                disabled={refreshingBackends}
-                title="Refresh — re-scan the host for backend CLIs (codex, claude, gemini) and their models. Use this after installing a new CLI."
-              >
-                ↻
-              </button>
-            </h3>
-            <ModelsPanel backends={backends} />
-          </section>
-          <section className="feed-pane">
-            <h3>
-              Live events
-              {selected ? (
-                <span className="muted"> — {shortRepo(projects.find((p) => p.id === selected)?.repoUrl ?? "")}</span>
-              ) : (
-                <span className="muted"> — all projects</span>
-              )}
-              <button
-                className="debugbtn"
-                disabled={!selected}
-                title={selected ? "Diagnose recent agent/orchestrator activity" : "Select a project first"}
-                onClick={() => setDebug({ ticketId: null })}
-              >
-                Debug Traces
-              </button>
-              <button
-                className="debugbtn"
-                disabled={feed.length === 0}
-                title="Clear the on-screen Live events buffer (does not touch the database; new activity repopulates it)"
-                onClick={() => setFeed([])}
-              >
-                Clear
-              </button>
-            </h3>
-            <EventFeed
-              entries={
-                selected
-                  ? feed.filter(({ e }) => !e.projectId || e.projectId === selected)
-                  : feed
-              }
-            />
-          </section>
-        </aside>
+        <div
+          className="events-shell"
+          onMouseLeave={(e) => {
+            if (!rightPaneOpen) return;
+            // While expanding, the shell column is still animating wider (the
+            // `.body` grid-template-columns transition), so a fast leftward
+            // mouse can fire mouseLeave even though the cursor is still within
+            // where the expanded pane will sit. Only collapse on a genuine
+            // exit: above/below the shell, or left of the fully-expanded edge.
+            const rect = e.currentTarget.getBoundingClientRect();
+            const exitedVertically = e.clientY < rect.top || e.clientY > rect.bottom;
+            const exitedLeft = e.clientX < rect.right - EVENTS_PANE_WIDTH;
+            if (exitedVertically || exitedLeft) setRightPaneOpen(false);
+          }}
+        >
+          <button
+            ref={rightPaneHandleRef}
+            type="button"
+            className="events-handle"
+            aria-controls="right-side-pane"
+            aria-expanded={rightPaneOpen}
+            aria-label={rightPaneOpen ? "Hide right pane" : "Show right pane"}
+            title={rightPaneOpen ? "Hide right pane" : "Show right pane"}
+            onClick={() => setRightPaneOpen((open) => !open)}
+          >
+            {rightPaneOpen ? ">>" : "<<"}
+          </button>
+          <aside
+            id="right-side-pane"
+            ref={rightPaneRef}
+            className="events"
+            aria-label="Right pane"
+            aria-hidden={!rightPaneOpen}
+          >
+            <div className="events-content">
+              <section className="prs-pane">
+                <h3>
+                  Open PRs
+                  {selected && detail ? (
+                    <span className="muted"> — {detail.project.baseBranch}</span>
+                  ) : null}
+                </h3>
+                <OpenPrs tickets={detail?.tickets ?? []} hasProject={!!selected} />
+              </section>
+              <section className="models-pane">
+                <h3>
+                  Models
+                  <button
+                    className={`runbtn refresh ${refreshingBackends ? "spinning" : ""}`}
+                    onClick={refreshBackends}
+                    disabled={refreshingBackends}
+                    title="Refresh — re-scan the host for backend CLIs (codex, claude, gemini) and their models. Use this after installing a new CLI."
+                  >
+                    ↻
+                  </button>
+                </h3>
+                <ModelsPanel backends={backends} />
+              </section>
+              <section className="feed-pane">
+                <h3>
+                  Live events
+                  {selected ? (
+                    <span className="muted"> — {shortRepo(projects.find((p) => p.id === selected)?.repoUrl ?? "")}</span>
+                  ) : (
+                    <span className="muted"> — all projects</span>
+                  )}
+                  <button
+                    className="debugbtn"
+                    disabled={!selected}
+                    title={selected ? "Diagnose recent agent/orchestrator activity" : "Select a project first"}
+                    onClick={() => setDebug({ ticketId: null })}
+                  >
+                    Debug Traces
+                  </button>
+                  <button
+                    className="debugbtn"
+                    disabled={feed.length === 0}
+                    title="Clear the on-screen Live events buffer (does not touch the database; new activity repopulates it)"
+                    onClick={() => setFeed([])}
+                  >
+                    Clear
+                  </button>
+                </h3>
+                <EventFeed
+                  entries={
+                    selected
+                      ? feed.filter(({ e }) => !e.projectId || e.projectId === selected)
+                      : feed
+                  }
+                />
+              </section>
+            </div>
+          </aside>
+        </div>
       </div>
 
       {showSettings && <GlobalSettings onClose={() => setShowSettings(false)} />}
