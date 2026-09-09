@@ -3,6 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BackendRegistry } from "@chorus/backends";
 import {
+  type AgentResult,
+  type AIBackend,
   type AgentTemplate,
   type ApplyAgentTemplateInput,
   type BackendInfo,
@@ -186,6 +188,8 @@ export class AppController implements ControlApi {
   private readonly ingestor: SpecIngestor;
   private backends: BackendInfo[];
   private readonly diagnose: DiagnoseFn;
+  /** ticketIds with an "address PR comments" run in flight (one at a time each). */
+  private readonly addressingPr = new Set<string>();
 
   constructor(private readonly deps: ControllerDeps) {
     this.ingestor = new SpecIngestor(deps.db);
@@ -505,6 +509,200 @@ export class AppController implements ControlApi {
     this.deps.db.updateTicket(ticketId, { starred });
     this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
     return Promise.resolve(this.deps.db.getTicket(ticketId)!);
+  }
+
+  addressPrComments(projectId: string, ticketId: string): Promise<{ started: boolean }> {
+    const ticket = this.deps.db.getTicket(ticketId);
+    if (!ticket || ticket.projectId !== projectId) throw new Error("ticket not found");
+    if (!ticket.prNumber && !ticket.prUrl) {
+      throw Object.assign(new Error("This ticket has no pull request."), { statusCode: 400 });
+    }
+    if (!ticket.branch) {
+      throw Object.assign(new Error("This ticket has no work branch."), { statusCode: 400 });
+    }
+    if (this.addressingPr.has(ticketId)) {
+      throw Object.assign(new Error("Already addressing PR comments for this ticket."), {
+        statusCode: 409,
+      });
+    }
+    if (this.deps.orchestrator.runningTaskIds().includes(ticketId)) {
+      throw Object.assign(new Error("Cannot address PR comments while an agent is running."), {
+        statusCode: 409,
+      });
+    }
+    this.addressingPr.add(ticketId);
+    void this.runAddressPrComments(projectId, ticketId)
+      .catch((err) => {
+        this.trail(projectId, ticketId, `Address PR comments failed: ${String(err)}`);
+        void this.deps.notifier
+          .notify({
+            kind: "error",
+            projectId,
+            title: "Address PR comments failed",
+            body: `${this.deps.db.getTicket(ticketId)?.title ?? ticketId}: ${String(err)}`,
+            at: Date.now(),
+          })
+          .catch(() => {});
+      })
+      .finally(() => {
+        this.addressingPr.delete(ticketId);
+        this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
+      });
+    return Promise.resolve({ started: true });
+  }
+
+  private async runAddressPrComments(projectId: string, ticketId: string): Promise<void> {
+    const project = this.deps.db.getProject(projectId);
+    const ticket = this.deps.db.getTicket(ticketId);
+    if (!project || !ticket || !ticket.branch) return;
+    const prRef = ticket.prNumber != null ? String(ticket.prNumber) : (ticket.prUrl ?? ticket.branch);
+
+    this.trail(projectId, ticketId, "Addressing PR review comments…");
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
+
+    const comments = await this.deps.git.prReviewComments(project.localPath, prRef);
+    if (!comments.trim()) {
+      this.trail(projectId, ticketId, "No PR review comments to address.");
+      return;
+    }
+
+    // Re-materialize the ticket's worktree on its existing branch if needed.
+    const worktreePath =
+      ticket.worktreePath ?? join(this.deps.config.dataDir, "worktrees", projectId, ticketId);
+    await this.deps.git.ensureBranchWorktree(project.localPath, worktreePath, ticket.branch);
+    if (!ticket.worktreePath) this.deps.db.updateTicket(ticketId, { worktreePath });
+
+    const role = ticket.roleName ? this.deps.db.getRole(projectId, ticket.roleName) : undefined;
+    const backend =
+      (role?.backendId ? this.deps.backends.get(role.backendId) : undefined) ??
+      this.deps.backends.get("codex");
+    if (!backend) throw new Error("no backend available to address PR comments");
+    await backend.prepare?.().catch(() => null);
+
+    const taskId = newId("task");
+    const result = await this.runAgentInWorktree(backend, {
+      taskId,
+      projectId,
+      ticketId,
+      ticketTitle: ticket.title,
+      roleName: ticket.roleName ?? "orchestrator",
+      worktreePath,
+      model: role?.model ?? this.deps.config.agent.model,
+      prompt: this.buildAddressPrPrompt(project, ticket, comments),
+    });
+
+    const summary = result.payload?.summary?.trim() || "Reviewed the PR comments.";
+    const notes = result.payload?.notes?.trim();
+    const report = notes ? `${summary}\n\n${notes}` : summary;
+
+    // Commit + push any edits the agent made, then report on the PR.
+    const head = await this.deps.git.commitAll(worktreePath, "chorus: address PR review comments");
+    if (head) await this.deps.git.pushBranch(project.localPath, ticket.branch);
+
+    const prefix = head ? "🤖 Addressed review comments." : "🤖 Reviewed the comments (no code changes).";
+    await this.deps.git.commentOnPr(project.localPath, prRef, `${prefix}\n\n${report}`);
+
+    this.trail(
+      projectId,
+      ticketId,
+      `Addressed PR comments${head ? " (pushed changes)" : " (no changes)"}: ${summary}`,
+    );
+    await this.deps.notifier
+      .notify({
+        kind: "needs_review",
+        projectId,
+        title: "PR comments addressed",
+        body: `${ticket.title}: ${summary}`,
+        at: Date.now(),
+      })
+      .catch(() => {});
+  }
+
+  /** Run one agent process to completion in a worktree, streaming events to the bus. */
+  private async runAgentInWorktree(
+    backend: AIBackend,
+    args: {
+      taskId: string;
+      projectId: string;
+      ticketId: string;
+      ticketTitle: string;
+      roleName: string;
+      worktreePath: string;
+      model?: string;
+      prompt: string;
+    },
+  ): Promise<AgentResult> {
+    const handle = backend.startRun({
+      taskId: args.taskId,
+      prompt: args.prompt,
+      worktreePath: args.worktreePath,
+      model: args.model,
+      maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+      idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+      artifactsDir: join(this.deps.config.dataDir, "address-pr", args.projectId, args.taskId),
+    });
+    const drain = (async () => {
+      for await (const ev of handle.events) {
+        this.deps.bus.emit({
+          type: "agent_event",
+          projectId: args.projectId,
+          taskId: args.taskId,
+          role: args.roleName,
+          ticketId: args.ticketId,
+          ticketTitle: args.ticketTitle,
+          event: ev,
+          at: Date.now(),
+        });
+      }
+    })();
+    const [result] = await Promise.all([handle.result, drain]);
+    return result;
+  }
+
+  private buildAddressPrPrompt(
+    project: Project,
+    ticket: Ticket,
+    comments: string,
+  ): string {
+    const L: string[] = [];
+    L.push("# Address pull-request review comments");
+    L.push(
+      "You are working in this ticket's git worktree, checked out on the PR branch. Reviewers left the comments below on the open pull request.",
+    );
+    L.push("");
+    L.push("## What to do");
+    L.push("- For each comment you AGREE with, edit the code in this worktree to address it.");
+    L.push("- For any comment you DISAGREE with, do NOT change the code for it; instead explain why in your summary.");
+    L.push("- Keep changes focused and consistent with the surrounding code.");
+    L.push("- Do NOT run `git commit`, `git push`, or `gh` — Chorus commits, pushes, and comments for you afterward.");
+    L.push("- In the structured output: `summary` is a concise markdown report that will be posted as a PR comment. It MUST list, per comment, whether you addressed it (and how) or disagreed (and why). Put longer rationale in `notes`. Set `filesChanged` to the files you edited.");
+    L.push("");
+    if (project.expectations?.trim()) {
+      L.push("## Project expectations");
+      L.push(project.expectations.trim());
+      L.push("");
+    }
+    L.push("## Ticket");
+    L.push(`- ${ticket.title}`);
+    if (ticket.body.trim()) L.push(ticket.body.trim());
+    L.push("");
+    L.push("## Review comments to address");
+    L.push(comments);
+    return L.join("\n");
+  }
+
+  /** Append a system note to a ticket's activity trail and broadcast it. */
+  private trail(projectId: string, ticketId: string, message: string): void {
+    this.deps.db.insertTicketEvent({
+      id: newId("te"),
+      projectId,
+      ticketId,
+      actor: "system",
+      kind: "note",
+      message,
+      createdAt: Date.now(),
+    });
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
   }
 
   /**
