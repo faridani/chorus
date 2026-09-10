@@ -111,7 +111,7 @@ export function TicketsTab({
             >
               <span className="switch-knob" />
             </button>
-            <span id={ideationToggleTipId} className="sr-only" role="tooltip" aria-hidden="true">
+            <span id={ideationToggleTipId} className="sr-only" role="tooltip">
               {IDLE_IDEATION_TOGGLE_TOOLTIP}
             </span>
             <span className="ideate-label">
@@ -129,7 +129,7 @@ export function TicketsTab({
                 onBlur={commitN}
                 onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
               />
-              <span id={ideationCountTipId} className="sr-only" role="tooltip" aria-hidden="true">
+              <span id={ideationCountTipId} className="sr-only" role="tooltip">
                 {IDLE_IDEATION_COUNT_TOOLTIP}
               </span>
               tickets when idle
