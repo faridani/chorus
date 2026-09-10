@@ -270,6 +270,83 @@ export class GitService {
     return true;
   }
 
+  /**
+   * Fetch a PR's human feedback: inline code-review comments, review summaries,
+   * and issue comments — formatted as a single text block for an agent to read.
+   * Returns "" when there is nothing. Read-only (`gh`); no mutex needed.
+   */
+  async prReviewComments(localPath: string, prRef: string): Promise<string> {
+    const sections: string[] = [];
+    // Inline code-review comments (where bots like Gemini/Codex leave feedback).
+    const nwo = await run("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
+      cwd: localPath,
+      throwOnError: false,
+    });
+    const repo = nwo.stdout.trim();
+    if (repo) {
+      const inline = await run(
+        "gh",
+        [
+          "api",
+          `repos/${repo}/pulls/${prRef}/comments`,
+          "--jq",
+          '.[] | "- [\(.path):\(.line // .original_line // "?")] \(.user.login): \(.body)"',
+        ],
+        { cwd: localPath, throwOnError: false },
+      );
+      if (inline.code === 0 && inline.stdout.trim()) {
+        sections.push(`## Inline review comments\n${inline.stdout.trim()}`);
+      }
+    }
+    // Review summaries + issue comments.
+    const top = await run(
+      "gh",
+      [
+        "pr",
+        "view",
+        prRef,
+        "--json",
+        "reviews,comments",
+        "--jq",
+        '([.reviews[]? | select((.body // "") != "") | "- \(.author.login) (\(.state)): \(.body)"] + [.comments[]? | "- \(.author.login): \(.body)"]) | .[]',
+      ],
+      { cwd: localPath, throwOnError: false },
+    );
+    if (top.code === 0 && top.stdout.trim()) {
+      sections.push(`## Review & PR comments\n${top.stdout.trim()}`);
+    }
+    return sections.join("\n\n");
+  }
+
+  /** Post a comment on a PR. */
+  async commentOnPr(localPath: string, prRef: string, body: string): Promise<void> {
+    const r = await run("gh", ["pr", "comment", prRef, "--body", body], {
+      cwd: localPath,
+      throwOnError: false,
+    });
+    if (r.code !== 0) {
+      throw new Error(`gh pr comment failed for ${prRef}: ${r.stderr.trim() || r.stdout.trim()}`);
+    }
+  }
+
+  /**
+   * Ensure a worktree exists at `worktreePath` checked out on the EXISTING
+   * `branch` (without resetting it to base, unlike `addWorktree`). Used to
+   * re-materialize a ticket's worktree for follow-up work on an open PR.
+   */
+  async ensureBranchWorktree(localPath: string, worktreePath: string, branch: string): Promise<void> {
+    if (existsSync(join(worktreePath, ".git"))) return;
+    await this.mutex.run(async () => {
+      await this.gitUnlocked(["worktree", "prune"], localPath, false);
+      await this.gitUnlocked(["fetch", "origin", branch], localPath, false);
+      // Local branch may or may not exist; `add` checks out the existing branch.
+      const r = await this.gitUnlocked(["worktree", "add", "--force", worktreePath, branch], localPath, false);
+      if (r.code !== 0) {
+        throw new Error(`git worktree add failed for ${branch}: ${r.stderr.trim() || r.stdout.trim()}`);
+      }
+    });
+  }
+
   /** Delete a local ticket branch and its remote origin branch when either exists. */
   async deleteBranch(localPath: string, branch: string): Promise<boolean> {
     const trimmed = branch.trim();
