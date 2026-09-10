@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, type Ticket, type TicketEvent } from "../api.js";
 import {
   TICKET_CLEANUP_CONFIRM_TEXT,
   canConfirmTicketCleanup,
   summarizeTicketCleanupTargets,
 } from "../ticketCleanup.js";
+
+const IDLE_IDEATION_TOGGLE_TOOLTIP =
+  "Turn idle ticket ideation on or off. When on, Chorus automatically creates tickets after the queue is empty.";
+const IDLE_IDEATION_COUNT_TOOLTIP =
+  "Choose how many tickets to create per idle pass, from 1 to 10. This can be changed before turning idle ideation on.";
 
 /** Tickets table with a create/edit/delete editor + activity trail. */
 export function TicketsTab({
@@ -24,6 +29,8 @@ export function TicketsTab({
   idleIdeationCount: number;
   onChange: () => void;
 }) {
+  const ideationToggleTipId = useId();
+  const ideationCountTipId = useId();
   const [editing, setEditing] = useState<Ticket | "new" | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const running = new Set(runningTaskIds); // ticket ids currently being acted on
@@ -91,16 +98,22 @@ export function TicketsTab({
       <div className="tabhead">
         <h3>Tickets ({tickets.length})</h3>
         <div className="tabhead-actions">
-          <div className="ideate-ctl" title="When the queue is empty, automatically generate this many follow-up tickets.">
+          <div className="ideate-ctl">
             <button
               type="button"
               role="switch"
               aria-checked={ideateOn}
+              aria-describedby={ideationToggleTipId}
+              aria-label="Automatically ideate tickets when idle"
               className={`switch ${ideateOn ? "on" : ""}`}
               onClick={toggleIdeate}
+              title={IDLE_IDEATION_TOGGLE_TOOLTIP}
             >
               <span className="switch-knob" />
             </button>
+            <span id={ideationToggleTipId} className="sr-only" role="tooltip">
+              {IDLE_IDEATION_TOGGLE_TOOLTIP}
+            </span>
             <span className="ideate-label">
               automatically ideate and create
               <input
@@ -109,11 +122,16 @@ export function TicketsTab({
                 max={10}
                 className="ideate-n"
                 value={ideateN}
-                disabled={!ideateOn}
+                aria-describedby={ideationCountTipId}
+                aria-label="Tickets to create when idle"
+                title={IDLE_IDEATION_COUNT_TOOLTIP}
                 onChange={(e) => setIdeateN(e.target.value)}
                 onBlur={commitN}
                 onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
               />
+              <span id={ideationCountTipId} className="sr-only" role="tooltip">
+                {IDLE_IDEATION_COUNT_TOOLTIP}
+              </span>
               tickets when idle
             </span>
           </div>
