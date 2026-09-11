@@ -20,6 +20,7 @@ export function TicketsTab({
   idleIdeation,
   idleIdeationCount,
   onChange,
+  onSelfHeal,
 }: {
   projectId: string;
   tickets: Ticket[];
@@ -28,6 +29,7 @@ export function TicketsTab({
   idleIdeation: boolean;
   idleIdeationCount: number;
   onChange: () => void;
+  onSelfHeal: (ticketId: string, ticketTitle: string) => void;
 }) {
   const ideationToggleTipId = useId();
   const ideationCountTipId = useId();
@@ -277,6 +279,7 @@ export function TicketsTab({
             setEditing(null);
             onChange();
           }}
+          onSelfHeal={onSelfHeal}
         />
       )}
 
@@ -387,6 +390,7 @@ function TicketEditor({
   locked,
   onClose,
   onSaved,
+  onSelfHeal,
 }: {
   projectId: string;
   ticket: Ticket | null;
@@ -394,6 +398,7 @@ function TicketEditor({
   locked: boolean;
   onClose: () => void;
   onSaved: () => void;
+  onSelfHeal: (ticketId: string, ticketTitle: string) => void;
 }) {
   const [title, setTitle] = useState(ticket?.title ?? "");
   const [body, setBody] = useState(ticket?.body ?? "");
@@ -476,6 +481,16 @@ function TicketEditor({
                 title="Send this ticket back to the orchestrator to re-triage."
               >
                 Reopen
+              </button>
+              <button
+                disabled={busy}
+                title="Study this ticket's traces and propose changes to the agents and goals."
+                onClick={() => {
+                  onSelfHeal(ticket.id, ticket.title);
+                  onClose();
+                }}
+              >
+                Self Heal
               </button>
             </>
           )}
