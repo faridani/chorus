@@ -29,6 +29,42 @@ export interface UpdateTicketInput {
   reopen?: boolean;
 }
 
+/**
+ * One self-heal proposal: a concrete, machine-applicable change to an agent
+ * definition or a project goal, derived from analyzing a ticket's traces.
+ * Only the fields relevant to `kind` are populated (others are empty); the
+ * controller interprets and applies them.
+ */
+export interface SelfHealProposal {
+  /** Assigned server-side; stable within one analysis result. */
+  id: string;
+  kind: "role" | "expectations" | "ground_rules";
+  /** Short label for the change. */
+  title: string;
+  /** Why this change, grounded in the observed traces. */
+  rationale: string;
+  /** For kind "role": the existing role to modify. */
+  roleName?: string;
+  /** role: new fields (empty = leave unchanged). */
+  description?: string;
+  allowed?: string[];
+  forbidden?: string[];
+  allowedToolIds?: string[];
+  forbiddenToolIds?: string[];
+  model?: string;
+  /** expectations: the new project expectations text. */
+  expectations?: string;
+  /** ground_rules: the new project-wide ground rules. */
+  groundRules?: string[];
+}
+
+export interface SelfHealResult {
+  /** Human-readable diagnosis of what the traces show and the proposed direction. */
+  summary: string;
+  /** Proposed changes (empty when the agents look fine). */
+  proposals: SelfHealProposal[];
+}
+
 export interface CleanupTicketsInput {
   /** Exact confirmation string required before destructive ticket cleanup. */
   confirmation: string;
@@ -97,6 +133,14 @@ export interface ControlApi {
    * (including reasons for any it disagrees with). Runs in the background.
    */
   addressPrComments(projectId: string, ticketId: string): Promise<{ started: boolean }>;
+  /**
+   * Analyze a ticket's messages/logs/traces and propose changes to the agent
+   * definitions and project goals that would prevent the observed problems.
+   * Read-only — returns proposals for the user to accept/reject.
+   */
+  selfHealAnalyze(projectId: string, ticketId: string, liveEvents: unknown[]): Promise<SelfHealResult>;
+  /** Apply one accepted self-heal proposal (mutates a role or a project goal). */
+  applySelfHealProposal(projectId: string, proposal: SelfHealProposal): Promise<void>;
   deleteTicket(projectId: string, ticketId: string): Promise<void>;
   /** Destructively remove every ticket in a project, with optional branch/PR cleanup. */
   cleanupTickets(projectId: string, input: CleanupTicketsInput): Promise<CleanupTicketsResult>;
