@@ -421,6 +421,16 @@ tr.clickable:hover td { background: var(--panel2); }
 .diag-list li { font-size: 13px; padding: 2px 0; }
 .diag-proposal { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 .diag-success { color: #7ee787; font-size: 13px; }
+.modal.selfheal { width: min(760px, 94vw); }
+.selfheal-body { display: flex; flex-direction: column; gap: 10px; }
+.selfheal-proposal { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.selfheal-proposal.st-accepted { border-color: #2e5e40; }
+.selfheal-proposal.st-rejected { opacity: .55; }
+.selfheal-proposal-head { display: flex; align-items: center; gap: 8px; }
+.selfheal-proposal-actions { display: flex; gap: 8px; margin-top: 2px; }
+.selfheal-detail { font-size: 12px; }
+.selfheal-detail pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 12px; }
+.selfheal-detail-list { margin: 0; padding-left: 18px; font-size: 12px; }
 .tag.diag-working_as_expected { color: #7ee787; }
 .tag.diag-needs_ticket { color: #e3b341; }
 .tag.diag-uncertain { color: var(--muted); }
