@@ -23,8 +23,11 @@ import {
   type ProjectSettingsInput,
   type UpsertAgentTemplateInput,
   type Role,
+  type SelfHealProposal,
+  type SelfHealResult,
   templateToRoleInput,
   type Ticket,
+  TOOL_CATALOG,
   type UpdateTicketInput,
   type UpsertRoleInput,
   validateToolSelection,
@@ -36,12 +39,21 @@ import {
 import type { ChorusDb } from "@chorus/db";
 import type { GitService } from "@chorus/git-service";
 import type { Notifier } from "@chorus/core";
-import { buildDiagnosticPrompt, type DiagnosticsArgs, runDiagnostics, type Orchestrator } from "@chorus/orchestrator";
+import {
+  buildDiagnosticPrompt,
+  buildSelfHealPrompt,
+  type DiagnosticsArgs,
+  runDiagnostics,
+  runSelfHeal,
+  type Orchestrator,
+} from "@chorus/orchestrator";
 import { findSpec, SpecIngestor } from "@chorus/spec-ingest";
 import { detectBackends } from "./backend-detect.js";
 
 /** Injectable for tests: the function that runs the read-only diagnosis. */
 export type DiagnoseFn = (args: DiagnosticsArgs) => Promise<DiagnosisResult>;
+/** Injectable for tests: the function that runs the read-only self-heal analysis. */
+export type SelfHealFn = (args: DiagnosticsArgs) => Promise<SelfHealResult>;
 
 export interface ControllerDeps {
   db: ChorusDb;
@@ -55,6 +67,8 @@ export interface ControllerDeps {
   detectedBackends: BackendInfo[];
   /** Override the diagnosis runner (tests inject a mock; defaults to runDiagnostics). */
   diagnose?: DiagnoseFn;
+  /** Override the self-heal runner (tests inject a mock; defaults to runSelfHeal). */
+  selfHeal?: SelfHealFn;
 }
 
 const DEFAULT_GROUND_RULES = [
@@ -188,6 +202,7 @@ export class AppController implements ControlApi {
   private readonly ingestor: SpecIngestor;
   private backends: BackendInfo[];
   private readonly diagnose: DiagnoseFn;
+  private readonly selfHeal: SelfHealFn;
   /** ticketIds with an "address PR comments" run in flight (one at a time each). */
   private readonly addressingPr = new Set<string>();
 
@@ -195,6 +210,7 @@ export class AppController implements ControlApi {
     this.ingestor = new SpecIngestor(deps.db);
     this.backends = deps.detectedBackends;
     this.diagnose = deps.diagnose ?? runDiagnostics;
+    this.selfHeal = deps.selfHeal ?? runSelfHeal;
   }
 
   listBackends(): BackendInfo[] {
@@ -921,6 +937,107 @@ export class AppController implements ControlApi {
       model: this.deps.config.diagnostics?.model ?? this.deps.config.agent.model,
       maxWallClockMs: this.deps.config.agent.maxWallClockMs,
       idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+    });
+  }
+
+  async selfHealAnalyze(
+    projectId: string,
+    ticketId: string,
+    liveEvents: unknown[],
+  ): Promise<SelfHealResult> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project) throw Object.assign(new Error(`No such project: ${projectId}`), { statusCode: 404 });
+    const ticket = this.deps.db.getTicket(ticketId);
+    if (!ticket || ticket.projectId !== projectId) {
+      throw Object.assign(new Error(`No such ticket: ${ticketId}`), { statusCode: 404 });
+    }
+    const context = this.buildTraceContext(project, ticketId, liveEvents);
+    const roles = this.deps.db.listRoles(projectId).map((r) => ({
+      name: r.name,
+      description: r.description,
+      allowed: r.allowed,
+      forbidden: r.forbidden,
+      allowedToolIds: r.allowedToolIds,
+      forbiddenToolIds: r.forbiddenToolIds,
+      backendId: r.backendId,
+      model: r.model,
+    }));
+    const prompt = buildSelfHealPrompt({ context, roles, tools: [...TOOL_CATALOG] });
+    const cwd =
+      ticket.worktreePath && existsSync(ticket.worktreePath) ? ticket.worktreePath : project.localPath;
+    const artifactsDir = join(this.deps.config.dataDir, "self-heal", projectId, ticketId, newId("sh"));
+    const result = await this.selfHeal({
+      cwd,
+      artifactsDir,
+      prompt,
+      model: this.deps.config.diagnostics?.model ?? this.deps.config.agent.model,
+      maxWallClockMs: this.deps.config.agent.maxWallClockMs,
+      idleTimeoutMs: this.deps.config.agent.idleTimeoutMs,
+    });
+    // Stamp stable ids so the UI can accept/reject each proposal independently.
+    result.proposals = result.proposals.map((p, i) => ({ ...p, id: `p${i}` }));
+    return result;
+  }
+
+  async applySelfHealProposal(projectId: string, proposal: SelfHealProposal): Promise<void> {
+    const project = this.deps.db.getProject(projectId);
+    if (!project) throw Object.assign(new Error(`No such project: ${projectId}`), { statusCode: 404 });
+    if (!proposal || typeof proposal !== "object") {
+      throw Object.assign(new Error("proposal required"), { statusCode: 400 });
+    }
+    if (proposal.kind === "role") {
+      const name = proposal.roleName?.trim();
+      if (!name) throw Object.assign(new Error("roleName required for a role proposal"), { statusCode: 400 });
+      const existing = this.deps.db.getRole(projectId, name);
+      if (!existing) throw Object.assign(new Error(`No such role: ${name}`), { statusCode: 404 });
+      // Merge only the fields the proposal actually populated; empty = keep current.
+      const proposedAllowedTools = proposal.allowedToolIds?.length ? proposal.allowedToolIds : null;
+      const proposedForbiddenTools = proposal.forbiddenToolIds?.length ? proposal.forbiddenToolIds : null;
+      let allowedToolIds = proposedAllowedTools ?? existing.allowedToolIds;
+      let forbiddenToolIds = proposedForbiddenTools ?? existing.forbiddenToolIds;
+      // A tool moved into one list must not linger in the retained opposite list,
+      // or validateToolSelection would reject the accept (a tool can't be both).
+      if (proposedForbiddenTools) {
+        const deny = new Set(proposedForbiddenTools);
+        allowedToolIds = allowedToolIds.filter((id) => !deny.has(id));
+      }
+      if (proposedAllowedTools) {
+        const grant = new Set(proposedAllowedTools);
+        forbiddenToolIds = forbiddenToolIds.filter((id) => !grant.has(id));
+      }
+      const input: UpsertRoleInput = {
+        name: existing.name,
+        description: proposal.description?.trim() ? proposal.description : existing.description,
+        allowed: proposal.allowed?.length ? proposal.allowed : existing.allowed,
+        forbidden: proposal.forbidden?.length ? proposal.forbidden : existing.forbidden,
+        allowedToolIds,
+        forbiddenToolIds,
+        backendId: existing.backendId,
+        model: proposal.model?.trim() ? proposal.model : existing.model,
+      };
+      await this.upsertRole(projectId, input);
+      return;
+    }
+    if (proposal.kind === "expectations") {
+      if (proposal.expectations === undefined) {
+        throw Object.assign(new Error("expectations required for an expectations proposal"), {
+          statusCode: 400,
+        });
+      }
+      await this.updateProjectSettings(projectId, { expectations: proposal.expectations });
+      return;
+    }
+    if (proposal.kind === "ground_rules") {
+      if (!proposal.groundRules) {
+        throw Object.assign(new Error("groundRules required for a ground_rules proposal"), {
+          statusCode: 400,
+        });
+      }
+      await this.updateProjectSettings(projectId, { groundRules: proposal.groundRules });
+      return;
+    }
+    throw Object.assign(new Error(`Unknown proposal kind: ${String((proposal as { kind?: string }).kind)}`), {
+      statusCode: 400,
     });
   }
 
