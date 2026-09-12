@@ -284,6 +284,30 @@ export function createServer(deps: WebDeps): FastifyInstance {
     }
   });
 
+  app.post("/api/projects/:id/tickets/:ticketId/self-heal", async (req, reply) => {
+    const { id, ticketId } = req.params as { id: string; ticketId: string };
+    const body = (req.body ?? {}) as { liveEvents?: unknown[] };
+    try {
+      return await api.selfHealAnalyze(id, ticketId, body.liveEvents ?? []);
+    } catch (err) {
+      const code = (err as { statusCode?: number })?.statusCode ?? 502;
+      return reply.code(code).send({ error: `Self-heal failed: ${String(err)}` });
+    }
+  });
+
+  app.post("/api/projects/:id/self-heal/apply", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { proposal?: unknown };
+    if (!body.proposal) return reply.code(400).send({ error: "proposal required" });
+    try {
+      await api.applySelfHealProposal(id, body.proposal as Parameters<ControlApi["applySelfHealProposal"]>[1]);
+      return { ok: true };
+    } catch (err) {
+      const code = (err as { statusCode?: number })?.statusCode ?? 500;
+      return reply.code(code).send({ error: (err as Error).message });
+    }
+  });
+
   app.put("/api/projects/:id/tickets/:ticketId", async (req) => {
     const { id, ticketId } = req.params as { id: string; ticketId: string };
     const body = req.body as {
