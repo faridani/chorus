@@ -1,4 +1,4 @@
-import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   type AppState,
   api,
@@ -22,6 +22,8 @@ import { ToolsGallery } from "./components/ToolsGallery.js";
 
 /** Expanded width of the right pane; must match `--events-pane-width` in styles.css. */
 const EVENTS_PANE_WIDTH = 320;
+const READY_PROJECT_STATUS_DESCRIPTION =
+  "Ready means Chorus has loaded this repo's project spec and can work its tickets when the run control is started.";
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -174,7 +176,7 @@ export function App() {
                   <li key={p.id} className={selected === p.id ? "active" : ""} onClick={() => setSelected(p.id)}>
                     <div className="repo">{shortRepo(p.repoUrl)}</div>
                     <div className="projrow">
-                      <span className={`tag status-${p.status}`}>{p.status}</span>
+                      <ProjectStatusTag status={p.status} />
                       <RunStateControls project={p} onChanged={refreshTop} />
                     </div>
                   </li>
@@ -418,6 +420,26 @@ function NewProject({
         </div>
       </div>
     </div>
+  );
+}
+
+function ProjectStatusTag({ status }: { status: Project["status"] }) {
+  const tooltipId = useId();
+  const className = `tag status-${status}`;
+
+  if (status !== "ready") {
+    return <span className={className}>{status}</span>;
+  }
+
+  return (
+    <span className="status-tip">
+      <span className={className} tabIndex={0} aria-describedby={tooltipId}>
+        {status}
+      </span>
+      <span id={tooltipId} className="status-tooltip" role="tooltip">
+        {READY_PROJECT_STATUS_DESCRIPTION}
+      </span>
+    </span>
   );
 }
 
