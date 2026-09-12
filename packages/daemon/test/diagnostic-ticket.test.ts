@@ -178,6 +178,106 @@ test("addressPrComments rejects tickets without a PR and an unknown project", as
   db.close();
 });
 
+test("selfHealAnalyze stamps proposal ids and applySelfHealProposal applies role + goal changes", async () => {
+  const db = freshDb();
+  const projectId = seedProject(db);
+  db.insertRole({
+    id: newId("role"),
+    projectId,
+    name: "software-dev",
+    description: "old description",
+    allowed: [],
+    forbidden: [],
+    allowedToolIds: [],
+    forbiddenToolIds: [],
+    backendId: "codex",
+  });
+  const ticketId = newId("tkt");
+  db.insertTicket({
+    id: ticketId,
+    projectId,
+    title: "Flaky ticket",
+    body: "b",
+    status: "open",
+    roleName: "software-dev",
+    priority: 0,
+    source: "manual",
+    branch: null,
+    worktreePath: null,
+    prUrl: null,
+    prNumber: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  const ctrl = new AppController({
+    db,
+    bus: new ChorusBus(),
+    git: {} as never,
+    backends: {} as never,
+    orchestrator: { runningTaskIds: () => [], tick: () => {} } as never,
+    notifier: {} as never,
+    config: { dataDir: "/tmp", agent: {} } as never,
+    detectedBackends: [],
+    selfHeal: async () => ({
+      summary: "Agent guardrails are too vague.",
+      proposals: [
+        { id: "", kind: "role", roleName: "software-dev", title: "Tighten dev", rationale: "loops", description: "new description" },
+        { id: "", kind: "expectations", title: "Clarify goal", rationale: "drift", expectations: "Ship stable features." },
+      ],
+    }),
+  });
+
+  const result = await ctrl.selfHealAnalyze(projectId, ticketId, []);
+  assert.equal(result.proposals.length, 2);
+  assert.deepEqual(result.proposals.map((p) => p.id), ["p0", "p1"]);
+
+  await ctrl.applySelfHealProposal(projectId, result.proposals[0]!);
+  assert.equal(db.getRole(projectId, "software-dev")?.description, "new description");
+
+  await ctrl.applySelfHealProposal(projectId, result.proposals[1]!);
+  assert.equal(db.getProject(projectId)?.expectations, "Ship stable features.");
+
+  // Unknown role → 404-style guard.
+  await assert.rejects(
+    () => ctrl.applySelfHealProposal(projectId, { id: "x", kind: "role", roleName: "ghost", title: "", rationale: "" }),
+    /No such role/,
+  );
+  db.close();
+});
+
+test("applySelfHealProposal moving a tool allowed→forbidden drops it from the allowed list", async () => {
+  const db = freshDb();
+  const projectId = seedProject(db);
+  db.insertRole({
+    id: newId("role"),
+    projectId,
+    name: "software-dev",
+    description: "dev",
+    allowed: [],
+    forbidden: [],
+    allowedToolIds: ["repo.modify", "repo.read"],
+    forbiddenToolIds: [],
+    backendId: "codex",
+  });
+  const ctrl = makeController(db);
+  // Deny repo.modify (only forbiddenToolIds populated). Without the fix this would
+  // leave repo.modify in BOTH lists and validateToolSelection would 400.
+  await ctrl.applySelfHealProposal(projectId, {
+    id: "p0",
+    kind: "role",
+    roleName: "software-dev",
+    title: "Deny modify",
+    rationale: "misused",
+    forbiddenToolIds: ["repo.modify"],
+  });
+  const role = db.getRole(projectId, "software-dev")!;
+  assert.ok(role.forbiddenToolIds.includes("repo.modify"));
+  assert.ok(!role.allowedToolIds.includes("repo.modify"), "removed from allowed");
+  assert.ok(role.allowedToolIds.includes("repo.read"), "other grants retained");
+  db.close();
+});
+
 test("filing honors a valid proposed role, ignores an invalid one", async () => {
   const db = freshDb();
   const projectId = seedProject(db);
