@@ -433,7 +433,16 @@ function ProjectStatusTag({ status }: { status: Project["status"] }) {
 
   return (
     <span className="status-tip">
-      <span className={className} tabIndex={0} aria-describedby={tooltipId}>
+      <span
+        className={className}
+        tabIndex={0}
+        aria-describedby={tooltipId}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.currentTarget.blur();
+          }
+        }}
+      >
         {status}
       </span>
       <span id={tooltipId} className="status-tooltip" role="tooltip">
