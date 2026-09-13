@@ -159,6 +159,7 @@ export function TicketsTab({
             <th>Now with</th>
             <th>Priority</th>
             <th>Status</th>
+            <th>Self Heal</th>
             <th>PR</th>
             <th>Address PR Reviews</th>
           </tr>
@@ -224,6 +225,23 @@ export function TicketsTab({
                 <span className={`tag status-${t.status}`}>{t.status}</span>
                 {isRunning(t) && <span className="tag running"> running</span>}
               </td>
+              <td className="self-heal-cell">
+                {isRunning(t) ? (
+                  <button
+                    type="button"
+                    className="debugbtn"
+                    title="Study this ticket's traces and propose changes to the agents and goals"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelfHeal(t.id, t.title);
+                    }}
+                  >
+                    Self Heal
+                  </button>
+                ) : (
+                  "—"
+                )}
+              </td>
               <td>
                 {t.prUrl ? (
                   <a href={t.prUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
@@ -258,7 +276,7 @@ export function TicketsTab({
           ))}
           {order.length === 0 && (
             <tr>
-              <td colSpan={8} className="muted">
+              <td colSpan={9} className="muted">
                 no tickets yet
               </td>
             </tr>
