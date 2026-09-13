@@ -219,6 +219,8 @@ button:disabled { opacity: .5; cursor: default; }
 .addr-pr-btn { background: none; border: none; padding: 2px 4px; font-size: 15px; line-height: 1; cursor: pointer; }
 .addr-pr-btn:hover { filter: brightness(1.2); }
 .addr-pr-btn:disabled { cursor: default; opacity: .6; }
+.self-heal-cell { text-align: center; white-space: nowrap; }
+.self-heal-cell .debugbtn { margin-left: 0; }
 .sm-log-list { list-style: none; padding: 0; margin: 0; max-height: 260px; overflow-y: auto; }
 .sm-log-line { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font-size: 12px; }
 .sm-log-line .ts { color: var(--muted); font-size: 10px; white-space: nowrap; }
