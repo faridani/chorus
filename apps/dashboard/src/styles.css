@@ -343,11 +343,103 @@ button.danger { background: #3d1f24; border-color: #5e2e34; color: #f8a39a; }
 
 /* tabs */
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin: 16px 0; }
-.tabbtn { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; color: var(--muted); }
+.tabbtn { position: relative; display: inline-flex; align-items: center; gap: 5px; background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; color: var(--muted); }
 .tabbtn.active { color: var(--text); border-bottom-color: var(--accent); }
+.tabicon { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); }
+.tab-help { display: inline-flex; position: relative; align-items: center; }
+.tab-help-mark { color: var(--muted); font-size: 11px; cursor: help; }
+.tab-help-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tab-help-tooltip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(520px, 86vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111820;
+  color: var(--text);
+  box-shadow: 0 10px 28px rgba(0,0,0,.38);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity .12s ease, transform .12s ease;
+  visibility: hidden;
+}
+.tab-help:hover .tab-help-tooltip,
+.tab-help:focus-within .tab-help-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
 .tabbody { padding-top: 4px; }
 .tabhead { display: flex; align-items: center; justify-content: space-between; }
 .tabhead-actions { display: flex; align-items: center; gap: 8px; }
+
+/* AI a la carte terminal */
+.ai-term { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.ai-term-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(180px, .8fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.ai-term-toolbar label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ai-term-toolbar label span { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.ai-term-toolbar select {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.ai-term-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.ai-term-window {
+  width: 100%;
+  min-height: 440px;
+  border: 1px solid #1a1a1a;
+  border-radius: 6px;
+  background: #300a24;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 10px 24px rgba(0,0,0,.24);
+}
+.ai-term-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  background: #2c2c2c;
+  border-bottom: 1px solid #111;
+  color: #d8d8d8;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.ai-term-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.35); }
+.ai-term-dot.close { background: #e95420; }
+.ai-term-dot.min { background: #f5c542; }
+.ai-term-dot.max { background: #38b44a; }
+.ai-term-title { font-weight: 600; margin-left: 4px; }
+.ai-term-status { margin-left: auto; color: #aeb4b9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-term-host {
+  width: 100%;
+  height: min(66vh, 720px);
+  min-height: 400px;
+  padding: 8px 10px;
+}
+.ai-term-host .xterm { height: 100%; }
+@media (max-width: 900px) {
+  .ai-term-toolbar { grid-template-columns: 1fr; align-items: stretch; }
+  .ai-term-actions { justify-content: flex-start; }
+}
 
 /* idle-ideation control: a pill matching the button box, holding a switch + N input */
 .ideate-ctl { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel2); }
