@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { BackendInfo, Config, Project, Ticket } from "@chorus/core";
 import type { ChorusDb } from "@chorus/db";
@@ -18,6 +18,11 @@ export interface TerminalWorktree {
 
 interface TerminalWorktreeEntry extends TerminalWorktree {
   path: string;
+}
+
+interface ProjectPathScope {
+  basePath: string;
+  worktreesRoot: string;
 }
 
 export interface TerminalSessionInfo {
@@ -76,12 +81,14 @@ export class TerminalSessionManager {
 
   async createScratchWorktree(projectId: string): Promise<TerminalWorktree> {
     const project = this.requireProject(projectId);
+    const scope = await this.projectPathScope(project);
     const id = `ai_${randomUUID().slice(0, 8)}`;
     const branch = `chorus/ai-a-la-carte/${id}`;
     const worktreePath = join(this.projectWorktreesRoot(project.id), "ai-a-la-carte", id);
     await mkdir(dirname(worktreePath), { recursive: true });
-    await this.git.addWorktree(project.localPath, worktreePath, branch, project.baseBranch);
-    const entry = (await this.listWorktreeEntries(project)).find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
+    await this.git.addWorktree(scope.basePath, worktreePath, branch, project.baseBranch);
+    const createdPath = await realpath(worktreePath);
+    const entry = (await this.listWorktreeEntries(project)).find((wt) => normalizePath(wt.path) === normalizePath(createdPath));
     if (!entry) throw new TerminalError(500, "created worktree was not registered by git");
     const { path: _path, ...publicEntry } = entry;
     return publicEntry;
@@ -93,12 +100,14 @@ export class TerminalSessionManager {
     backendId?: string | null;
   }): Promise<TerminalSessionInfo> {
     const project = this.requireProject(input.projectId);
+    const scope = await this.projectPathScope(project);
     const worktree = (await this.listWorktreeEntries(project)).find((wt) => wt.id === input.worktreeId);
     if (!worktree) throw new TerminalError(400, "unknown worktree");
-    if (!this.pathAllowedForProject(project, worktree.path)) {
+    const worktreePath = await realpathIfExists(worktree.path);
+    if (!worktreePath) throw new TerminalError(400, "worktree path does not exist");
+    if (!this.pathAllowedForProject(scope, worktreePath)) {
       throw new TerminalError(400, "worktree is outside this project");
     }
-    if (!existsSync(worktree.path)) throw new TerminalError(400, "worktree path does not exist");
 
     const backendId = input.backendId?.trim() || null;
     if (backendId) this.requireAvailableBackend(backendId);
@@ -109,7 +118,7 @@ export class TerminalSessionManager {
       token,
       projectId: project.id,
       worktreeId: worktree.id,
-      worktreePath: worktree.path,
+      worktreePath,
       backendId,
       mode: backendId ? "backend" : "shell",
       startedAt: Date.now(),
@@ -243,22 +252,25 @@ export class TerminalSessionManager {
   }
 
   private async listWorktreeEntries(project: Project): Promise<TerminalWorktreeEntry[]> {
+    const scope = await this.projectPathScope(project);
     const tickets = this.deps.db.listTickets(project.id);
     const ticketByPath = new Map<string, Ticket>();
     for (const ticket of tickets) {
-      if (ticket.worktreePath) ticketByPath.set(normalizePath(ticket.worktreePath), ticket);
+      const path = ticket.worktreePath ? await this.realpathAllowedForProject(scope, ticket.worktreePath) : null;
+      if (path) ticketByPath.set(normalizePath(path), ticket);
     }
 
     let gitWorktrees: GitWorktreeInfo[] = [];
+    let gitWorktreesAvailable = false;
     try {
-      gitWorktrees = await this.git.listWorktrees(project.localPath);
+      gitWorktrees = await this.git.listWorktrees(scope.basePath);
+      gitWorktreesAvailable = true;
     } catch {
       gitWorktrees = [];
     }
 
     const entries = new Map<string, TerminalWorktreeEntry>();
     const add = (entry: TerminalWorktreeEntry) => {
-      if (!this.pathAllowedForProject(project, entry.path)) return;
       entries.set(normalizePath(entry.path), entry);
     };
 
@@ -267,14 +279,14 @@ export class TerminalSessionManager {
       label: `${project.baseBranch} (base clone)`,
       branch: project.baseBranch,
       kind: "base",
-      path: project.localPath,
+      path: scope.basePath,
     });
 
     for (const wt of gitWorktrees) {
-      const path = normalizePath(wt.path);
-      if (path === normalizePath(project.localPath)) continue;
-      if (!this.pathAllowedForProject(project, path)) continue;
-      const ticket = ticketByPath.get(path);
+      const path = await this.realpathAllowedForProject(scope, wt.path);
+      if (!path) continue;
+      if (normalizePath(path) === normalizePath(scope.basePath)) continue;
+      const ticket = ticketByPath.get(normalizePath(path));
       const branch = wt.branch ?? "(detached)";
       add({
         id: `wt_${hashPath(path)}`,
@@ -289,27 +301,46 @@ export class TerminalSessionManager {
       });
     }
 
-    for (const ticket of tickets) {
-      if (!ticket.worktreePath || !ticket.branch || entries.has(normalizePath(ticket.worktreePath))) continue;
-      if (!existsSync(ticket.worktreePath)) continue;
-      add({
-        id: `wt_${hashPath(ticket.worktreePath)}`,
-        label: `${ticket.branch} - ${ticket.title}`,
-        branch: ticket.branch,
-        kind: "ticket",
-        ticketId: ticket.id,
-        ticketTitle: ticket.title,
-        path: ticket.worktreePath,
-      });
+    if (!gitWorktreesAvailable) {
+      for (const ticket of tickets) {
+        if (!ticket.worktreePath || !ticket.branch) continue;
+        const path = await this.realpathAllowedForProject(scope, ticket.worktreePath);
+        if (!path || entries.has(normalizePath(path))) continue;
+        add({
+          id: `wt_${hashPath(path)}`,
+          label: `${ticket.branch} - ${ticket.title}`,
+          branch: ticket.branch,
+          kind: "ticket",
+          ticketId: ticket.id,
+          ticketTitle: ticket.title,
+          path,
+        });
+      }
     }
 
     return [...entries.values()];
   }
 
-  private pathAllowedForProject(project: Project, path: string): boolean {
+  private async projectPathScope(project: Project): Promise<ProjectPathScope> {
+    const basePath = await realpathIfExists(project.localPath);
+    if (!basePath) throw new TerminalError(400, "project clone path does not exist");
+    const root = this.projectWorktreesRoot(project.id);
+    return {
+      basePath,
+      worktreesRoot: (await realpathIfExists(root)) ?? normalizePath(root),
+    };
+  }
+
+  private async realpathAllowedForProject(scope: ProjectPathScope, path: string): Promise<string | null> {
+    const resolved = await realpathIfExists(path);
+    if (!resolved) return null;
+    return this.pathAllowedForProject(scope, resolved) ? resolved : null;
+  }
+
+  private pathAllowedForProject(scope: ProjectPathScope, path: string): boolean {
     const resolved = normalizePath(path);
-    if (resolved === normalizePath(project.localPath)) return true;
-    return isInside(this.projectWorktreesRoot(project.id), resolved);
+    if (resolved === normalizePath(scope.basePath)) return true;
+    return isInside(scope.worktreesRoot, resolved);
   }
 
   private projectWorktreesRoot(projectId: string): string {
@@ -383,6 +414,14 @@ function socketText(raw: unknown): string {
   if (Buffer.isBuffer(raw)) return raw.toString("utf8");
   if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString("utf8");
   return "";
+}
+
+async function realpathIfExists(path: string): Promise<string | null> {
+  try {
+    return await realpath(path);
+  } catch {
+    return null;
+  }
 }
 
 function normalizePath(path: string): string {
