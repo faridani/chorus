@@ -220,7 +220,7 @@ export function AiALaCarteTab({ project, backends }: { project: Project; backend
             onChange={(e) => {
               const next = e.target.value;
               setBackendId(next);
-              if (next) void startSession({ backendId: next });
+              if (next && activeTokenRef.current) void startSession({ backendId: next });
             }}
             disabled={busy || availableBackends.length === 0}
           >
@@ -233,6 +233,9 @@ export function AiALaCarteTab({ project, backends }: { project: Project; backend
           </select>
         </label>
         <div className="ai-term-actions">
+          <button disabled={busy || worktrees.length === 0 || !backendId} onClick={() => void startSession({ backendId })}>
+            Start AI
+          </button>
           <button disabled={busy || worktrees.length === 0} onClick={() => void startSession({ backendId: null })}>
             Start shell
           </button>
