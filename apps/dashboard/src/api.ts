@@ -230,6 +230,7 @@ export interface TerminalSessionInfo {
 export interface AppState {
   orchestrator: string;
   runningTasks: string[];
+  addressingPrTicketIds: string[];
   quota: { state: string; resumeAt: number | null };
   usageTotals: { inputTokens: number; outputTokens: number };
   version?: VersionInfo;
