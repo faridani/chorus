@@ -28,6 +28,7 @@ export function ProjectPanel({
   events,
   feed,
   runningTaskIds,
+  addressingPrTicketIds,
   onChange,
   onDebugTicket,
   onSelfHeal,
@@ -38,6 +39,7 @@ export function ProjectPanel({
   events: TicketEvent[];
   feed: FeedItem[];
   runningTaskIds: string[];
+  addressingPrTicketIds: string[];
   onChange: () => void;
   onDebugTicket: (ticketId: string, ticketTitle: string) => void;
   onSelfHeal: (ticketId: string, ticketTitle: string) => void;
@@ -91,6 +93,7 @@ export function ProjectPanel({
             tickets={tickets}
             events={events}
             runningTaskIds={runningTaskIds}
+            addressingPrTicketIds={addressingPrTicketIds}
             idleIdeation={project.idleIdeation}
             idleIdeationCount={project.idleIdeationCount}
             onChange={onChange}
