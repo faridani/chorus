@@ -1,4 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
+import {
+  addressPrReviewsIcon,
+  hasTerminalAddressPrReviewEvent,
+  isAddressingPrReviews,
+} from "../addressPrReviews.js";
 import { api, type Ticket, type TicketEvent } from "../api.js";
 import {
   TICKET_CLEANUP_CONFIRM_TEXT,
@@ -17,6 +22,7 @@ export function TicketsTab({
   tickets,
   events,
   runningTaskIds,
+  addressingPrTicketIds,
   idleIdeation,
   idleIdeationCount,
   onChange,
@@ -26,6 +32,7 @@ export function TicketsTab({
   tickets: Ticket[];
   events: TicketEvent[];
   runningTaskIds: string[];
+  addressingPrTicketIds: string[];
   idleIdeation: boolean;
   idleIdeationCount: number;
   onChange: () => void;
@@ -40,6 +47,14 @@ export function TicketsTab({
 
   // Ticket whose "Address PR comments" request is being submitted.
   const [addrPending, setAddrPending] = useState<string | null>(null);
+  useEffect(() => {
+    if (!addrPending) return;
+    if (addressingPrTicketIds.includes(addrPending) || hasTerminalAddressPrReviewEvent(events, addrPending)) {
+      setAddrPending(null);
+    }
+  }, [addrPending, addressingPrTicketIds, events]);
+  const isAddressingReviewTicket = (ticketId: string) =>
+    isAddressingPrReviews(ticketId, addressingPrTicketIds, addrPending);
   const addressPrComments = (t: Ticket) => {
     setAddrPending(t.id);
     void api
@@ -50,8 +65,10 @@ export function TicketsTab({
           "An agent is now addressing this PR's review comments. Watch the ticket's activity and the PR for the result.",
         );
       })
-      .catch((err) => alert(String(err)))
-      .finally(() => setAddrPending(null));
+      .catch((err) => {
+        setAddrPending(null);
+        alert(String(err));
+      });
   };
 
   // Idle-ideation control: optimistic local state, persisted on change.
@@ -258,7 +275,7 @@ export function TicketsTab({
                   <button
                     type="button"
                     className="addr-pr-btn"
-                    disabled={addrPending === t.id}
+                    disabled={isAddressingReviewTicket(t.id)}
                     aria-label="Address PR reviews"
                     title="Have an agent study this PR's review comments, address the ones it agrees with, push the changes, and post a summary comment (explaining any it disagrees with)."
                     onClick={(e) => {
@@ -266,7 +283,7 @@ export function TicketsTab({
                       addressPrComments(t);
                     }}
                   >
-                    {addrPending === t.id ? "⏳" : "💬"}
+                    {addressPrReviewsIcon(t.id, addressingPrTicketIds, addrPending)}
                   </button>
                 ) : (
                   "—"
