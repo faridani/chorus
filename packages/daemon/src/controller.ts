@@ -547,6 +547,7 @@ export class AppController implements ControlApi {
       });
     }
     this.addressingPr.add(ticketId);
+    this.deps.bus.emit({ type: "ticket_changed", projectId, ticketId, at: Date.now() });
     void this.runAddressPrComments(projectId, ticketId)
       .catch((err) => {
         this.trail(projectId, ticketId, `Address PR comments failed: ${String(err)}`);
@@ -1173,6 +1174,9 @@ export class AppController implements ControlApi {
   }
   runningTaskIds(): string[] {
     return this.deps.orchestrator.runningTaskIds();
+  }
+  addressingPrTicketIds(): string[] {
+    return [...this.addressingPr];
   }
 
   private emitProject(projectId: string): void {
