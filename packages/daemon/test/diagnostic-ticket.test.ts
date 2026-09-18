@@ -3,7 +3,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ChorusBus, type DiagnosisResult, newId, ORCHESTRATOR_ROLE, type Project } from "@chorus/core";
+import {
+  ChorusBus,
+  type AgentResult,
+  type AIBackend,
+  type DiagnosisResult,
+  newId,
+  ORCHESTRATOR_ROLE,
+  type Project,
+} from "@chorus/core";
 import { ChorusDb } from "@chorus/db";
 import { AppController, type DiagnoseFn } from "../src/controller.js";
 
@@ -23,6 +31,24 @@ function makeController(db: ChorusDb, diagnose?: DiagnoseFn): AppController {
     detectedBackends: [],
     diagnose,
   });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (err: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail("condition was not met");
 }
 
 function seedProject(db: ChorusDb): string {
@@ -175,6 +201,80 @@ test("addressPrComments rejects tickets without a PR and an unknown project", as
   assert.throws(() => ctrl.addressPrComments(projectId, t.id), /no pull request/i);
   // Wrong project → not found.
   assert.throws(() => ctrl.addressPrComments("proj_nope", t.id), /ticket not found/);
+  db.close();
+});
+
+test("addressPrComments exposes the background review-addressing lifecycle", async () => {
+  const db = freshDb();
+  const projectId = seedProject(db);
+  const ticket = await makeController(db).addTicket(projectId, {
+    title: "Has PR",
+    body: "b",
+  });
+  db.updateTicket(ticket.id, {
+    branch: "chorus/ticket",
+    prNumber: 12,
+    worktreePath: "/tmp/chorus-ticket",
+  });
+
+  const runStarted = deferred<void>();
+  const runFinished = deferred<AgentResult>();
+  const backend: AIBackend = {
+    id: "codex",
+    capabilities: { structuredOutput: true, usageEvents: false, resume: false },
+    startRun: () => {
+      runStarted.resolve();
+      return {
+        pgid: undefined,
+        events: (async function* () {})(),
+        result: runFinished.promise,
+        stop: async () => {},
+      };
+    },
+  };
+  const bus = new ChorusBus();
+  const changed: string[] = [];
+  bus.on((event) => {
+    if (event.type === "ticket_changed") changed.push(event.ticketId);
+  });
+  const ctrl = new AppController({
+    db,
+    bus,
+    git: {
+      prReviewComments: async () => "Please adjust this",
+      ensureBranchWorktree: async () => {},
+      commitAll: async () => null,
+      pushBranch: async () => {},
+      commentOnPr: async () => {},
+    } as never,
+    backends: { get: () => backend } as never,
+    orchestrator: { runningTaskIds: () => [], tick: () => {} } as never,
+    notifier: { notify: async () => {} } as never,
+    config: { dataDir: "/tmp", agent: {} } as never,
+    detectedBackends: [],
+  });
+
+  await ctrl.addressPrComments(projectId, ticket.id);
+  assert.deepEqual(ctrl.addressingPrTicketIds(), [ticket.id]);
+  assert.ok(changed.includes(ticket.id), "starting the background lifecycle emits ticket_changed");
+
+  await runStarted.promise;
+  assert.deepEqual(ctrl.addressingPrTicketIds(), [ticket.id]);
+
+  runFinished.resolve({
+    payload: { status: "success", summary: "Adjusted review feedback.", filesChanged: [] },
+    exitCode: 0,
+    signal: null,
+    terminalReason: "completed" as never,
+    usage: {},
+    rawLogPath: "",
+    outputFilePath: "",
+  });
+  await waitFor(() => ctrl.addressingPrTicketIds().length === 0);
+  assert.ok(
+    db.listTicketEvents(ticket.id).some((event) => event.message.startsWith("Addressed PR comments")),
+    "completion is recorded in the activity trail",
+  );
   db.close();
 });
 
