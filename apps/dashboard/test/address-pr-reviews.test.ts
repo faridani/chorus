@@ -38,4 +38,9 @@ test("Address PR Reviews local submit can clear on terminal lifecycle events", (
   assert.equal(hasTerminalAddressPrReviewEvent([ev("No PR review comments to address.")], "tkt_1"), true);
   assert.equal(hasTerminalAddressPrReviewEvent([ev("Addressing PR review comments…")], "tkt_1"), false);
   assert.equal(hasTerminalAddressPrReviewEvent([ev("Addressed PR comments (no changes): reviewed")], "tkt_2"), false);
+
+  const oldEvent = ev("Addressed PR comments (pushed changes): fixed");
+  oldEvent.createdAt = 1000;
+  assert.equal(hasTerminalAddressPrReviewEvent([oldEvent], "tkt_1", 2000), false);
+  assert.equal(hasTerminalAddressPrReviewEvent([oldEvent], "tkt_1", 500), true);
 });
