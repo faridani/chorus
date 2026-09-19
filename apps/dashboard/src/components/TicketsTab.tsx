@@ -46,17 +46,20 @@ export function TicketsTab({
   const isRunning = (t: Ticket) => running.has(t.id);
 
   // Ticket whose "Address PR comments" request is being submitted.
-  const [addrPending, setAddrPending] = useState<string | null>(null);
+  const [addrPending, setAddrPending] = useState<{ id: string; requestedAt: number } | null>(null);
   useEffect(() => {
     if (!addrPending) return;
-    if (addressingPrTicketIds.includes(addrPending) || hasTerminalAddressPrReviewEvent(events, addrPending)) {
+    if (
+      addressingPrTicketIds.includes(addrPending.id) ||
+      hasTerminalAddressPrReviewEvent(events, addrPending.id, addrPending.requestedAt)
+    ) {
       setAddrPending(null);
     }
   }, [addrPending, addressingPrTicketIds, events]);
   const isAddressingReviewTicket = (ticketId: string) =>
-    isAddressingPrReviews(ticketId, addressingPrTicketIds, addrPending);
+    isAddressingPrReviews(ticketId, addressingPrTicketIds, addrPending?.id ?? null);
   const addressPrComments = (t: Ticket) => {
-    setAddrPending(t.id);
+    setAddrPending({ id: t.id, requestedAt: Date.now() });
     void api
       .addressPrComments(projectId, t.id)
       .then(() => {
@@ -283,7 +286,7 @@ export function TicketsTab({
                       addressPrComments(t);
                     }}
                   >
-                    {addressPrReviewsIcon(t.id, addressingPrTicketIds, addrPending)}
+                    {addressPrReviewsIcon(t.id, addressingPrTicketIds, addrPending?.id ?? null)}
                   </button>
                 ) : (
                   "—"
