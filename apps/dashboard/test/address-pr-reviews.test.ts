@@ -6,6 +6,7 @@ import {
   addressPrReviewsIcon,
   hasTerminalAddressPrReviewEvent,
   isAddressingPrReviews,
+  shouldClearPendingAddressPrReviewRequest,
 } from "../src/addressPrReviews.js";
 import type { TicketEvent } from "../src/api.js";
 
@@ -43,4 +44,19 @@ test("Address PR Reviews local submit can clear on terminal lifecycle events", (
   oldEvent.createdAt = 1000;
   assert.equal(hasTerminalAddressPrReviewEvent([oldEvent], "tkt_1", 2000), false);
   assert.equal(hasTerminalAddressPrReviewEvent([oldEvent], "tkt_1", 500), true);
+});
+
+test("Address PR Reviews local submit stays active until terminal lifecycle events", () => {
+  const request = { id: "tkt_1", requestedAt: 2000 };
+  const startedEvent = ev("Addressing PR review comments…");
+  startedEvent.createdAt = 3000;
+
+  assert.equal(shouldClearPendingAddressPrReviewRequest([], request), false);
+  assert.equal(shouldClearPendingAddressPrReviewRequest([startedEvent], request), false);
+  assert.equal(isAddressingPrReviews("tkt_1", [], request.id), true);
+  assert.equal(addressPrReviewsIcon("tkt_1", [], request.id), ADDRESS_PR_REVIEWS_ACTIVE_ICON);
+
+  const completedEvent = ev("Addressed PR comments (no changes): reviewed");
+  completedEvent.createdAt = 3000;
+  assert.equal(shouldClearPendingAddressPrReviewRequest([completedEvent], request), true);
 });
