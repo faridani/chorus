@@ -218,6 +218,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   app.get("/api/state", () => ({
     orchestrator: api.orchestratorState(),
     runningTasks: api.runningTaskIds(),
+    addressingPrTicketIds: api.addressingPrTicketIds(),
     quota: db.getQuota(),
     usageTotals: db.usageTotals(),
     version: deps.version,
