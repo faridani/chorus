@@ -27,10 +27,15 @@ export function addressPrReviewsIcon(
     : ADDRESS_PR_REVIEWS_IDLE_ICON;
 }
 
-export function hasTerminalAddressPrReviewEvent(events: readonly TicketEvent[], ticketId: string): boolean {
+export function hasTerminalAddressPrReviewEvent(
+  events: readonly TicketEvent[],
+  ticketId: string,
+  since?: number,
+): boolean {
   return events.some(
     (event) =>
       event.ticketId === ticketId &&
+      (since === undefined || event.createdAt >= since) &&
       TERMINAL_ADDRESS_PR_REVIEW_MESSAGES.some((message) => event.message.startsWith(message)),
   );
 }
