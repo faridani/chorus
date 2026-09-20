@@ -376,10 +376,42 @@ export class ChorusDb {
       .prepare("UPDATE pull_requests SET state=@state, updated_at=@updatedAt WHERE id=@id")
       .run({ id, state, updatedAt: Date.now() });
   }
+  updatePullRequestStateForTicket(
+    ticketId: string,
+    state: string,
+    match: { number?: number | null; url?: string | null } = {},
+  ): number {
+    const params = {
+      ticketId,
+      state,
+      updatedAt: Date.now(),
+      number: match.number ?? null,
+      url: match.url ?? null,
+    };
+    const selector =
+      match.number != null && match.url
+        ? "ticket_id=@ticketId AND (number=@number OR url=@url)"
+        : match.number != null
+          ? "ticket_id=@ticketId AND number=@number"
+          : match.url
+            ? "ticket_id=@ticketId AND url=@url"
+            : "ticket_id=@ticketId";
+    const result = this.raw
+      .prepare(`UPDATE pull_requests SET state=@state, updated_at=@updatedAt WHERE ${selector}`)
+      .run(params);
+    return Number(result.changes);
+  }
   listPullRequests(projectId: string, limit = 50): PullRequest[] {
     return (
       this.raw
         .prepare("SELECT * FROM pull_requests WHERE project_id=? ORDER BY created_at DESC LIMIT ?")
+        .all(projectId, limit) as Row[]
+    ).map(mapPullRequest);
+  }
+  listOpenPullRequests(projectId: string, limit = 50): PullRequest[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM pull_requests WHERE project_id=? AND state='OPEN' ORDER BY created_at DESC LIMIT ?")
         .all(projectId, limit) as Row[]
     ).map(mapPullRequest);
   }
