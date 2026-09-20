@@ -367,8 +367,46 @@ test("migration 0006: ticket pr fields + pull_requests round-trip", () => {
   });
   assert.equal(db.listPullRequests(projectId).length, 1);
   assert.equal(db.listPullRequests(projectId)[0]?.state, "OPEN");
+  assert.equal(db.listOpenPullRequests(projectId).length, 1);
   db.updatePullRequestState(prId, "MERGED");
   assert.equal(db.listPullRequests(projectId)[0]?.state, "MERGED");
+  assert.equal(db.listOpenPullRequests(projectId).length, 0);
+
+  const reopenedPrId = newId("pr");
+  db.insertPullRequest({
+    id: reopenedPrId,
+    ticketId,
+    projectId,
+    url: "https://github.com/owner/repo/pull/8",
+    number: 8,
+    state: "OPEN",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  assert.equal(
+    db.updatePullRequestStateForTicket(ticketId, "CLOSED", {
+      number: 8,
+      url: "https://github.com/owner/repo/pull/8",
+    }),
+    1,
+  );
+  assert.equal(db.listPullRequests(projectId).find((p) => p.number === 8)?.state, "CLOSED");
+  assert.equal(db.listOpenPullRequests(projectId).length, 0);
+
+  const urlOnly = "https://github.com/owner/repo/pull/9";
+  db.insertPullRequest({
+    id: newId("pr"),
+    ticketId,
+    projectId,
+    url: urlOnly,
+    number: null,
+    state: "OPEN",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  assert.equal(db.updatePullRequestStateForTicket(ticketId, "MERGED", { number: 9, url: urlOnly }), 1);
+  assert.equal(db.listPullRequests(projectId).find((p) => p.url === urlOnly)?.state, "MERGED");
+  assert.equal(db.listOpenPullRequests(projectId).length, 0);
 
   assert.equal(db.listTicketsByStatus(projectId, "pr_open").length, 1);
   db.close();
