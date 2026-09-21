@@ -518,8 +518,14 @@ function isStrictLoopback(ip: string): boolean {
 
 function isLocalDaemonRequest(ip: string, boundHost: string): boolean {
   if (isStrictLoopback(ip)) return true;
-  if (boundHost === "0.0.0.0" || boundHost === "::") return false;
-  return ip === boundHost || ip === `::ffff:${boundHost}`;
+  const normalizedIp = normalizeIpv4MappedAddress(ip);
+  const normalizedHost = normalizeIpv4MappedAddress(boundHost);
+  if (normalizedHost === "0.0.0.0" || normalizedHost === "::") return false;
+  return normalizedIp === normalizedHost;
+}
+
+function normalizeIpv4MappedAddress(ip: string): string {
+  return ip.startsWith("::ffff:") ? ip.slice("::ffff:".length) : ip;
 }
 
 function sendTerminalError(
