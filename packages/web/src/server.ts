@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import {
   type AgentTemplateSource,
@@ -42,12 +43,16 @@ export interface WebDeps {
   dashboardDir?: string;
   /** Backs the loopback-only MCP tool endpoints for autonomous orchestration. */
   sessionApi?: SessionApi;
+  /** Override used by tests to make wildcard-bind locality checks deterministic. */
+  localInterfaceAddresses?: () => Iterable<string>;
 }
 
 /** Build (but do not start) the Fastify app. */
 export function createServer(deps: WebDeps): FastifyInstance {
   const app = Fastify({ logger: false });
   const { db, bus, api } = deps;
+  const isDaemonRequest = (ip: string | undefined) =>
+    isLocalDaemonRequest(ip, deps.config.host, deps.localInterfaceAddresses ?? readLocalInterfaceAddresses);
 
   app.register(fastifyWebsocket);
   const terminalSessions = new TerminalSessionManager({
@@ -94,10 +99,10 @@ export function createServer(deps: WebDeps): FastifyInstance {
     // loopback always, plus the bound host IP when it's a specific interface
     // (a remote client still fails: its source IP won't match config.host).
     const handle = async (
-      req: { params: unknown; body?: unknown; ip: string },
+      req: { params: unknown; body?: unknown; ip?: string },
       reply: { code: (n: number) => { send: (b: unknown) => unknown } },
     ) => {
-      if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+      if (!isDaemonRequest(req.ip)) {
         return reply.code(403).send({ error: "loopback only" });
       }
       const { token, action } = req.params as { token: string; action: string };
@@ -112,7 +117,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   // ---- AI a la carte terminal (local-only, project-scoped sessions) ----
   app.register(async (instance) => {
     instance.get("/ws/terminal/:token", { websocket: true }, (socket, req) => {
-      if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+      if (!isDaemonRequest(req.ip)) {
         socket.close(1008, "loopback only");
         return;
       }
@@ -124,7 +129,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.get("/api/projects/:id/terminal/worktrees", async (req, reply) => {
-    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+    if (!isDaemonRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id } = req.params as { id: string };
@@ -136,7 +141,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/worktrees", async (req, reply) => {
-    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+    if (!isDaemonRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id } = req.params as { id: string };
@@ -148,7 +153,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/sessions", async (req, reply) => {
-    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+    if (!isDaemonRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id } = req.params as { id: string };
@@ -166,7 +171,7 @@ export function createServer(deps: WebDeps): FastifyInstance {
   });
 
   app.post("/api/projects/:id/terminal/sessions/:token/stop", async (req, reply) => {
-    if (!isLocalDaemonRequest(req.ip, deps.config.host)) {
+    if (!isDaemonRequest(req.ip)) {
       return reply.code(403).send({ error: "loopback only" });
     }
     const { id, token } = req.params as { id: string; token: string };
@@ -516,16 +521,42 @@ function isStrictLoopback(ip: string): boolean {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
 }
 
-function isLocalDaemonRequest(ip: string, boundHost: string): boolean {
-  if (isStrictLoopback(ip)) return true;
-  const normalizedIp = normalizeIpv4MappedAddress(ip);
-  const normalizedHost = normalizeIpv4MappedAddress(boundHost);
-  if (normalizedHost === "0.0.0.0" || normalizedHost === "::") return false;
+export function isLocalDaemonRequest(
+  ip: string | undefined,
+  boundHost: string | undefined,
+  localInterfaceAddresses: () => Iterable<string> = readLocalInterfaceAddresses,
+): boolean {
+  const normalizedIp = normalizeIpAddress(ip);
+  const normalizedHost = normalizeIpAddress(boundHost);
+  if (!normalizedIp || !normalizedHost) return false;
+  if (isStrictLoopback(normalizedIp)) return true;
+  if (normalizedHost === "0.0.0.0" || normalizedHost === "::") {
+    return isLocalInterfaceAddress(normalizedIp, localInterfaceAddresses);
+  }
   return normalizedIp === normalizedHost;
 }
 
-function normalizeIpv4MappedAddress(ip: string): string {
-  return ip.startsWith("::ffff:") ? ip.slice("::ffff:".length) : ip;
+function isLocalInterfaceAddress(ip: string, localInterfaceAddresses: () => Iterable<string>): boolean {
+  for (const address of localInterfaceAddresses()) {
+    if (normalizeIpAddress(address) === ip) return true;
+  }
+  return false;
+}
+
+function readLocalInterfaceAddresses(): Iterable<string> {
+  const addresses = new Set<string>();
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      addresses.add(entry.address);
+    }
+  }
+  return addresses;
+}
+
+function normalizeIpAddress(ip: string | undefined): string | null {
+  const lower = ip?.trim().toLowerCase();
+  if (!lower) return null;
+  return lower.startsWith("::ffff:") ? lower.slice("::ffff:".length) : lower;
 }
 
 function sendTerminalError(
