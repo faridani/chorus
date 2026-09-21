@@ -21,6 +21,37 @@ test("terminal APIs reject non-loopback clients", async () => {
   await fixture.close();
 });
 
+test("terminal guard accepts the configured local bind address and rejects other remote clients", async () => {
+  const fixture = setup({ host: "192.0.2.10" });
+
+  const local = await fixture.app.inject({
+    method: "GET",
+    url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
+    remoteAddress: "192.0.2.10",
+  });
+  assert.equal(local.statusCode, 200);
+
+  const remote = await fixture.app.inject({
+    method: "GET",
+    url: `/api/projects/${fixture.project.id}/terminal/worktrees`,
+    remoteAddress: "10.0.0.8",
+  });
+  assert.equal(remote.statusCode, 403);
+  assert.deepEqual(remote.json(), { error: "loopback only" });
+
+  await fixture.app.ready();
+  assert.deepEqual(await terminalSocketClose(fixture, "192.0.2.10"), {
+    code: 1008,
+    reason: "unknown terminal session",
+  });
+  assert.deepEqual(await terminalSocketClose(fixture, "10.0.0.8"), {
+    code: 1008,
+    reason: "loopback only",
+  });
+
+  await fixture.close();
+});
+
 test("terminal worktree listing is project scoped and does not expose paths", async () => {
   const fixture = setup();
   const res = await fixture.app.inject({
@@ -179,7 +210,7 @@ test("terminal worktrees must be git-registered and realpath scoped", async () =
   await fixture.close();
 });
 
-function setup(opts: { backends?: BackendInfo[] } = {}) {
+function setup(opts: { backends?: BackendInfo[]; host?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), "chorus-web-terminal-"));
   const dataDir = join(root, "data");
   const repoPath = join(root, "repo");
@@ -215,7 +246,7 @@ function setup(opts: { backends?: BackendInfo[] } = {}) {
     db,
     bus: new ChorusBus(),
     api: { listBackends: () => opts.backends ?? [] } as never,
-    config: { dataDir, host: "127.0.0.1", port: 0, maxConcurrentAgents: 1 } as never,
+    config: { dataDir, host: opts.host ?? "127.0.0.1", port: 0, maxConcurrentAgents: 1 } as never,
     version: { number: "0.0.0", commit: "test", dirty: false, startedAt: 0 },
   });
   return {
@@ -234,4 +265,26 @@ function setup(opts: { backends?: BackendInfo[] } = {}) {
 
 function worktreeIdForPath(path: string): string {
   return `wt_${createHash("sha256").update(resolve(path)).digest("hex").slice(0, 16)}`;
+}
+
+async function terminalSocketClose(
+  fixture: ReturnType<typeof setup>,
+  remoteAddress: string,
+): Promise<{ code: number; reason: string }> {
+  let resolveClose!: (value: { code: number; reason: string }) => void;
+  const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+    resolveClose = resolve;
+  });
+  await fixture.app.injectWS(
+    "/ws/terminal/missing",
+    { socket: { remoteAddress } } as never,
+    {
+      onInit: (ws) => {
+        ws.once("close", (code, reason) => {
+          resolveClose({ code, reason: reason.toString("utf8") });
+        });
+      },
+    },
+  );
+  return closed;
 }
