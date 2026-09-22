@@ -15,7 +15,7 @@
     "build": "tsc --build",
     "clean": "tsc --build --clean && rimraf packages/*/dist apps/*/dist",
     "typecheck": "tsc --build",
-    "test": "node --test --import tsx 'packages/**/test/**/*.test.ts'",
+    "test": "node --test --import tsx 'packages/**/test/**/*.test.ts' 'apps/**/test/**/*.test.ts'",
     "daemon": "tsx packages/daemon/src/main.ts",
     "dashboard:dev": "npm --workspace @chorus/dashboard run dev",
     "dev": "tsx watch packages/daemon/src/main.ts"
