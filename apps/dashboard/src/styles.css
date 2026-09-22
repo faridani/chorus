@@ -33,6 +33,7 @@ button:disabled { opacity: .5; cursor: default; }
 .quota-exhausted { color: #f85149; }
 .body {
   --left-pane-width: clamp(320px, 24vw, 380px);
+  --main-pane-compact-min-width: 240px;
   --events-pane-width: 320px;
   --events-handle-width: 36px;
   display: grid;
@@ -78,6 +79,21 @@ button:disabled { opacity: .5; cursor: default; }
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+}
+@media (max-width: 768px) {
+  .body {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .body.right-pane-open {
+    grid-template-columns: var(--left-pane-width) minmax(var(--main-pane-compact-min-width), 1fr) var(--events-pane-width);
+  }
+  .body.right-pane-collapsed {
+    grid-template-columns: var(--left-pane-width) minmax(var(--main-pane-compact-min-width), 1fr) var(--events-handle-width);
+  }
+  .events {
+    max-width: var(--events-pane-width);
+  }
 }
 .events-handle {
   position: absolute;
