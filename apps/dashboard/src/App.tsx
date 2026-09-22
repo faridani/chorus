@@ -95,6 +95,16 @@ export function App() {
     }
   }, [rightPaneOpen]);
 
+  useEffect(() => {
+    const compactLayoutQuery = window.matchMedia("(max-width: 768px)");
+    const collapseForCompactLayout = () => {
+      if (compactLayoutQuery.matches) setRightPaneOpen(false);
+    };
+    collapseForCompactLayout();
+    compactLayoutQuery.addEventListener("change", collapseForCompactLayout);
+    return () => compactLayoutQuery.removeEventListener("change", collapseForCompactLayout);
+  }, []);
+
   return (
     <div className="app">
       <header className="topbar">
