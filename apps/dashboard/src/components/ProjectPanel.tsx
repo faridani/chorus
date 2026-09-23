@@ -79,7 +79,7 @@ export function ProjectPanel({
           id="ai-a-la-carte"
           tab={tab}
           setTab={setTab}
-          label="AI a la carte"
+          label="AI Shell"
           icon=">_"
           helpText={AI_A_LA_CARTE_HELP}
         />
@@ -137,7 +137,7 @@ export function ProjectPanel({
         {tab === "suggestions" && (
           <SuggestionsTab projectId={project.id} suggestions={suggestions} onChange={onChange} />
         )}
-        {tab === "ai-a-la-carte" && <AiALaCarteTab project={project} backends={backends} />}
+        {tab === "ai-a-la-carte" && <AiALaCarteTab project={project} />}
       </div>
     </div>
   );
