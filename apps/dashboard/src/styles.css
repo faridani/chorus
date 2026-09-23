@@ -32,7 +32,7 @@ button:disabled { opacity: .5; cursor: default; }
 .quota-available { color: #7ee787; }
 .quota-exhausted { color: #f85149; }
 .body {
-  --left-pane-width: clamp(320px, 24vw, 380px);
+  --left-pane-width: clamp(320px, 26vw, 460px);
   --events-pane-width: 320px;
   --events-handle-width: 36px;
   display: grid;
@@ -164,8 +164,8 @@ button:disabled { opacity: .5; cursor: default; }
 .gi-meta { margin: 1px 0 4px; }
 .gi-meta code, .chooser-list code { font-family: ui-monospace, monospace; font-size: 11px; }
 .gi-desc { margin: 2px 0 6px; }
-.gi-actions { display: flex; align-items: center; gap: 6px; }
-.gi-use { display: flex; gap: 4px; flex: 1; min-width: 220px; }
+.gi-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gi-use { display: flex; gap: 4px; flex: 1 1 100%; min-width: 0; }
 .gi-use select { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; font-size: 12px; }
 .gi-use button { font-size: 12px; padding: 2px 8px; }
 .source-tag.source-builtin { color: #7ee787; border-color: #2e5e40; }
@@ -423,7 +423,7 @@ button.danger { background: #3d1f24; border-color: #5e2e34; color: #f8a39a; }
 .ai-term { display: flex; flex-direction: column; gap: 12px; width: 100%; }
 .ai-term-toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.2fr) minmax(180px, .8fr) auto;
+  grid-template-columns: minmax(220px, 1fr) auto;
   gap: 10px;
   align-items: end;
 }
@@ -572,7 +572,7 @@ tr.clickable:hover td { background: var(--panel2); }
 .toolperm-btn.on.allowed { color: #7ee787; border-color: #2e5e40; background: #14241a; }
 .toolperm-btn.on.disallowed { color: #f85149; border-color: #5e2e34; background: #2a1517; }
 .toolperm-btn.on.unspecified { color: var(--text); }
-.agenttools, .gi-tools { font-family: ui-monospace, monospace; font-size: 11px; margin-top: 4px; }
+.agenttools, .gi-tools { font-family: ui-monospace, monospace; font-size: 11px; margin-top: 4px; overflow-wrap: anywhere; }
 
 /* Debug Traces */
 .debugbtn { margin-left: 8px; font-size: 11px; padding: 2px 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
