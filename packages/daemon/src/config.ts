@@ -11,11 +11,20 @@ export function loadConfig(): Config {
   const fileConfig = readFileConfig();
   const dataDir =
     process.env.CHORUS_DATA_DIR ?? fileConfig.dataDir ?? join(homedir(), ".chorus");
+  const allowRemoteTerminal = process.env.CHORUS_ALLOW_REMOTE_TERMINAL;
   const merged = {
     ...fileConfig,
     dataDir,
     ...(process.env.CHORUS_PORT ? { port: Number(process.env.CHORUS_PORT) } : {}),
     ...(process.env.CHORUS_HOST ? { host: process.env.CHORUS_HOST } : {}),
+    ...(allowRemoteTerminal !== undefined
+      ? {
+          terminal: {
+            ...((fileConfig.terminal as Record<string, unknown> | undefined) ?? {}),
+            allowRemoteClients: /^(1|true|yes|on)$/i.test(allowRemoteTerminal),
+          },
+        }
+      : {}),
   };
   return ConfigSchema.parse(merged);
 }
