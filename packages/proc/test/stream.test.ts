@@ -65,6 +65,38 @@ test(
   },
 );
 
+test(
+  "pty resize seeds the initial winsize and applies live resizes to the child",
+  { skip: !findExecutable("python3") ? "python3 PTY bridge not available" : false },
+  async () => {
+    const childScript = `
+      const emit = () => { try { process.stdout.write("SIZE " + process.stdout.columns + "x" + process.stdout.rows + "\\n"); } catch {} };
+      process.stdout.on("resize", emit);
+      emit();
+      setInterval(() => {}, 1000);
+    `;
+    const proc = new StreamingProcess(process.execPath, ["-e", childScript], {
+      rawLogPath: null,
+      killGraceMs: 200,
+      pty: true,
+      ptyControl: true,
+      stdin: "pipe",
+      env: { ...process.env, CHORUS_PTY_COLS: "100", CHORUS_PTY_ROWS: "40" },
+    });
+
+    let buf = "";
+    proc.onData((d) => {
+      buf += d;
+    });
+
+    await waitFor(() => buf.includes("SIZE 100x40"), 4000, () => buf);
+    assert.equal(proc.resize(132, 50), true);
+    await waitFor(() => buf.includes("SIZE 132x50"), 4000, () => buf);
+
+    await proc.stop();
+  },
+);
+
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -76,6 +108,15 @@ function processExists(pid: number): boolean {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(cond: () => boolean, timeoutMs: number, dump?: () => string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (cond()) return;
+    await wait(25);
+  }
+  throw new Error(`timed out waiting for condition; got: ${dump ? dump() : "(no dump)"}`);
 }
 
 async function waitForPidFile(path: string): Promise<number> {
