@@ -68,3 +68,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+
+# Local runtime config (auto-discovered by the daemon; not committed)
+/chorus.config.json
