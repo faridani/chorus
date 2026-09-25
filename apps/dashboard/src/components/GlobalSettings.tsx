@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api, type GlobalSettings as Settings } from "../api.js";
 
 /**
  * Right-side slide-out drawer for daemon-wide settings. Read-only for now —
  * its first job is to surface where Chorus keeps each project's git worktrees.
  */
-export function GlobalSettings({ onClose }: { onClose: () => void }) {
+export function GlobalSettings({ onClose, onAbout }: { onClose: () => void; onAbout: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,9 +18,14 @@ export function GlobalSettings({ onClose }: { onClose: () => void }) {
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
         <header className="drawer-head">
           <h3>Global settings</h3>
-          <button className="drawer-close" onClick={onClose} title="Close">
-            ✕
-          </button>
+          <div className="drawer-actions">
+            <button className="drawer-action" onClick={onAbout} title="About Chorus">
+              About
+            </button>
+            <button className="drawer-close" onClick={onClose} title="Close">
+              ✕
+            </button>
+          </div>
         </header>
 
         {error && <p className="empty">{error}</p>}
