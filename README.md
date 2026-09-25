@@ -1,6 +1,6 @@
 # chorus
 
-Chorus is a self-hosted, 24/7 AI engineering team. A single orchestrator coordinates role-based agents—dev, QA, designer, and more—each with defined guardrails. Powered by subscription CLI tools like Codex, it tracks costs, manages git branches, logs every change, and opens a GitHub pull request for each ticket so a human can review and merge it.
+Chorus is a self-hosted, 24/7 AI engineering team. A single orchestrator coordinates role-based agents—dev, QA, designer, and more—each with defined guardrails. Powered by subscription CLI tools like Codex, Claude Code, and Gemini, it tracks costs, manages git branches, logs every change, and opens a GitHub pull request for each ticket so a human can review and merge it.
 
 > **Status:** Milestone 1 — an end-to-end vertical slice is implemented:
 > New Project → clone via `gh` → read `docs/SPEC.md` → generate tickets →
@@ -8,6 +8,23 @@ Chorus is a self-hosted, 24/7 AI engineering team. A single orchestrator coordin
 > orchestrator detects done → pushes the branch and opens a **GitHub PR** against
 > `main` → the ticket shows the PR link → you merge the PR manually; Chorus polls
 > GitHub and marks the ticket merged. `main` is never pushed to autonomously.
+
+## About
+
+Chorus is an implementation of goal-oriented software engineering: you describe
+where a repository should go, and an orchestrator turns that direction into
+tickets, role-based agent work, isolated branches, logs, and reviewable pull
+requests.
+
+It is designed to run continuously on a headless or clamshell server. Running
+headless keeps subscription CLI tools available around the clock, including
+Codex in `--yolo` mode and Claude Code with
+`--dangerously-skip-permissions`, while Chorus keeps the work inspectable
+through git worktrees, cost tracking, and human review before `main` is touched.
+
+The dashboard also includes a full terminal, so you can still use Codex, Claude,
+and Gemini directly whenever you need to inspect, intervene, or explore outside
+the automated loop.
 
 ## Quick start
 
