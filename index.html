@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chorus | Containerized AI Engineering Team</title>
+    <meta
+      name="description"
+      content="Chorus is an open-source, containerized AI engineering team for BYOAI coding agents, reviewable pull requests, and managed hosted infrastructure."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #111817;
+        --bg-soft: #17211f;
+        --paper: #edf3ef;
+        --ink: #eef6f1;
+        --muted: #b9c8c1;
+        --line: rgba(237, 243, 239, 0.16);
+        --green: #35c39b;
+        --blue: #5a9cda;
+        --lime: #d4dc65;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .site-nav {
+        position: fixed;
+        inset: 0 0 auto;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px clamp(20px, 5vw, 72px);
+        background: rgba(17, 24, 23, 0.82);
+        border-bottom: 1px solid rgba(237, 243, 239, 0.08);
+        backdrop-filter: blur(16px);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 760;
+        font-size: 1rem;
+      }
+
+      .brand-mark {
+        width: 28px;
+        height: 28px;
+        border: 2px solid var(--green);
+        border-radius: 6px;
+        position: relative;
+      }
+
+      .brand-mark::after {
+        content: "";
+        position: absolute;
+        inset: 7px;
+        border-top: 2px solid var(--blue);
+        border-bottom: 2px solid var(--lime);
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .nav-links a {
+        text-decoration: none;
+      }
+
+      .hero {
+        min-height: 82vh;
+        display: grid;
+        align-items: center;
+        padding: 104px clamp(20px, 5vw, 72px) 56px;
+        background-color: var(--bg);
+        background-image: url("assets/chorus-hero.png");
+        background-size: cover;
+        background-position: center;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .hero-copy {
+        max-width: 640px;
+        text-shadow: 0 2px 24px rgba(0, 0, 0, 0.55);
+      }
+
+      .eyebrow {
+        margin: 0 0 18px;
+        color: var(--green);
+        font-weight: 760;
+        font-size: 0.95rem;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 4.8rem;
+        line-height: 0.95;
+        font-weight: 820;
+      }
+
+      .hero-copy p {
+        max-width: 560px;
+        margin: 24px 0 0;
+        color: var(--paper);
+        font-size: 1.22rem;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 32px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 18px;
+        border-radius: 8px;
+        border: 1px solid rgba(237, 243, 239, 0.2);
+        text-decoration: none;
+        font-weight: 720;
+      }
+
+      .button.primary {
+        background: var(--paper);
+        color: #101716;
+        border-color: var(--paper);
+      }
+
+      .button.secondary {
+        background: rgba(17, 24, 23, 0.44);
+        color: var(--paper);
+      }
+
+      main {
+        background: #101716;
+      }
+
+      section {
+        padding: 72px clamp(20px, 5vw, 72px);
+      }
+
+      .intro {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+        gap: 44px;
+        align-items: start;
+        background: #101716;
+      }
+
+      .section-kicker {
+        margin: 0 0 10px;
+        color: var(--green);
+        font-weight: 760;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 2.35rem;
+        line-height: 1.08;
+      }
+
+      .lead {
+        max-width: 760px;
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: 1.08rem;
+      }
+
+      .install-box {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #16211f;
+        overflow: hidden;
+      }
+
+      .install-box header {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+        color: var(--paper);
+        font-weight: 720;
+      }
+
+      pre {
+        margin: 0;
+        padding: 18px;
+        overflow-x: auto;
+        color: #dce8e1;
+        font-size: 0.95rem;
+      }
+
+      code {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+        background: var(--bg-soft);
+      }
+
+      .feature-card {
+        min-height: 220px;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(237, 243, 239, 0.035);
+      }
+
+      .feature-card h3 {
+        margin: 20px 0 10px;
+        font-size: 1.18rem;
+      }
+
+      .feature-card p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .icon {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        color: var(--green);
+      }
+
+      .icon svg {
+        width: 30px;
+        height: 30px;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        fill: none;
+      }
+
+      .hosted {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(280px, 1.1fr);
+        gap: 42px;
+        align-items: center;
+        background: #eef4ef;
+        color: #101716;
+      }
+
+      .hosted .section-kicker {
+        color: #137b63;
+      }
+
+      .hosted .lead {
+        color: #4b5b56;
+      }
+
+      .hosted-panel {
+        display: grid;
+        gap: 12px;
+      }
+
+      .hosted-row {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 18px;
+        padding: 16px 0;
+        border-bottom: 1px solid rgba(16, 23, 22, 0.14);
+      }
+
+      .hosted-row strong {
+        color: #101716;
+      }
+
+      .hosted-row span {
+        color: #50625d;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 28px clamp(20px, 5vw, 72px);
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+      }
+
+      footer a {
+        color: var(--paper);
+      }
+
+      @media (max-width: 900px) {
+        .site-nav {
+          position: absolute;
+        }
+
+        .nav-links {
+          gap: 14px;
+          font-size: 0.88rem;
+        }
+
+        .hero {
+          min-height: 78vh;
+          align-items: end;
+          background-position: 61% center;
+        }
+
+        h1 {
+          font-size: 3.6rem;
+        }
+
+        .hero-copy p {
+          font-size: 1.06rem;
+        }
+
+        .intro,
+        .hosted {
+          grid-template-columns: 1fr;
+        }
+
+        .features {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .site-nav {
+          padding: 16px 20px;
+        }
+
+        .nav-links a:not(:last-child) {
+          display: none;
+        }
+
+        .hero {
+          min-height: 76vh;
+          padding-top: 96px;
+          background-position: 67% center;
+        }
+
+        h1 {
+          font-size: 3rem;
+        }
+
+        section {
+          padding: 54px 20px;
+        }
+
+        .hosted-row {
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+
+        footer {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <a class="brand" href="#top" aria-label="Chorus home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Chorus</span>
+      </a>
+      <div class="nav-links">
+        <a href="#open-source">Open source</a>
+        <a href="#hosted">Hosted</a>
+        <a href="README.md">Install</a>
+      </div>
+    </nav>
+
+    <header class="hero" id="top">
+      <div class="hero-copy">
+        <p class="eyebrow">BYOAI orchestration for real engineering work</p>
+        <h1>Chorus</h1>
+        <p>
+          Run a containerized AI engineering team that turns specs into tickets,
+          worktrees, branches, and reviewable pull requests.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="README.md">Run it yourself</a>
+          <a class="button secondary" href="#hosted">Use hosted infra</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro" id="open-source">
+        <div>
+          <p class="section-kicker">Open source, container first</p>
+          <h2>Keep powerful coding agents away from your host machine.</h2>
+          <p class="lead">
+            Chorus runs Codex, Claude Code, and Gemini CLI with the permissions
+            they need for autonomous work, but wraps that work in a container,
+            isolated git worktrees, durable logs, quota awareness, and human PR
+            review before anything reaches the base branch.
+          </p>
+        </div>
+        <div class="install-box" aria-label="Quick install commands">
+          <header>Launch locally</header>
+          <pre><code># macOS
+./deploy/mac/run-container.sh start
+
+# Linux
+./deploy/linux/run-container.sh start
+
+# Windows PowerShell
+.\deploy\windows\run-container.ps1 start</code></pre>
+        </div>
+      </section>
+
+      <section class="features" aria-label="Product capabilities">
+        <article class="feature-card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32">
+              <path d="M6 9h20v14H6z" />
+              <path d="M10 13h6M10 18h12M20 13h2" />
+            </svg>
+          </div>
+          <h3>BYOAI backends</h3>
+          <p>
+            Bring the AI subscriptions or API keys you already use. Chorus
+            detects the installed CLIs and lets each agent use the right model.
+          </p>
+        </article>
+        <article class="feature-card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32">
+              <path d="M7 8h18v16H7z" />
+              <path d="M11 12h10M11 16h5M11 20h8" />
+              <path d="M4 5h24v22H4z" />
+            </svg>
+          </div>
+          <h3>Container isolation</h3>
+          <p>
+            Agent processes run with dangerous approval bypasses inside a Linux
+            container instead of directly on your workstation.
+          </p>
+        </article>
+        <article class="feature-card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32">
+              <path d="M8 7v18M24 7v18" />
+              <path d="M8 12h8a4 4 0 0 1 0 8H8" />
+              <path d="M24 12h-5" />
+            </svg>
+          </div>
+          <h3>PR-native workflow</h3>
+          <p>
+            Every ticket lands as a branch and pull request. Humans keep the
+            merge decision, while Chorus tracks status back in the dashboard.
+          </p>
+        </article>
+      </section>
+
+      <section class="hosted" id="hosted">
+        <div>
+          <p class="section-kicker">Managed option</p>
+          <h2>Open source when you want control. Hosted when you want velocity.</h2>
+          <p class="lead">
+            Run Chorus yourself from this repository, or use paid managed
+            infrastructure for a ready-deployed environment with maintained
+            container hosts, upgrades, monitoring, and operator support.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="README.md">Read the install guide</a>
+            <a class="button secondary" href="README.md#open-source-and-hosted">Compare options</a>
+          </div>
+        </div>
+        <div class="hosted-panel" aria-label="Self-hosted and hosted comparison">
+          <div class="hosted-row">
+            <strong>Self-hosted</strong>
+            <span>Use your runtime, your network, your BYOAI accounts, and your policies.</span>
+          </div>
+          <div class="hosted-row">
+            <strong>Hosted</strong>
+            <span>Use a maintained Chorus deployment without running your own 24/7 machine.</span>
+          </div>
+          <div class="hosted-row">
+            <strong>Reviewable</strong>
+            <span>Both paths keep the branch, PR, log, and human-review workflow intact.</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Chorus is open source and BYOAI.</span>
+      <span><a href="README.md">README</a> · <a href="LICENSE">License</a></span>
+    </footer>
+  </body>
+</html>
