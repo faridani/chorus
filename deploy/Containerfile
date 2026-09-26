@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1
+
+FROM node:22-bookworm-slim
+
+ARG INSTALL_AI_CLIS=true
+
+ENV CHORUS_HOST=0.0.0.0 \
+    CHORUS_PORT=7878 \
+    CHORUS_DATA_DIR=/var/lib/chorus \
+    CHORUS_DASHBOARD_DIR=/app/apps/dashboard/dist \
+    HOME=/home/chorus \
+    NPM_CONFIG_PREFIX=/home/chorus/.npm-global \
+    PATH=/home/chorus/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      bash \
+      ca-certificates \
+      curl \
+      g++ \
+      git \
+      gosu \
+      gnupg \
+      make \
+      openssh-client \
+      procps \
+      python3 \
+    && mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json tsconfig.json tsconfig.base.json ./
+COPY apps/dashboard/package.json apps/dashboard/package.json
+COPY packages/proc/package.json packages/proc/package.json
+COPY packages/spec-ingest/package.json packages/spec-ingest/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/notifier/package.json packages/notifier/package.json
+COPY packages/web/package.json packages/web/package.json
+COPY packages/git-service/package.json packages/git-service/package.json
+COPY packages/backends/package.json packages/backends/package.json
+COPY packages/daemon/package.json packages/daemon/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY packages/agent-mcp/package.json packages/agent-mcp/package.json
+COPY packages/orchestrator/package.json packages/orchestrator/package.json
+
+RUN npm ci
+
+COPY . .
+
+RUN npm run build \
+    && npm --workspace @chorus/dashboard run build \
+    && if [ "$INSTALL_AI_CLIS" = "true" ]; then \
+      npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest; \
+    fi \
+    && useradd --create-home --home-dir /home/chorus --shell /bin/bash chorus \
+    && mkdir -p /var/lib/chorus /home/chorus/.npm-global/bin \
+    && chown -R chorus:chorus /var/lib/chorus /home/chorus
+
+RUN chmod +x /app/deploy/container-entrypoint.sh
+
+EXPOSE 7878
+
+ENTRYPOINT ["/app/deploy/container-entrypoint.sh"]
+CMD ["node", "packages/daemon/dist/main.js"]
