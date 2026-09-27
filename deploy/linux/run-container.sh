@@ -31,9 +31,11 @@ EOF
 }
 
 prepare_dirs() {
+  mkdir -p "$DATA_DIR" "$HOME_DIR"
+  DATA_DIR="$(cd -- "$DATA_DIR" && pwd -P)"
+  HOME_DIR="$(cd -- "$HOME_DIR" && pwd -P)"
+
   mkdir -p \
-    "$DATA_DIR" \
-    "$HOME_DIR/.npm-global/bin" \
     "$HOME_DIR/.config" \
     "$HOME_DIR/.codex" \
     "$HOME_DIR/.claude" \
@@ -72,6 +74,9 @@ start_container() {
   local suffix
   suffix="$(effective_volume_suffix)"
   prepare_dirs
+  if [[ -f "$CONFIG_FILE" ]]; then
+    CONFIG_FILE="$(cd -- "$(dirname -- "$CONFIG_FILE")" && pwd -P)/$(basename -- "$CONFIG_FILE")"
+  fi
 
   "$runtime" build \
     --build-arg "INSTALL_AI_CLIS=$INSTALL_AI_CLIS" \
