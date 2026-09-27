@@ -27,9 +27,11 @@ EOF
 }
 
 prepare_dirs() {
+  mkdir -p "$DATA_DIR" "$HOME_DIR"
+  DATA_DIR="$(cd -- "$DATA_DIR" && pwd -P)"
+  HOME_DIR="$(cd -- "$HOME_DIR" && pwd -P)"
+
   mkdir -p \
-    "$DATA_DIR" \
-    "$HOME_DIR/.npm-global/bin" \
     "$HOME_DIR/.config" \
     "$HOME_DIR/.codex" \
     "$HOME_DIR/.claude" \
@@ -56,6 +58,9 @@ inherited_env_args() {
 start_container() {
   require_container
   prepare_dirs
+  if [[ -f "$CONFIG_FILE" ]]; then
+    CONFIG_FILE="$(cd -- "$(dirname -- "$CONFIG_FILE")" && pwd -P)/$(basename -- "$CONFIG_FILE")"
+  fi
 
   container system start
   container build \
