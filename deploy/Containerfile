@@ -9,8 +9,8 @@ ENV CHORUS_HOST=0.0.0.0 \
     CHORUS_DATA_DIR=/var/lib/chorus \
     CHORUS_DASHBOARD_DIR=/app/apps/dashboard/dist \
     HOME=/home/chorus \
-    NPM_CONFIG_PREFIX=/home/chorus/.npm-global \
-    PATH=/home/chorus/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    NPM_CONFIG_PREFIX=/opt/npm-global \
+    PATH=/opt/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 WORKDIR /app
 
@@ -61,8 +61,8 @@ RUN npm run build \
       npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest; \
     fi \
     && useradd --create-home --home-dir /home/chorus --shell /bin/bash chorus \
-    && mkdir -p /var/lib/chorus /home/chorus/.npm-global/bin \
-    && chown -R chorus:chorus /var/lib/chorus /home/chorus
+    && mkdir -p /var/lib/chorus /opt/npm-global \
+    && chown -R chorus:chorus /var/lib/chorus /opt/npm-global /home/chorus
 
 RUN chmod +x /app/deploy/container-entrypoint.sh
 
