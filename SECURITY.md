@@ -30,10 +30,18 @@ the `main` branch. Pin to a commit you have reviewed for production use.
 Chorus orchestrates autonomous coding agents and exposes a local control
 plane. Operators should understand the following before deploying it:
 
-- **Network binding.** The daemon/dashboard binds to `0.0.0.0:7878` by
-  default, which is reachable from your LAN/overlay network. For anything
-  beyond a trusted single host, set `CHORUS_HOST=127.0.0.1` and put it behind
-  an authenticated reverse proxy or a private overlay (e.g. Tailscale).
+- **Container boundary.** Container mode is strongly recommended because agents
+  run AI CLIs with approval bypasses. The boundary reduces host exposure, but
+  mounted Chorus data, mounted CLI auth directories, forwarded SSH agents, and
+  inherited environment variables remain sensitive.
+- **Bare-metal risk.** Bare-metal mode gives agent CLI processes the same OS
+  account, filesystem permissions, SSH keys, package managers, and network
+  access that you have. Use a dedicated machine, VM, or OS account.
+- **Network binding.** Without config/env overrides, the daemon defaults to
+  `0.0.0.0:7878`. The example config binds `127.0.0.1`, and container launchers
+  publish only `127.0.0.1:7878` on the host by default. For anything beyond a
+  trusted single host, set `CHORUS_HOST=127.0.0.1` and put it behind an
+  authenticated reverse proxy or a private overlay (e.g. Tailscale).
 - **No built-in authentication.** The HTTP/WebSocket API is not
   authentication-protected on its own. Do not expose it directly to the
   public internet.
