@@ -10,7 +10,7 @@ or API keys you already use. Chorus supplies the orchestration, dashboard,
 worktrees, logs, cost/quota awareness, and PR workflow around Codex, Claude Code,
 and Gemini CLI.
 
-## Why Containers Are Required
+## Why Containers Are Strongly Recommended
 
 Agent CLIs are powerful by design. Chorus currently drives them with bypass modes
 such as `codex exec --dangerously-bypass-approvals-and-sandbox`, Claude Code
@@ -18,20 +18,26 @@ permission bypass, and Gemini's yolo approval mode. That is useful for
 unattended coding, but it is not something you should run directly on your
 everyday host filesystem.
 
-Run Chorus in a container. The container keeps the dangerous agent process tree
-away from the host while still giving it a persistent Chorus data directory,
-GitHub auth, and BYOAI CLI credentials.
+Run Chorus in a container when you can. The container keeps the dangerous agent
+process tree away from the host while still giving it a persistent Chorus data
+directory, GitHub auth, and BYOAI CLI credentials.
+
+Bare-metal mode is available for operators who deliberately want it. Use it only
+on a dedicated machine, VM, or account where AI agents can safely create files,
+run commands, install packages, and modify cloned repositories.
 
 ## What You Need
 
 - A GitHub account with access to the repositories Chorus will clone and open PRs
   against.
 - At least one AI backend account: Codex, Claude Code, or Gemini CLI.
-- A container runtime:
+- For container mode, a container runtime:
   - **macOS:** Apple `container` from <https://github.com/apple/container>.
     Apple documents support for Apple silicon Macs on macOS 26+.
   - **Linux:** Docker Engine or Podman.
   - **Windows:** Docker Desktop or Podman Desktop with Linux containers enabled.
+- For bare-metal mode, Node 22+, npm 10+, Git, GitHub CLI, and the AI CLI tools
+  you want Chorus to use.
 
 The container image installs Node 22, Git, GitHub CLI, and the Codex, Claude, and
 Gemini CLI frontends. Your accounts and tokens stay in a host-mounted container
@@ -240,9 +246,141 @@ Set `CHORUS_PORT` to publish a different host port:
 CHORUS_PORT=8787 ./deploy/linux/run-container.sh start
 ```
 
-## Host-Native Development
+## Bare-Metal Launch
 
-Container mode is the supported operator path. For local development only:
+Use bare-metal mode when you explicitly want Chorus and its AI agents to run
+directly on the host. This is the simplest path operationally, but it gives the
+AI CLI process tree access to the same OS account, filesystem permissions, SSH
+keys, package managers, and network access that you have.
+
+Recommended bare-metal setup:
+
+- Run on a dedicated machine, VM, or separate OS account.
+- Keep `host` set to `127.0.0.1` unless the dashboard is behind a trusted
+  private network.
+- Keep `terminal.allowRemoteClients` disabled unless you understand that it
+  exposes an interactive shell through the dashboard.
+- Do not point Chorus at repositories or directories you are not willing to let
+  AI agents modify.
+
+### macOS Bare Metal
+
+Install prerequisites with Homebrew or your preferred package manager:
+
+```bash
+brew install node git gh
+npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest
+```
+
+Authenticate the local tools:
+
+```bash
+gh auth login
+codex login
+# Run claude and gemini once if you want those BYOAI backends available.
+claude
+gemini
+```
+
+Build and launch Chorus:
+
+```bash
+cp chorus.config.example.json chorus.config.json
+# Edit chorus.config.json and prefer "host": "127.0.0.1" for bare metal.
+npm install
+npm run build
+npm --workspace @chorus/dashboard run build
+node packages/daemon/dist/main.js
+```
+
+Open <http://127.0.0.1:7878>.
+
+For 24/7 macOS operation, edit `deploy/com.chorus.daemon.plist` with your local
+paths, then install it:
+
+```bash
+cp deploy/com.chorus.daemon.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.chorus.daemon.plist
+```
+
+### Linux Bare Metal
+
+Install Node 22+, npm 10+, Git, and GitHub CLI with your distro package manager
+or the official upstream installers. Then install the AI CLIs:
+
+```bash
+npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest
+```
+
+Verify the local toolchain:
+
+```bash
+node --version
+npm --version
+git --version
+gh --version
+codex --version
+```
+
+Authenticate:
+
+```bash
+gh auth login
+codex login
+# Run claude and gemini once if you want those BYOAI backends available.
+claude
+gemini
+```
+
+Build and launch:
+
+```bash
+cp chorus.config.example.json chorus.config.json
+# Edit chorus.config.json and prefer "host": "127.0.0.1" for bare metal.
+npm install
+npm run build
+npm --workspace @chorus/dashboard run build
+node packages/daemon/dist/main.js
+```
+
+Open <http://127.0.0.1:7878>.
+
+### Windows Bare Metal
+
+Install Node.js, Git, and GitHub CLI with Windows Package Manager or your
+preferred installers:
+
+```powershell
+winget install OpenJS.NodeJS.LTS Git.Git GitHub.cli
+npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest
+```
+
+Restart PowerShell so the new tools are on `PATH`, then authenticate:
+
+```powershell
+gh auth login
+codex login
+# Run claude and gemini once if you want those BYOAI backends available.
+claude
+gemini
+```
+
+Build and launch:
+
+```powershell
+Copy-Item chorus.config.example.json chorus.config.json
+# Edit chorus.config.json and prefer "host": "127.0.0.1" for bare metal.
+npm install
+npm run build
+npm --workspace @chorus/dashboard run build
+node packages/daemon/dist/main.js
+```
+
+Open <http://127.0.0.1:7878>.
+
+## Development Commands
+
+For code changes and tests:
 
 ```bash
 npm install
