@@ -80,6 +80,11 @@ marks the ticket `merged` once GitHub reports the PR merged.
   the combined result.
   Detection requires an affirmative repository-wide review request; incidental
   repository mentions, negation, and explicit narrow boundaries do not qualify.
+  Explicit scope declarations (such as `Scope: packages/billing only`, Markdown
+  scope sections, affected/target paths, or restrict-to instructions) override a
+  broad title. The automatic planner declines these tickets and leaves them to
+  normal scoped ticket handling; it does not infer path permissions from prose.
+  Ambiguous scope declarations also decline automatic repository-wide planning.
   Plans include direct source/configuration files under package containers and
   known hidden configuration such as `.github`, while excluding generated,
   vendor, and recognizable credential paths. Combined assignments name their

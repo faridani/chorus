@@ -234,3 +234,59 @@ test("review planning covers container files and hidden configuration without no
   for (const file of files) assert.equal(owners(file).length, 1, file);
   for (const file of noise) assert.equal(owners(file).length, 0, file);
 });
+
+test("explicit scope declarations override broad titles before any repository-wide assignments", (t) => {
+  const repo = mkdtempSync(join(tmpdir(), "chorus-review-boundaries-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  for (const area of ["packages/billing", "packages/auth", "apps/dashboard"]) {
+    mkdirSync(join(repo, area), { recursive: true });
+  }
+  const title = "Review and improve the codebase";
+  // Verify this fixture would otherwise generate unrelated assignments.
+  assert.equal(buildCodeReviewPlan({ project: { localPath: repo }, ticket: { title, body: "" }, maxAssignments: 4 })?.assignments.length, 3);
+  const declarations = [
+    "Scope: packages/billing only.",
+    "Scope: packages/billing", // No 'only' keyword is required.
+    "Review scope is the billing retry service.",
+    "In-scope: packages/billing",
+    "Out of scope: packages/auth",
+    "Affected area: billing",
+    "Target files = packages/billing/index.ts",
+    "Allowed paths: packages/billing/**",
+    "Files: packages/billing/index.ts",
+    "Boundaries — billing service",
+    "Scope - packages/billing",
+    "Restrict to packages/billing.",
+    "Please restrict this review to the billing module.",
+    "The review is restricted to packages/billing.",
+    "Limit all changes to packages/billing.",
+    "Confine the work within the billing service.",
+    "Work is confined to packages/billing.",
+  ];
+  // Cross product guards against formatting-dependent scope expansion.
+  for (const declaration of declarations) {
+    for (const body of [declaration, `- **${declaration}**`, `> ${declaration}`, declaration.replaceAll(" ", "\t\n ")]) {
+      const ticket = { title, body };
+      assert.equal(isBroadCodeReviewTicket(ticket), false, body);
+      assert.equal(buildCodeReviewPlan({ project: { localPath: repo }, ticket, maxAssignments: 4 }), null, body);
+    }
+  }
+  for (const body of [
+    "## Scope\n\n- `packages/billing`",
+    "### Review Scope\r\n\r\nBilling only.",
+    "**In scope**\n- packages/billing",
+    "  **Scope**  :\t`packages/billing` only.",
+    "Review the repository. Scope: packages/billing.",
+  ]) assert.equal(isBroadCodeReviewTicket({ title, body }), false, body);
+  assert.equal(isBroadCodeReviewTicket({ title: "Review the codebase — Scope: billing", body: "" }), false);
+});
+
+test("unqualified affirmative broad reviews still receive automatic plans", () => {
+  for (const [title, body] of [
+    ["Review and improve the codebase", "Focus on quality and docs."],
+    ["Review the entire repository", "Check security, readability, and documentation."],
+    ["Refine the code", "Repository-wide cleanup and hardening."],
+    ["Code quality", "Please review our source tree."],
+    ["**Review** and improve the **codebase**", "Document public modules and unsafe patterns."],
+  ]) assert.equal(isBroadCodeReviewTicket({ title: title!, body: body! }), true, title);
+});

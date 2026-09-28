@@ -100,7 +100,16 @@ const DEFAULT_SECURITY_GOALS = [
 ];
 
 export function isBroadCodeReviewTicket(ticket: Pick<Ticket, "title" | "body">): boolean {
-  const text = `${ticket.title}\n${ticket.body}`.toLowerCase();
+  // Ignore Markdown presentation so emphasis, headings, lists, and line wrapping
+  // cannot hide a boundary. This text is used only for intent classification.
+  const text = `${ticket.title}\n${ticket.body}`.toLowerCase().replace(/[*_`#>|]/g, " ");
+  // A declared scope takes precedence over broad defaults. Do not try to infer
+  // paths from free text: even ambiguous declarations stay with normal ticket
+  // handling instead of granting every repository area to the automatic planner.
+  const scopeLabel = String.raw`(?:(?:in|out\s+of|review|task|work|change|allowed|target)\s*[- ]?\s*)?scope|(?:(?:affected|target|allowed|in[- ]scope)\s+)?(?:areas?|paths?|files?|directories|modules?|packages?)|boundaries`;
+  if (new RegExp(String.raw`\b(?:${scopeLabel})\s*(?::|=|[-–—]|\bis\b|\bare\b)`).test(text)
+    || new RegExp(String.raw`^\s*(?:[-+]|\d+[.)])?\s*(?:${scopeLabel})\s*$`, "m").test(text)
+    || /\b(?:(?:restrict|limit)(?:ed|ing)?|confin(?:e|ed|ing))\b[^.!?;:]*?\b(?:to|within)\b/.test(text)) return false;
   // Explicit boundaries override even a broad title. Be conservative with
   // negated requests: a narrow ticket must never acquire repository-wide scope.
   if (/\b(?:do not|don't|never|not)\s+(?:review|improve|refine|harden|refactor)\b/.test(text)
