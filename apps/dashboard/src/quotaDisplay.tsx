@@ -1,11 +1,21 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import type { AppState } from "./api.js";
 
 const MINUTE_MS = 60_000;
 
-export function QuotaPill({ quota, now = Date.now() }: { quota?: AppState["quota"] | null; now?: number }) {
-  const retryEta = quota?.state === "exhausted" ? formatQuotaRetryEta(quota.resumeAt, now) : null;
-  const retryTitle = formatQuotaRetryTitle(quota?.resumeAt ?? null);
+export function QuotaPill({ quota, now }: { quota?: AppState["quota"] | null; now?: number }) {
+  const [clock, setClock] = useState(() => Date.now());
+  const resumeAt = quota?.state === "exhausted" && isValidRetryTime(quota.resumeAt) ? quota.resumeAt : null;
+
+  useEffect(() => {
+    if (resumeAt == null || now != null) return;
+    setClock(Date.now());
+    const timer = setInterval(() => setClock(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [resumeAt, now]);
+
+  const retryEta = formatQuotaRetryEta(resumeAt, now ?? clock);
+  const retryTitle = formatQuotaRetryTitle(resumeAt);
 
   return (
     <span className={`pill quota-${quota?.state}`} title={retryTitle}>
@@ -16,13 +26,13 @@ export function QuotaPill({ quota, now = Date.now() }: { quota?: AppState["quota
 }
 
 export function formatQuotaRetryEta(resumeAt: number | null | undefined, now = Date.now()): string | null {
-  if (resumeAt == null || !Number.isFinite(resumeAt)) return null;
+  if (!isValidRetryTime(resumeAt)) return null;
 
   const remainingMs = resumeAt - now;
   if (remainingMs <= 0) return "retrying soon";
   if (remainingMs < MINUTE_MS) return "retry in <1m";
 
-  const totalMinutes = Math.ceil(remainingMs / MINUTE_MS);
+  const totalMinutes = Math.floor(remainingMs / MINUTE_MS);
   if (totalMinutes < 60) return `retry in ${totalMinutes}m`;
 
   const totalHours = Math.floor(totalMinutes / 60);
@@ -37,11 +47,15 @@ export function formatQuotaRetryEta(resumeAt: number | null | undefined, now = D
 }
 
 export function formatQuotaRetryTitle(resumeAt: number | null | undefined): string | undefined {
-  if (resumeAt == null || !Number.isFinite(resumeAt)) return undefined;
+  if (!isValidRetryTime(resumeAt)) return undefined;
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const timestamp = new Date(resumeAt).toLocaleString(undefined, {
     dateStyle: "medium",
     timeStyle: "medium",
   });
   return `Quota retry scheduled for ${timestamp}${timezone ? ` (${timezone})` : ""}`;
+}
+
+function isValidRetryTime(resumeAt: number | null | undefined): resumeAt is number {
+  return typeof resumeAt === "number" && Number.isFinite(resumeAt) && Number.isFinite(new Date(resumeAt).getTime());
 }

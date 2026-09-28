@@ -24,13 +24,11 @@ import { QuotaPill } from "./quotaDisplay.js";
 
 /** Expanded width of the right pane; must match `--events-pane-width` in styles.css. */
 const EVENTS_PANE_WIDTH = 320;
-const QUOTA_ETA_REFRESH_MS = 30_000;
 const READY_PROJECT_STATUS_DESCRIPTION =
   "Ready means Chorus has loaded this repo's project spec and can work its tickets when the run control is started.";
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
-  const [quotaNow, setQuotaNow] = useState(() => Date.now());
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
@@ -116,13 +114,6 @@ export function App() {
     return () => compactLayoutQuery.removeEventListener("change", collapseForCompactLayout);
   }, []);
 
-  useEffect(() => {
-    if (state?.quota.state !== "exhausted" || state.quota.resumeAt == null) return;
-    setQuotaNow(Date.now());
-    const timer = window.setInterval(() => setQuotaNow(Date.now()), QUOTA_ETA_REFRESH_MS);
-    return () => window.clearInterval(timer);
-  }, [state?.quota.resumeAt, state?.quota.state]);
-
   return (
     <div className="app">
       <header className="topbar">
@@ -145,7 +136,7 @@ export function App() {
           </span>
         </div>
         <div className="metrics">
-          <QuotaPill quota={state?.quota} now={quotaNow} />
+          <QuotaPill quota={state?.quota} />
           <span className="pill">
             tokens in/out: {state?.usageTotals.inputTokens ?? 0}/{state?.usageTotals.outputTokens ?? 0}
           </span>

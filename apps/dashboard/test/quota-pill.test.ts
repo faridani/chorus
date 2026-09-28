@@ -53,3 +53,51 @@ test("quota retry ETA changes as current time advances", () => {
   assert.match(renderQuota({ state: "exhausted", resumeAt }, now), /retry in 12m/);
   assert.match(renderQuota({ state: "exhausted", resumeAt }, now + 5 * 60_000), /retry in 7m/);
 });
+
+test("countdown preserves minute, hour, and day boundaries", () => {
+  const cases: [number, string][] = [
+    [-1, "retrying soon"], [0, "retrying soon"],
+    [1, "retry in <1m"], [59_999, "retry in <1m"],
+    [60_000, "retry in 1m"], [60_001, "retry in 1m"],
+    [119_999, "retry in 1m"], [120_000, "retry in 2m"],
+    [3_599_999, "retry in 59m"], [3_600_000, "retry in 1h"],
+    [3_660_000, "retry in 1h 1m"],
+    [86_399_999, "retry in 23h 59m"], [86_400_000, "retry in 1d"],
+    [90_000_000, "retry in 1d 1h"],
+  ];
+  for (const [remaining, expected] of cases) {
+    assert.equal(formatQuotaRetryEta(now + remaining, now), expected, String(remaining));
+  }
+});
+
+test("missing and invalid dates have neither ETA nor title", () => {
+  for (const resumeAt of [undefined, null, NaN, Infinity, -Infinity, 8.64e15 + 1]) {
+    assert.equal(formatQuotaRetryEta(resumeAt, now), null);
+    assert.equal(formatQuotaRetryTitle(resumeAt), undefined);
+    const markup = renderToStaticMarkup(React.createElement(QuotaPill, {
+      quota: { state: "exhausted", resumeAt: resumeAt as number | null }, now,
+    }));
+    assert.match(markup, /quota: exhausted/);
+    assert.doesNotMatch(markup, /retry|title=/);
+  }
+});
+
+test("available quota ignores stale retry timestamps", () => {
+  const markup = renderQuota({ state: "available", resumeAt: now + 60_000 });
+  assert.match(markup, /quota: available/);
+  assert.doesNotMatch(markup, /retry|title=/);
+});
+
+test("missing quota renders the unknown state safely", () => {
+  for (const quota of [null, undefined]) {
+    const markup = renderToStaticMarkup(React.createElement(QuotaPill, { quota, now }));
+    assert.match(markup, /quota: \?/);
+    assert.doesNotMatch(markup, /retry|title=/);
+  }
+});
+
+test("retry title includes the exact local date, time, and timezone", () => {
+  const local = new Date(now).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" });
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  assert.equal(formatQuotaRetryTitle(now), `Quota retry scheduled for ${local}${timezone ? ` (${timezone})` : ""}`);
+});
