@@ -64,6 +64,20 @@ marks the ticket `merged` once GitHub reports the PR merged.
   risks, and return structured Suggestions for deferred or higher-risk work.
   The orchestrator records those Suggestions and folds subagent results into the
   PR summary for human review.
+  Assignments own separate worktrees; continue a review using its original
+  `reviewAssignmentId` and `baseWorktreeId`. Scope checks use Git's exact paths
+  (including both sides of renames), not the agent's reported file list. Changes
+  outside an assignment block handoff and are recorded in the ticket trail;
+  restore them and rerun the assignment before integration. These checks gate
+  the workflow; they are not an OS sandbox for CLI processes.
+  Each result records an immutable commit. Before opening the PR, all planned
+  assignments must finish successfully (or report `no_changes`), all recorded
+  commits must be ancestors of the selected branch, and no review may still be
+  running. Merge the assignment branches, then verify the combined result.
+  Retries supersede prior results, including when the retry fails. Suggestions
+  are saved independently of merging, capped at 20 per result, and remain visible
+  in the Suggestions tab with rationale, affected area, proposed action, and
+  optional agent/tool/skill recommendations.
 
 ## Deferred (Milestone 2+)
 

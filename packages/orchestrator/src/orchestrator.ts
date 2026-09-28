@@ -39,6 +39,9 @@ import {
   buildReviewOutcomeSummary,
   formatReviewAssignmentInstruction,
   formatStructuredSuggestion,
+  isCompletedReviewResult,
+  latestReviewResults,
+  reviewScopeViolations,
   type CodeReviewAssignment,
 } from "./code-review-plan.js";
 import { type EvaluatorVerdict, runEvaluator } from "./evaluate.js";
@@ -910,10 +913,24 @@ export class Orchestrator {
         await this.deps.git.addWorktree(project.localPath, path, branch, project.baseBranch);
         wt = { id, path, branch };
         session.worktrees.set(id, wt);
+        // Reserve ownership before setup yields; another parallel assignment
+        // must not be able to claim this newly visible worktree during setup.
+        if (reviewAssignmentId) {
+          session.reviewAssignments.set(reviewAssignmentId, { agent: role.name, worktreeId: wt.id, status: "running" });
+        }
         if (coding) await this.runSetup(project, ticket, path);
       }
       if (reviewAssignmentId) {
         session.reviewAssignments.set(reviewAssignmentId, { agent: role.name, worktreeId: wt.id, status: "running" });
+      }
+      if (reviewAssignment) {
+        // Invalidate an earlier success before starting a retry. Crashes or
+        // quota exhaustion must not leave stale completion evidence usable.
+        session.reviewResults.push(buildReviewAssignmentResult({
+          assignment: reviewAssignment, agent: role.name, worktreeId: wt.id,
+          status: "running", summary: null, authoritativeFilesChanged: [],
+          notes: "Attempt has not completed successfully.", suggestionsCreated: 0,
+        }));
       }
 
       const backend = this.deps.backends.has(role.backendId)
@@ -1033,17 +1050,33 @@ export class Orchestrator {
       const newCommits = Math.max(0, after.commits.length - commitsBefore);
       const summary = result.payload?.summary ?? `(${result.terminalReason})`;
       const suggestionsCreated = this.persistAgentSuggestions(project, ticket.id, result.payload?.suggestions ?? []);
+      let reviewStatus = result.payload?.status ?? result.terminalReason;
+      let reviewFiles = after.files;
+      let reviewViolations: string[] = [];
       if (suggestionsCreated) {
         this.trail(project.id, ticket.id, role.name, "note", `Created ${suggestionsCreated} structured suggestion(s).`);
       }
       if (reviewAssignment) {
+        const commit = await this.deps.git.headCommit(project.localPath, wt.branch);
+        const files = await this.deps.git.reviewChangedFiles(project.localPath, baseCommit, commit);
+        const scopeViolations = reviewScopeViolations(reviewAssignment.scope, files);
+        reviewStatus = scopeViolations.length || result.terminalReason !== "completed" || result.exitCode !== 0
+          ? "blocked" : result.payload?.status ?? "blocked";
+        reviewFiles = files;
+        reviewViolations = scopeViolations;
+        if (reviewStatus === "blocked") this.deps.db.updateTask(taskId, { state: "failed" });
+        if (scopeViolations.length) {
+          this.trail(project.id, ticket.id, role.name, "note", `Review scope violation in ${wt.id}: ${scopeViolations.join(", ")}. Restore these paths before merge or PR handoff.`);
+        }
         session.reviewResults.push(buildReviewAssignmentResult({
           assignment: reviewAssignment,
           agent: role.name,
           worktreeId: wt.id,
-          status: result.payload?.status ?? result.terminalReason,
+          status: reviewStatus,
           summary: result.payload?.summary ?? null,
-          authoritativeFilesChanged: after.files,
+          authoritativeFilesChanged: files,
+          commit,
+          scopeViolations,
           notes: result.payload?.notes ?? null,
           suggestionsCreated,
         }));
@@ -1054,7 +1087,7 @@ export class Orchestrator {
         ticket.id,
         role.name,
         "work",
-        `[${wt.id}] ${result.payload?.status ?? result.terminalReason}: ${summary}${newCommits ? "" : " [no new commits]"}`,
+        `[${wt.id}] ${reviewAssignment ? reviewStatus : result.payload?.status ?? result.terminalReason}: ${summary}${newCommits ? "" : " [no new commits]"}`,
       );
 
       return {
@@ -1062,18 +1095,24 @@ export class Orchestrator {
         body: {
           worktreeId: wt.id,
           branch: wt.branch,
-          status: result.payload?.status ?? null,
+          status: reviewAssignment ? reviewStatus : result.payload?.status ?? null,
           summary: result.payload?.summary ?? null,
-          filesChanged: result.payload?.filesChanged ?? [],
+          filesChanged: reviewAssignment ? reviewFiles : result.payload?.filesChanged ?? [],
+          scopeViolations: reviewViolations,
           notes: result.payload?.notes ?? null,
           suggestionsCreated,
           newCommits,
-          changedFiles: after.files,
+          changedFiles: reviewFiles,
           terminalReason: result.terminalReason,
         },
       };
     } finally {
       if (reviewAssignmentId) {
+        const latest = latestReviewResults(session.reviewResults).find((r) => r.assignmentId === reviewAssignmentId);
+        if (latest?.status === "running") {
+          latest.status = "blocked";
+          latest.notes = "Attempt stopped without a verified review result; resume this assignment.";
+        }
         const claim = session.reviewAssignments.get(reviewAssignmentId);
         if (claim?.status === "running") {
           if (claim.worktreeId) {
@@ -1120,6 +1159,15 @@ export class Orchestrator {
     const from = session.worktrees.get(String(body.fromWorktreeId ?? ""));
     const into = session.worktrees.get(String(body.intoWorktreeId ?? ""));
     if (!from || !into) return { status: 400, body: { error: "unknown worktreeId(s)" } };
+    for (const claim of session.reviewAssignments.values()) {
+      if (claim.status === "running" && (claim.worktreeId === from.id || claim.worktreeId === into.id)) {
+        return { status: 409, body: { error: "wait for scoped reviews to finish before merging" } };
+      }
+    }
+    const sourceResult = latestReviewResults(session.reviewResults).find((r) => r.worktreeId === from.id);
+    if (sourceResult && !isCompletedReviewResult(sourceResult)) {
+      return { status: 409, body: { error: "source review is blocked or has out-of-scope changes; resume it before merging" } };
+    }
     const r = await runShell(`git merge --no-ff --no-edit ${from.branch}`, into.path, {
       timeoutMs: 5 * 60 * 1000,
     });
@@ -1138,6 +1186,24 @@ export class Orchestrator {
   ): Promise<{ status: number; body: unknown }> {
     const wt = session.worktrees.get(String(body.worktreeId ?? ""));
     if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
+    // Every reported assignment must be complete and present in the chosen
+    // branch. A mutable worktree ID alone is not evidence of integration.
+    if (session.reviewPlan) {
+      if (session.running > 0) return { status: 409, body: { error: "wait for all review agents before opening a PR" } };
+      const results = latestReviewResults(session.reviewResults);
+      for (const assignment of session.reviewPlan.assignments) {
+        const result = results.find((r) => r.assignmentId === assignment.id);
+        if (!result || !isCompletedReviewResult(result) || !result.commit) {
+          return { status: 409, body: { error: `review assignment ${assignment.id} is incomplete or blocked` } };
+        }
+        if (!(await this.deps.git.isAncestor(project.localPath, result.commit, wt.branch))) {
+          return { status: 409, body: { error: `merge review assignment ${assignment.id} into the selected worktree before opening a PR` } };
+        }
+      }
+      const files = await this.deps.git.reviewChangedFiles(project.localPath, this.baseRef(project), wt.branch);
+      const violations = reviewScopeViolations(session.reviewPlan.assignments.flatMap((a) => a.scope), files);
+      if (violations.length) return { status: 409, body: { error: "PR contains out-of-scope changes", files: violations } };
+    }
     const summary = String(body.summary ?? "");
     const reviewSummary = buildReviewOutcomeSummary(session.reviewPlan, session.reviewResults);
     const prSummary = [summary, reviewSummary].filter((part) => part.trim()).join("\n\n");

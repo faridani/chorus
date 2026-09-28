@@ -56,6 +56,20 @@ export class GitService {
     return r.stdout.trim();
   }
 
+  /** Review gates must fail closed when Git cannot establish ancestry. */
+  async isAncestor(localPath: string, commit: string, ref: string): Promise<boolean> {
+    const r = await this.git(["merge-base", "--is-ancestor", commit, ref], localPath, false);
+    if (r.code === 0) return true;
+    if (r.code === 1) return false;
+    throw new Error(`Cannot establish review commit ancestry: ${r.stderr.trim()}`);
+  }
+
+  /** Exact changed paths, including both sides of renames, for scope checks. */
+  async reviewChangedFiles(localPath: string, baseRef: string, ref: string): Promise<string[]> {
+    const r = await this.git(["diff", "--name-only", "--no-renames", "-z", `${baseRef}...${ref}`, "--"], localPath, true);
+    return r.stdout.split("\0").filter(Boolean);
+  }
+
   /**
    * Add a worktree on a fresh branch cut from the latest `origin/<baseBranch>`.
    * Fetches first so the ticket branch (and the PR it later opens) targets the

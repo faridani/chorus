@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, lstatSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Project, SuggestionDetails, Ticket } from "@chorus/core";
 
@@ -31,6 +31,9 @@ export interface ReviewAssignmentResult {
   filesChanged: string[];
   notes: string | null;
   suggestionsCreated: number;
+  /** Immutable branch tip at completion; never trust a model-reported SHA. */
+  commit: string | null;
+  scopeViolations: string[];
 }
 
 interface CandidateArea {
@@ -197,6 +200,8 @@ export function buildReviewAssignmentResult(args: {
   authoritativeFilesChanged: string[];
   notes: string | null;
   suggestionsCreated: number;
+  commit?: string | null;
+  scopeViolations?: string[];
 }): ReviewAssignmentResult {
   return {
     assignmentId: args.assignment.id,
@@ -208,17 +213,20 @@ export function buildReviewAssignmentResult(args: {
     filesChanged: [...args.authoritativeFilesChanged],
     notes: args.notes,
     suggestionsCreated: args.suggestionsCreated,
+    commit: args.commit ?? null,
+    scopeViolations: args.scopeViolations ?? [],
   };
 }
 
 export function buildReviewOutcomeSummary(plan: CodeReviewPlan | null, results: ReviewAssignmentResult[]): string {
   if (!plan || results.length === 0) return "";
-  const completedIds = new Set(results.map((r) => r.assignmentId).filter(Boolean));
+  results = latestReviewResults(results);
+  const completedIds = new Set(results.filter(isCompletedReviewResult).map((r) => r.assignmentId));
   const unreviewed = plan.assignments.filter((a) => !completedIds.has(a.id));
   const lines: string[] = [];
   lines.push("## Parallel Review Summary");
   lines.push(`Planned assignments: ${plan.assignments.length}`);
-  lines.push(`Completed assignments: ${results.length}`);
+  lines.push(`Completed assignments: ${completedIds.size}`);
   if (unreviewed.length) lines.push(`Not completed in this session: ${unreviewed.map((a) => a.id).join(", ")}`);
   lines.push("");
   lines.push("### Subagent Results");
@@ -229,8 +237,23 @@ export function buildReviewOutcomeSummary(plan: CodeReviewPlan | null, results: 
     if (result.filesChanged.length) lines.push(`  Files: ${result.filesChanged.join(", ")}`);
     if (result.suggestionsCreated) lines.push(`  Suggestions created: ${result.suggestionsCreated}`);
     if (result.notes) lines.push(`  Notes: ${result.notes}`);
+    if (result.commit) lines.push(`  Reviewed commit: ${result.commit}`);
+    if (result.scopeViolations.length) lines.push(`  Out-of-scope changes: ${result.scopeViolations.join(", ")}`);
   }
   return lines.join("\n");
+}
+
+export function latestReviewResults(results: ReviewAssignmentResult[]): ReviewAssignmentResult[] {
+  return [...new Map(results.map((result) => [result.assignmentId, result])).values()];
+}
+
+export function isCompletedReviewResult(result: ReviewAssignmentResult): boolean {
+  return (result.status === "success" || result.status === "no_changes") && result.scopeViolations.length === 0;
+}
+
+/** Scope boundaries are path segments, not arbitrary string prefixes. */
+export function reviewScopeViolations(scope: string[], files: string[]): string[] {
+  return files.filter((file) => !scope.some((path) => file === path || file.startsWith(`${path}/`)));
 }
 
 function discoverReviewAreas(repoRoot: string): CandidateArea[] {
@@ -258,10 +281,13 @@ function discoverReviewAreas(repoRoot: string): CandidateArea[] {
     addArea(areas, claimed, { title, scope: [entry.name], sortKey: `20:${entry.name}` });
   }
 
-  const rootFiles = ROOT_FILE_NAMES.filter((name) => existsSync(join(repoRoot, name)));
+  const rootFiles = safeReadDir(repoRoot)
+    .filter((entry) => entry.isFile() && (ROOT_FILE_NAMES.includes(entry.name) || !shouldIgnoreName(entry.name)))
+    .map((entry) => entry.name)
+    .sort();
   if (rootFiles.length) {
     addArea(areas, claimed, {
-      title: "Root configuration and operator docs",
+      title: "Root source, configuration and operator docs",
       scope: rootFiles,
       sortKey: "30:root",
     });
@@ -323,7 +349,7 @@ function titleForTopLevelDir(name: string): string {
 
 function isDirectory(path: string): boolean {
   try {
-    return statSync(path).isDirectory();
+    return lstatSync(path).isDirectory();
   } catch {
     return false;
   }

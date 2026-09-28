@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
@@ -121,6 +121,8 @@ test("buildReviewOutcomeSummary makes subagent results human-reviewable", () => 
       filesChanged: ["packages/api/src/server.ts", "packages/api/README.md"],
       notes: "No unresolved risks.",
       suggestionsCreated: 1,
+      commit: "abc123",
+      scopeViolations: [],
     },
   ]);
 
@@ -185,4 +187,16 @@ test("formatStructuredSuggestion includes required review suggestion fields", ()
   assert.match(text, /Rationale:/);
   assert.match(text, /Proposed action:/);
   assert.match(text, /software-architect/);
+});
+
+test("review planning includes root source files and does not traverse symlinked package roots", (t) => {
+  const repo = mkdtempSync(join(tmpdir(), "chorus-review-roots-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  writeFileSync(join(repo, "main.py"), "print('hello')\n");
+  mkdirSync(join(repo, "vendor", "external"), { recursive: true });
+  symlinkSync(join(repo, "vendor"), join(repo, "packages"));
+  const plan = buildCodeReviewPlan({
+    project: { localPath: repo }, ticket: { title: "Review the codebase", body: "" }, maxAssignments: 4,
+  });
+  assert.deepEqual(plan?.assignments.flatMap((a) => a.scope), ["main.py"]);
 });
