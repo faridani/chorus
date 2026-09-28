@@ -1919,6 +1919,7 @@ export class Orchestrator {
       kind: "quota_exhausted",
       inputTokens: null,
       outputTokens: null,
+      totalTokens: null,
       detail: `Paused; retry at ${new Date(resumeAt).toISOString()}`,
       observedAt: Date.now(),
     });
@@ -1939,7 +1940,7 @@ export class Orchestrator {
 
   private recordUsage(runId: string, project: Project, result: AgentResult): void {
     const u = result.usage;
-    if (u.inputTokens === undefined && u.outputTokens === undefined && u.totalTokens === undefined) return;
+    if (u.inputTokens == null && u.outputTokens == null && u.totalTokens == null) return;
     this.deps.db.insertUsage({
       id: newId("usage"),
       runId,
@@ -1947,6 +1948,11 @@ export class Orchestrator {
       kind: "tokens",
       inputTokens: u.inputTokens ?? null,
       outputTokens: u.outputTokens ?? null,
+      totalTokens:
+        u.totalTokens ??
+        (u.inputTokens != null || u.outputTokens != null
+          ? (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
+          : null),
       detail: null,
       observedAt: Date.now(),
     });

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { newId } from "@chorus/core";
 import { ChorusDb } from "@chorus/db";
+import Database from "better-sqlite3";
+import { MIGRATIONS } from "../src/migrations.js";
 
 function freshDb(): ChorusDb {
   const dir = mkdtempSync(join(tmpdir(), "chorus-db-"));
@@ -616,6 +618,7 @@ test("usage totals sum across events", () => {
     kind: "tokens",
     inputTokens: 100,
     outputTokens: 40,
+    totalTokens: null,
     detail: null,
     observedAt: Date.now(),
   });
@@ -626,11 +629,70 @@ test("usage totals sum across events", () => {
     kind: "tokens",
     inputTokens: 50,
     outputTokens: 10,
+    totalTokens: null,
     detail: null,
     observedAt: Date.now(),
   });
   const totals = db.usageTotals();
   assert.equal(totals.inputTokens, 150);
   assert.equal(totals.outputTokens, 50);
+  assert.equal(totals.totalTokens, 200);
+  assert.deepEqual(db.recentUsage().map((event) => event.totalTokens).sort((a, b) => a! - b!), [60, 140]);
   db.close();
+});
+
+test("usage totals include total-only events", () => {
+  const db = freshDb();
+  db.insertUsage({
+    id: newId("usage"),
+    runId: "run_total",
+    projectId: "proj_total",
+    kind: "tokens",
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: 5,
+    detail: null,
+    observedAt: Date.now(),
+  });
+  const [event] = db.recentUsage(1);
+  assert.equal(event?.inputTokens, null);
+  assert.equal(event?.outputTokens, null);
+  assert.equal(event?.totalTokens, 5);
+  const totals = db.usageTotals();
+  assert.equal(totals.inputTokens, 0);
+  assert.equal(totals.outputTokens, 0);
+  assert.equal(totals.totalTokens, 5);
+  db.close();
+});
+
+test("usage migration preserves legacy rows and explicit totals take precedence", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "chorus-legacy-usage-")), "test.db");
+  const legacy = new Database(path);
+  legacy.exec("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+  // Build the schema immediately before total_tokens was introduced.
+  for (const migration of MIGRATIONS.slice(0, 11)) legacy.exec(migration);
+  legacy.prepare("INSERT INTO schema_version VALUES (?)").run(11);
+  legacy.exec(`
+    INSERT INTO usage_events (id, kind, input_tokens, output_tokens, observed_at) VALUES
+      ('split', 'tokens', 10, 3, 1),
+      ('partial', 'tokens', NULL, 2, 2),
+      ('unknown', 'quota_exhausted', NULL, NULL, 3);
+  `);
+  legacy.close();
+
+  const db = new ChorusDb(path);
+  assert.deepEqual(db.usageTotals(), { inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+  assert.deepEqual(db.recentUsage().map((event) => event.totalTokens), [null, 2, 13]);
+  for (const [id, totalTokens] of [["explicit", 20], ["zero", 0]] as const) {
+    db.insertUsage({
+      id, runId: null, projectId: null, kind: "tokens",
+      inputTokens: 4, outputTokens: 1, totalTokens, detail: null, observedAt: 4,
+    });
+    assert.equal(db.recentUsage().find((event) => event.id === id)?.totalTokens, totalTokens);
+  }
+  assert.deepEqual(db.usageTotals(), { inputTokens: 18, outputTokens: 7, totalTokens: 35 });
+  db.close();
+  const reopened = new ChorusDb(path);
+  assert.equal(reopened.usageTotals().totalTokens, 35);
+  reopened.close();
 });
