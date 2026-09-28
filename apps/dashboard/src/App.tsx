@@ -20,6 +20,7 @@ import { DebugTracesModal } from "./components/DebugTracesModal.js";
 import { SelfHealModal } from "./components/SelfHealModal.js";
 import { ProjectPanel } from "./components/ProjectPanel.js";
 import { ToolsGallery } from "./components/ToolsGallery.js";
+import { QuotaPill } from "./quotaDisplay.js";
 
 /** Expanded width of the right pane; must match `--events-pane-width` in styles.css. */
 const EVENTS_PANE_WIDTH = 320;
@@ -135,7 +136,7 @@ export function App() {
           </span>
         </div>
         <div className="metrics">
-          <span className={`pill quota-${state?.quota.state}`}>quota: {state?.quota.state ?? "?"}</span>
+          <QuotaPill quota={state?.quota} />
           <span className="pill">
             tokens in/out: {state?.usageTotals.inputTokens ?? 0}/{state?.usageTotals.outputTokens ?? 0}
           </span>
