@@ -342,8 +342,8 @@ export class AppController implements ControlApi {
       if (specText) {
         await this.writeSpec(project, specText);
       }
-      let specPath = findSpec(project.localPath);
-      if (specPath === "README.md" && !specText) specPath = "README.md"; // README is a last resort
+      // findSpec falls back to README.md as a last resort when no docs/SPEC.md exists.
+      const specPath = findSpec(project.localPath);
 
       if (specPath) {
         this.deps.db.updateProject(project.id, { specPath, status: "ready" });
