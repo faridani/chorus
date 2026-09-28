@@ -736,6 +736,9 @@ export class Orchestrator {
   ): Promise<{ status: number; body: unknown }> {
     const session = this.sessions.get(token);
     if (!session) return { status: 404, body: { error: "unknown or expired session" } };
+    if (session.handoffInProgress && ["close", "needs-human", "finish"].includes(action)) {
+      return { status: 409, body: { error: "session is handing off" } };
+    }
     const project = this.deps.db.getProject(session.projectId);
     const ticket = this.deps.db.getTicket(session.ticketId);
     if (!project || !ticket) return { status: 410, body: { error: "session target gone" } };
@@ -834,6 +837,9 @@ export class Orchestrator {
     ticket: Ticket,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const agentName = String(body.agent ?? "");
     const instruction = String(body.instruction ?? "");
     const baseWorktreeId = body.baseWorktreeId ? String(body.baseWorktreeId) : null;
@@ -889,6 +895,7 @@ export class Orchestrator {
     // Respect the parallelism cap; queue until a slot frees.
     while (session.running >= this.deps.config.orchestrator.maxParallelSpokeAgents) {
       await this.sleep(250);
+      if (session.handoffInProgress || session.finished) return { status: 409, body: { error: "session is handing off or already finished" } };
       if (!this.sessions.has(session.token)) return { status: 410, body: { error: "session ended" } };
     }
 
@@ -1132,10 +1139,18 @@ export class Orchestrator {
     project: Project,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const wt = session.worktrees.get(String(body.worktreeId ?? ""));
     if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
-    const verify = await this.runVerify(project, wt.path);
-    return { status: 200, body: verify };
+    session.running++;
+    try {
+      const verify = await this.runVerify(project, wt.path);
+      return { status: 200, body: verify };
+    } finally {
+      session.running--;
+    }
   }
 
   private async sessionDiff(
@@ -1156,6 +1171,9 @@ export class Orchestrator {
     project: Project,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const from = session.worktrees.get(String(body.fromWorktreeId ?? ""));
     const into = session.worktrees.get(String(body.intoWorktreeId ?? ""));
     if (!from || !into) return { status: 400, body: { error: "unknown worktreeId(s)" } };
@@ -1168,14 +1186,19 @@ export class Orchestrator {
     if (sourceResult && !isCompletedReviewResult(sourceResult)) {
       return { status: 409, body: { error: "source review is blocked or has out-of-scope changes; resume it before merging" } };
     }
-    const r = await runShell(`git merge --no-ff --no-edit ${from.branch}`, into.path, {
-      timeoutMs: 5 * 60 * 1000,
-    });
-    if (!r.ok) {
-      await runShell("git merge --abort", into.path, { timeoutMs: 60 * 1000 }).catch(() => {});
-      return { status: 200, body: { ok: false, conflicts: true, output: r.combined.slice(-2000) } };
+    session.running++;
+    try {
+      const r = await runShell(`git merge --no-ff --no-edit ${from.branch}`, into.path, {
+        timeoutMs: 5 * 60 * 1000,
+      });
+      if (!r.ok) {
+        await runShell("git merge --abort", into.path, { timeoutMs: 60 * 1000 }).catch(() => {});
+        return { status: 200, body: { ok: false, conflicts: true, output: r.combined.slice(-2000) } };
+      }
+      return { status: 200, body: { ok: true } };
+    } finally {
+      session.running--;
     }
-    return { status: 200, body: { ok: true } };
   }
 
   private async sessionOpenPr(
@@ -1184,45 +1207,57 @@ export class Orchestrator {
     ticket: Ticket,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const wt = session.worktrees.get(String(body.worktreeId ?? ""));
     if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
-    // Every reported assignment must be complete and present in the chosen
-    // branch. A mutable worktree ID alone is not evidence of integration.
-    if (session.reviewPlan) {
-      if (session.running > 0) return { status: 409, body: { error: "wait for all review agents before opening a PR" } };
-      const results = latestReviewResults(session.reviewResults);
-      for (const assignment of session.reviewPlan.assignments) {
-        const result = results.find((r) => r.assignmentId === assignment.id);
-        if (!result || !isCompletedReviewResult(result) || !result.commit) {
-          return { status: 409, body: { error: `review assignment ${assignment.id} is incomplete or blocked` } };
+    if (session.running > 0 || [...session.reviewAssignments.values()].some((claim) => claim.status === "running")) {
+      return { status: 409, body: { error: "wait for all session mutations before opening a PR" } };
+    }
+    session.handoffInProgress = true;
+    try {
+      const commit = await this.deps.git.headCommit(project.localPath, wt.branch);
+      // Every reported assignment must be complete and present in the chosen
+      // branch. A mutable worktree ID alone is not evidence of integration.
+      if (session.reviewPlan) {
+        const results = latestReviewResults(session.reviewResults);
+        for (const assignment of session.reviewPlan.assignments) {
+          const result = results.find((r) => r.assignmentId === assignment.id);
+          if (!result || !isCompletedReviewResult(result) || !result.commit) {
+            return { status: 409, body: { error: `review assignment ${assignment.id} is incomplete or blocked` } };
+          }
+          if (!(await this.deps.git.isAncestor(project.localPath, result.commit, commit))) {
+            return { status: 409, body: { error: `merge review assignment ${assignment.id} into the selected worktree before opening a PR` } };
+          }
         }
-        if (!(await this.deps.git.isAncestor(project.localPath, result.commit, wt.branch))) {
-          return { status: 409, body: { error: `merge review assignment ${assignment.id} into the selected worktree before opening a PR` } };
-        }
+        const files = await this.deps.git.reviewChangedFiles(project.localPath, this.baseRef(project), commit);
+        const violations = reviewScopeViolations(session.reviewPlan.assignments.flatMap((a) => a.scope), files);
+        if (violations.length) return { status: 409, body: { error: "PR contains out-of-scope changes", files: violations } };
       }
-      const files = await this.deps.git.reviewChangedFiles(project.localPath, this.baseRef(project), wt.branch);
-      const violations = reviewScopeViolations(session.reviewPlan.assignments.flatMap((a) => a.scope), files);
-      if (violations.length) return { status: 409, body: { error: "PR contains out-of-scope changes", files: violations } };
+      const summary = String(body.summary ?? "");
+      const reviewSummary = buildReviewOutcomeSummary(session.reviewPlan, session.reviewResults);
+      const prSummary = [summary, reviewSummary].filter((part) => part.trim()).join("\n\n");
+      if (!(await this.deps.git.hasNewCommits(project.localPath, this.baseRef(project), commit))) {
+        return { status: 400, body: { error: "that worktree has no commits beyond the base branch" } };
+      }
+      // Point the ticket at the chosen worktree's branch so the PR opener and the
+      // merge poller operate on it, then reuse the standard PR path.
+      this.deps.db.updateTicket(ticket.id, { branch: wt.branch, worktreePath: wt.path });
+      const updated: Ticket = { ...ticket, branch: wt.branch, worktreePath: wt.path };
+      const url = await this.openPrForTicket(project, updated, {
+        commit,
+        taskId: null,
+        verify: { ran: false, results: [] },
+        reviewer: { approved: true, summary: prSummary || summary, risks: [], rollback: "", uncertainties: [] },
+      });
+      if (!url) return { status: 500, body: { error: "could not open PR (see ticket trail)" } };
+      session.finished = { outcome: "pr_opened", message: summary };
+      session.prUrl = url;
+      return { status: 200, body: { url } };
+    } finally {
+      session.handoffInProgress = false;
     }
-    const summary = String(body.summary ?? "");
-    const reviewSummary = buildReviewOutcomeSummary(session.reviewPlan, session.reviewResults);
-    const prSummary = [summary, reviewSummary].filter((part) => part.trim()).join("\n\n");
-    if (!(await this.deps.git.hasNewCommits(project.localPath, this.baseRef(project), wt.branch))) {
-      return { status: 400, body: { error: "that worktree has no commits beyond the base branch" } };
-    }
-    // Point the ticket at the chosen worktree's branch so the PR opener and the
-    // merge poller operate on it, then reuse the standard PR path.
-    this.deps.db.updateTicket(ticket.id, { branch: wt.branch, worktreePath: wt.path });
-    const updated: Ticket = { ...ticket, branch: wt.branch, worktreePath: wt.path };
-    const url = await this.openPrForTicket(project, updated, {
-      taskId: null,
-      verify: { ran: false, results: [] },
-      reviewer: { approved: true, summary: prSummary || summary, risks: [], rollback: "", uncertainties: [] },
-    });
-    if (!url) return { status: 500, body: { error: "could not open PR (see ticket trail)" } };
-    session.finished = { outcome: "pr_opened", message: summary };
-    session.prUrl = url;
-    return { status: 200, body: { url } };
   }
 
   // ---- worker run ----
@@ -1791,6 +1826,7 @@ export class Orchestrator {
     project: Project,
     ticket: Ticket,
     accepted: {
+      commit?: string;
       taskId: string | null;
       verify: { ran: boolean; results: { cmd: string; ok: boolean }[] };
       reviewer: ReviewerVerdict | null;
@@ -1799,7 +1835,7 @@ export class Orchestrator {
     if (!ticket.branch) return null;
     let pr: { url: string; number: number | null; state: string };
     try {
-      await this.deps.git.pushBranch(project.localPath, ticket.branch);
+      await this.deps.git.pushBranch(project.localPath, ticket.branch, accepted.commit);
       pr = await this.deps.git.openOrUpdatePr(
         project.localPath,
         ticket.branch,

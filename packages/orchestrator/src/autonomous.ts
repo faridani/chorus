@@ -23,8 +23,10 @@ export interface SessionState {
   worktrees: Map<string, SessionWorktree>;
   /** Spoke-agent runs started so far (capped by maxSpokeAgentsPerSession). */
   spokeCount: number;
-  /** Spoke-agent runs currently in flight (capped by maxParallelSpokeAgents). */
+  /** In-flight agents and worktree mutations; also gates exclusive PR handoff. */
   running: number;
+  /** Exclusive PR validation/publication reservation, acquired before any await. */
+  handoffInProgress?: boolean;
   createdAt: number;
   /** Set when the orchestrator takes a terminal action / calls finish. */
   finished: { outcome: string; message: string } | null;

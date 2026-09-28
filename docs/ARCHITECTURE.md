@@ -73,7 +73,17 @@ marks the ticket `merged` once GitHub reports the PR merged.
   Each result records an immutable commit. Before opening the PR, all planned
   assignments must finish successfully (or report `no_changes`), all recorded
   commits must be ancestors of the selected branch, and no review may still be
-  running. Merge the assignment branches, then verify the combined result.
+  running. PR handoff reserves the session before Git validation; agent starts,
+  resumes, merges, and verification commands are rejected until it completes.
+  Validation and publication use the same immutable commit, and failed handoffs
+  release the reservation for retry. Merge the assignment branches, then verify
+  the combined result.
+  Detection requires an affirmative repository-wide review request; incidental
+  repository mentions, negation, and explicit narrow boundaries do not qualify.
+  Plans include direct source/configuration files under package containers and
+  known hidden configuration such as `.github`, while excluding generated,
+  vendor, and recognizable credential paths. Combined assignments name their
+  constituent areas explicitly when the assignment budget requires grouping.
   Retries supersede prior results, including when the retry fails. Suggestions
   are saved independently of merging, capped at 20 per result, and remain visible
   in the Suggestions tab with rationale, affected area, proposed action, and

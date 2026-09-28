@@ -60,7 +60,7 @@ test("buildCodeReviewPlan creates scoped non-overlapping assignments with qualit
   assert.ok(plan);
   assert.equal(plan.assignments.length, 4);
   assert.equal(plan.assignments[0]?.scope[0], "apps/dashboard");
-  assert.ok(plan.assignments.some((a) => a.title === "Remaining support areas"));
+  assert.ok(plan.assignments.some((a) => a.title.startsWith("Combined review:")));
 
   const scopes = plan.assignments.flatMap((a) => a.scope);
   for (const left of scopes) {
@@ -199,4 +199,38 @@ test("review planning includes root source files and does not traverse symlinked
     project: { localPath: repo }, ticket: { title: "Review the codebase", body: "" }, maxAssignments: 4,
   });
   assert.deepEqual(plan?.assignments.flatMap((a) => a.scope), ["main.py"]);
+});
+
+
+test("broad review detection respects incidental mentions, negation, and narrow boundaries", () => {
+  for (const [title, body] of [
+    ["Improve billing retries", "Only modify packages/billing in this repository"],
+    ["Do not review the entire codebase; fix billing only", ""],
+    ["Improve billing retries", "This repository contains the billing service."],
+    ["Review the codebase", "Changes limited to packages/billing."],
+    ["Review billing", "Do not review the entire repository."],
+    ["Improve billing in the repository", ""],
+    ["Fix billing", "This is not a repository-wide review."],
+    ["Fix billing", "No repository-wide cleanup is needed."],
+  ]) assert.equal(isBroadCodeReviewTicket({ title: title!, body: body! }), false, title);
+});
+
+test("review planning covers container files and hidden configuration without noise", (t) => {
+  const repo = mkdtempSync(join(tmpdir(), "chorus-review-config-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const files = ["apps/shared.ts", "packages/README.md", "services/config.ts", "libs/index.ts",
+    ".github/workflows/ci.yml", ".editorconfig", "packages/api/index.ts"];
+  const noise = ["node_modules/lib/index.js", ".git/config", ".env", "private.key",
+    "packages/dist/index.js", "services/credentials.json"];
+  for (const file of [...files, ...noise]) {
+    mkdirSync(join(repo, file, ".."), { recursive: true });
+    writeFileSync(join(repo, file), "test");
+  }
+  const plan = buildCodeReviewPlan({
+    project: { localPath: repo }, ticket: { title: "Review and improve the codebase", body: "" }, maxAssignments: 20,
+  })!;
+  const scopes = plan.assignments.flatMap((a) => a.scope);
+  const owners = (file: string) => scopes.filter((scope) => file === scope || file.startsWith(scope + "/"));
+  for (const file of files) assert.equal(owners(file).length, 1, file);
+  for (const file of noise) assert.equal(owners(file).length, 0, file);
 });

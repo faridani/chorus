@@ -205,12 +205,13 @@ export class GitService {
    * Push a ticket branch to `origin` (force-with-lease so a re-run that adds
    * commits updates the already-open PR). Chorus — not the agent — performs
    * this; the pre-push guard only blocks protected branches, so ticket
-   * branches (`chorus/ticket-*`) push cleanly.
+   * branches (`chorus/ticket-*`) push cleanly. An optional validated commit
+   * pins publication even if the local branch moves after validation.
    */
-  async pushBranch(localPath: string, branch: string): Promise<void> {
+  async pushBranch(localPath: string, branch: string, commit?: string): Promise<void> {
     await this.mutex.run(async () => {
       const r = await this.gitUnlocked(
-        ["push", "-u", "origin", branch, "--force-with-lease"],
+        ["push", "-u", "origin", commit ? `${commit}:refs/heads/${branch}` : branch, "--force-with-lease"],
         localPath,
         false,
       );

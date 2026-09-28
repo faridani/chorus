@@ -42,9 +42,12 @@ interface CandidateArea {
   sortKey: string;
 }
 
-const REVIEW_TERMS = /\b(review|improve|refine|harden|clean\s*up|cleanup|quality|readability|maintainability|documentation|document|refactor)\b/i;
-const EXPLICIT_BROAD_SCOPE_TERMS =
-  /\b(codebase|repository|repo|repo(?:sitory)?-wide|codebase-wide|project-wide|source\s+tree|all\s+(?:source|code|codebase)|(?:entire|whole)\s+(?:codebase|repository|repo|source\s+tree|project|system))\b/i;
+// Require the broad scope to be the object of the review request, rather
+// than matching unrelated words anywhere in a ticket.
+const REVIEW_ACTION = String.raw`(?:review|improve|refine|harden|clean\s*up|refactor|document)(?:\s+and\s+(?:review|improve|refine|harden|document))*`;
+const BROAD_OBJECT = String.raw`(?:(?:the|this|our|entire|whole|full)\s+)*(?:codebase|repository|repo|source\s+tree)\b`;
+const BROAD_REQUEST = new RegExp(String.raw`\b${REVIEW_ACTION}\s+${BROAD_OBJECT}|\b(?:repo(?:sitory)?|codebase|project)[- ]wide\s+(?:review|cleanup|hardening|refactoring|quality|documentation|improvements?)\b`, "i");
+const CONFIG_NAMES = new Set([".github", ".gitlab", ".devcontainer", ".vscode", ".gitignore", ".gitattributes", ".editorconfig", ".dockerignore"]);
 
 const IGNORED_NAMES = new Set([
   ".git",
@@ -98,7 +101,15 @@ const DEFAULT_SECURITY_GOALS = [
 
 export function isBroadCodeReviewTicket(ticket: Pick<Ticket, "title" | "body">): boolean {
   const text = `${ticket.title}\n${ticket.body}`.toLowerCase();
-  return EXPLICIT_BROAD_SCOPE_TERMS.test(text) && REVIEW_TERMS.test(text);
+  // Explicit boundaries override even a broad title. Be conservative with
+  // negated requests: a narrow ticket must never acquire repository-wide scope.
+  if (/\b(?:do not|don't|never|not)\s+(?:review|improve|refine|harden|refactor)\b/.test(text)
+    || /\b(?:only\s+(?:modify|edit|change|review|fix|touch)|(?:scope|changes?|work)\s+(?:is\s+)?(?:limited|restricted)\s+to)\b/.test(text)
+    || /\b(?:fix|review|modify|edit)\s+[^.;\n]+\s+only\b/.test(text)) return false;
+  const request = BROAD_REQUEST.exec(text);
+  if (!request) return false;
+  const prefix = text.slice(0, request.index);
+  return !/\b(?:not|no|never|without|don't)\b[^.!?;\n]*$/.test(prefix);
 }
 
 export function buildCodeReviewPlan(args: {
@@ -264,6 +275,13 @@ function discoverReviewAreas(repoRoot: string): CandidateArea[] {
   for (const rootName of ["apps", "packages", "services", "libs"]) {
     const rootPath = join(repoRoot, rootName);
     if (!isDirectory(rootPath)) continue;
+    const directFiles = safeReadDir(rootPath)
+      .filter((child) => child.isFile() && !shouldIgnoreName(child.name))
+      .map((child) => `${rootName}/${child.name}`).sort();
+    if (directFiles.length) addArea(areas, claimed, {
+      title: `${rootName} shared source and configuration`,
+      scope: directFiles, sortKey: `10:${rootName}/~shared`,
+    });
     for (const child of safeReadDir(rootPath)) {
       if (!child.isDirectory() || shouldIgnoreName(child.name)) continue;
       addArea(areas, claimed, {
@@ -304,7 +322,7 @@ function consolidateAreas(areas: CandidateArea[], maxAssignments: number): Candi
   const selected = areas.slice(0, maxAssignments - 1);
   const remaining = areas.slice(maxAssignments - 1);
   selected.push({
-    title: "Remaining support areas",
+    title: `Combined review: ${remaining.map((area) => area.title).join(", ")}`,
     scope: remaining.flatMap((a) => a.scope),
     sortKey: "99:remaining",
   });
@@ -364,5 +382,7 @@ function safeReadDir(path: string) {
 }
 
 function shouldIgnoreName(name: string): boolean {
-  return IGNORED_NAMES.has(name) || name.startsWith(".");
+  return IGNORED_NAMES.has(name)
+    || /^(?:secrets?|credentials?)(?:[.-]|$)|\.(?:pem|key|p12|pfx|log|tsbuildinfo)$/i.test(name)
+    || (name.startsWith(".") && !CONFIG_NAMES.has(name));
 }

@@ -48,16 +48,21 @@ test("review handoff requires every latest assignment commit in the selected bra
   const session = { reviewPlan: plan, reviewResults: results, reviewAssignments: new Map(), worktrees, running: 0 } as unknown as SessionState;
   let opened = 0;
   let body = "";
+  const gitService = new GitService();
   const orchestrator = new Orchestrator({
-    db: { updateTicket() {} } as never, git: new GitService(), backends: {} as never,
+    db: { updateTicket() {} } as never, git: gitService, backends: {} as never,
     notifier: { id: "test", notify: async () => {} }, bus: new ChorusBus(),
     config: ConfigSchema.parse({ dataDir: repo }),
   });
   const internal = orchestrator as unknown as {
     sessionOpenPr(session: SessionState, project: Project, ticket: Ticket, body: object): Promise<{ status: number; body: unknown }>;
-    openPrForTicket(project: Project, ticket: Ticket, args: { reviewer: { summary: string } }): Promise<string>;
+    runAgentInSession(session: SessionState, project: Project, ticket: Ticket, body: object): Promise<{ status: number }>;
+    sessionMerge(session: SessionState, project: Project, body: object): Promise<{ status: number }>;
+    sessionVerify(session: SessionState, project: Project, body: object): Promise<{ status: number }>;
+    openPrForTicket(project: Project, ticket: Ticket, args: { commit?: string; reviewer: { summary: string } }): Promise<string | null>;
   };
   internal.openPrForTicket = async (_project, _ticket, args) => {
+    assert.equal(args.commit, git("rev-parse", "review-0"), "publish the validated commit");
     opened++;
     body = args.reviewer.summary;
     return "https://example.com/pr/1";
@@ -67,7 +72,42 @@ test("review handoff requires every latest assignment commit in the selected bra
   assert.equal(opened, 0);
   git("checkout", "review-0");
   git("merge", "--no-ff", "--no-edit", "review-1");
+  const isAncestor = gitService.isAncestor.bind(gitService);
+  let interleaved = false;
+  gitService.isAncestor = async (...args) => {
+    interleaved = true;
+    assert.equal(session.handoffInProgress, true);
+    assert.equal(args[2], git("rev-parse", "review-0"), "validate an immutable tip");
+    const before = [...results];
+    for (const request of [
+      { agent: "dev", reviewAssignmentId: plan.assignments[0]!.id },
+      { agent: "dev", reviewAssignmentId: plan.assignments[0]!.id, baseWorktreeId: "review-0" },
+    ]) assert.equal((await internal.runAgentInSession(session, project, ticket, request)).status, 409);
+    assert.equal((await internal.sessionMerge(session, project, {
+      fromWorktreeId: "review-1", intoWorktreeId: "review-0",
+    })).status, 409);
+    assert.equal((await internal.sessionVerify(session, project, { worktreeId: "review-0" })).status, 409);
+    assert.equal((await open()).status, 409);
+    assert.deepEqual(results, before);
+    return isAncestor(...args);
+  };
   assert.equal((await open()).status, 200);
+  assert.equal(interleaved, true);
+  assert.equal(session.handoffInProgress, false);
+  assert.equal((await internal.runAgentInSession(session, project, ticket, {})).status, 409);
+  gitService.isAncestor = isAncestor;
+  session.finished = null; // Exercise subsequent failure/retry paths independently.
+  const headCommit = gitService.headCommit.bind(gitService);
+  gitService.headCommit = async () => { throw new Error("Git unavailable"); };
+  await assert.rejects(open(), /Git unavailable/);
+  assert.equal(session.handoffInProgress, false, "failed validation must release the reservation");
+  gitService.headCommit = headCommit;
+  const publish = internal.openPrForTicket;
+  internal.openPrForTicket = async () => null;
+  assert.equal((await open()).status, 500);
+  assert.equal(session.handoffInProgress, false, "publication failure permits retry");
+  assert.equal(session.finished, null);
+  internal.openPrForTicket = publish;
   assert.match(body, /Completed assignments: 2/);
   for (const result of results) assert.ok(body.includes(result.commit!));
 
