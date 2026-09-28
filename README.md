@@ -10,7 +10,8 @@ or API keys you already use. Chorus supplies the orchestration, dashboard,
 worktrees, logs, cost/quota awareness, and PR workflow around Codex, Claude Code,
 and Gemini CLI.
 
-Watch the demo video on yourtube 
+Watch the demo video on youtube 
+
 [![Watch the demo video](https://img.youtube.com/vi/XtsupeZIh5M/0.jpg)](https://www.youtube.com/watch?v=XtsupeZIh5M)
 
 ## Why Containers Are Strongly Recommended
