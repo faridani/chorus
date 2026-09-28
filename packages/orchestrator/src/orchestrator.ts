@@ -74,7 +74,9 @@ function journalLimit(value: unknown): number {
 
 function firstPresent(body: Record<string, unknown>, keys: string[]): unknown {
   for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(body, key)) return body[key];
+    if (Object.prototype.hasOwnProperty.call(body, key) && body[key] !== null && body[key] !== undefined) {
+      return body[key];
+    }
   }
   return undefined;
 }

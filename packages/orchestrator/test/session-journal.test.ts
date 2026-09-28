@@ -13,6 +13,7 @@ import {
   type Ticket,
 } from "@chorus/core";
 import { ChorusDb } from "@chorus/db";
+import { createServer } from "../../web/src/server.js";
 import type { SessionState } from "../src/autonomous.js";
 import { Orchestrator } from "../src/orchestrator.js";
 
@@ -150,6 +151,29 @@ test("sessionCall writes and reads attempt-journal entries for the active sessio
     assert.ok(projectJournal[0]!.verifyOutput!.length <= 12_000);
     assert.match(projectJournal[0]!.verifyOutput!, /\[truncated\]$/);
 
+    const app = createServer({
+      db,
+      bus: new ChorusBus(),
+      api: {} as never,
+      config: ConfigSchema.parse({ dataDir: project.localPath }),
+      version: { number: "test", commit: "test", dirty: false, startedAt: 0 },
+      sessionApi: orchestrator,
+    });
+    try {
+      const detail = await app.inject({ method: "GET", url: `/api/projects/${project.id}` });
+      assert.equal(detail.statusCode, 200);
+      assert.deepEqual(detail.json().attemptJournal, [entry]);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/internal/sessions/tok-session/attempt_journal.read",
+        payload: { ticketId: "tkt_attacker", projectId: "proj_attacker" },
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.json().entries, [entry]);
+    } finally {
+      await app.close();
+    }
+
     const read = await orchestrator.sessionCall("tok-session", "attempt_journal.read", { limit: 5 });
     assert.equal(read.status, 200);
     const entries = (read.body as { entries: AttemptJournalEntry[] }).entries;
@@ -157,6 +181,33 @@ test("sessionCall writes and reads attempt-journal entries for the active sessio
       entries.map((e) => e.id),
       [entry.id],
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("sessionCall preserves populated aliases when primary journal fields are null or undefined", async () => {
+  const db = freshDb();
+  try {
+    const project = seedProject(db);
+    const ticket = seedTicket(db, project.id);
+    const orchestrator = makeOrchestrator(db);
+    attachSession(orchestrator, project, ticket, "tok-aliases");
+
+    for (const empty of [null, undefined]) {
+      const result = await orchestrator.sessionCall("tok-aliases", "attempt_journal.write", {
+        verification: empty,
+        verifyOutput: empty,
+        verify_output: "tests passed",
+        nextAction: empty,
+        next_action: "review commit abc123",
+      });
+      assert.equal(result.status, 200);
+      const entry = (result.body as { entry: AttemptJournalEntry }).entry;
+      assert.equal(entry.verifyOutput, "tests passed");
+      assert.equal(entry.nextAction, "review commit abc123");
+      assert.deepEqual(db.listAttemptJournal(ticket.id).at(-1), entry);
+    }
   } finally {
     db.close();
   }
