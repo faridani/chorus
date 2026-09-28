@@ -56,6 +56,20 @@ export class GitService {
     return r.stdout.trim();
   }
 
+  /** Review gates must fail closed when Git cannot establish ancestry. */
+  async isAncestor(localPath: string, commit: string, ref: string): Promise<boolean> {
+    const r = await this.git(["merge-base", "--is-ancestor", commit, ref], localPath, false);
+    if (r.code === 0) return true;
+    if (r.code === 1) return false;
+    throw new Error(`Cannot establish review commit ancestry: ${r.stderr.trim()}`);
+  }
+
+  /** Exact changed paths, including both sides of renames, for scope checks. */
+  async reviewChangedFiles(localPath: string, baseRef: string, ref: string): Promise<string[]> {
+    const r = await this.git(["diff", "--name-only", "--no-renames", "-z", `${baseRef}...${ref}`, "--"], localPath, true);
+    return r.stdout.split("\0").filter(Boolean);
+  }
+
   /**
    * Add a worktree on a fresh branch cut from the latest `origin/<baseBranch>`.
    * Fetches first so the ticket branch (and the PR it later opens) targets the
@@ -191,12 +205,13 @@ export class GitService {
    * Push a ticket branch to `origin` (force-with-lease so a re-run that adds
    * commits updates the already-open PR). Chorus — not the agent — performs
    * this; the pre-push guard only blocks protected branches, so ticket
-   * branches (`chorus/ticket-*`) push cleanly.
+   * branches (`chorus/ticket-*`) push cleanly. An optional validated commit
+   * pins publication even if the local branch moves after validation.
    */
-  async pushBranch(localPath: string, branch: string): Promise<void> {
+  async pushBranch(localPath: string, branch: string, commit?: string): Promise<void> {
     await this.mutex.run(async () => {
       const r = await this.gitUnlocked(
-        ["push", "-u", "origin", branch, "--force-with-lease"],
+        ["push", "-u", "origin", commit ? `${commit}:refs/heads/${branch}` : branch, "--force-with-lease"],
         localPath,
         false,
       );

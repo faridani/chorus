@@ -153,3 +153,18 @@ test("deleteBranch refuses non-Chorus branch names without deleting refs", async
   assert.equal(await gitCode(repo, "show-ref", "--verify", `refs/heads/${branch}`), 0);
   assert.equal(await gitCode(origin, "show-ref", "--verify", `refs/heads/${branch}`), 0);
 });
+
+test("pushBranch publishes the validated commit when the local branch has advanced", async () => {
+  const gs = new GitService();
+  const { repo, origin } = await makeRepo();
+  const branch = "chorus/pinned-review";
+  await git(repo, "checkout", "-b", branch);
+  const validated = await git(repo, "rev-parse", "HEAD");
+  writeFileSync(join(repo, "unreviewed.txt"), "not reviewed");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-qm", "later changes");
+  const advanced = await git(repo, "rev-parse", "HEAD");
+  await gs.pushBranch(repo, branch, validated);
+  assert.equal(await git(origin, "rev-parse", branch), validated);
+  assert.equal(await git(repo, "rev-parse", branch), advanced);
+});

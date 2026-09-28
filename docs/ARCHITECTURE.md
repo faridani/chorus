@@ -56,6 +56,43 @@ marks the ticket `merged` once GitHub reports the PR merged.
 - **Backend abstraction.** The orchestrator depends only on the `AIBackend`
   interface via a registry. Codex, Claude Code, and Gemini CLI adapters live in
   `packages/backends`.
+- **Parallel code review plans.** Broad tickets such as "review and improve the
+  codebase" get a deterministic repository-structure plan in the autonomous
+  orchestrator context. The plan splits packages, apps, docs, tests, and support
+  directories into non-overlapping review assignments. Each scoped subagent is
+  told to improve readability, add useful documentation, check obvious security
+  risks, and return structured Suggestions for deferred or higher-risk work.
+  The orchestrator records those Suggestions and folds subagent results into the
+  PR summary for human review.
+  Assignments own separate worktrees; continue a review using its original
+  `reviewAssignmentId` and `baseWorktreeId`. Scope checks use Git's exact paths
+  (including both sides of renames), not the agent's reported file list. Changes
+  outside an assignment block handoff and are recorded in the ticket trail;
+  restore them and rerun the assignment before integration. These checks gate
+  the workflow; they are not an OS sandbox for CLI processes.
+  Each result records an immutable commit. Before opening the PR, all planned
+  assignments must finish successfully (or report `no_changes`), all recorded
+  commits must be ancestors of the selected branch, and no review may still be
+  running. PR handoff reserves the session before Git validation; agent starts,
+  resumes, merges, and verification commands are rejected until it completes.
+  Validation and publication use the same immutable commit, and failed handoffs
+  release the reservation for retry. Merge the assignment branches, then verify
+  the combined result.
+  Detection requires an affirmative repository-wide review request; incidental
+  repository mentions, negation, and explicit narrow boundaries do not qualify.
+  Explicit scope declarations (such as `Scope: packages/billing only`, Markdown
+  scope sections, affected/target paths, or restrict-to instructions) override a
+  broad title. The automatic planner declines these tickets and leaves them to
+  normal scoped ticket handling; it does not infer path permissions from prose.
+  Ambiguous scope declarations also decline automatic repository-wide planning.
+  Plans include direct source/configuration files under package containers and
+  known hidden configuration such as `.github`, while excluding generated,
+  vendor, and recognizable credential paths. Combined assignments name their
+  constituent areas explicitly when the assignment budget requires grouping.
+  Retries supersede prior results, including when the retry fails. Suggestions
+  are saved independently of merging, capped at 20 per result, and remain visible
+  in the Suggestions tab with rationale, affected area, proposed action, and
+  optional agent/tool/skill recommendations.
 
 ## Deferred (Milestone 2+)
 

@@ -15,6 +15,7 @@ import {
   type OrchestratorState,
   type Project,
   type Role,
+  type SuggestionDetails,
   type Task,
   type Ticket,
   type TicketEvent,
@@ -27,9 +28,22 @@ import {
   buildCodexMcpArgs,
   buildSpokeAgentPrompt,
   isCodingRole,
+  reviewAssignmentOwnerForWorktree,
   type SessionState,
   type SpokeAgentInfo,
+  validateReviewAssignmentClaim,
 } from "./autonomous.js";
+import {
+  buildCodeReviewPlan,
+  buildReviewAssignmentResult,
+  buildReviewOutcomeSummary,
+  formatReviewAssignmentInstruction,
+  formatStructuredSuggestion,
+  isCompletedReviewResult,
+  latestReviewResults,
+  reviewScopeViolations,
+  type CodeReviewAssignment,
+} from "./code-review-plan.js";
 import { type EvaluatorVerdict, runEvaluator } from "./evaluate.js";
 import { buildManifest, type TaskManifest } from "./manifest.js";
 import { buildAgentPrompt, buildOrchestratorPrompt } from "./prompt.js";
@@ -57,6 +71,8 @@ export interface OrchestratorDeps {
   config: Config;
   idleTicketGenerator?: IdleTicketGenerator;
 }
+
+const MAX_AGENT_SUGGESTIONS_PER_RESULT = 20;
 
 /**
  * The daemon dispatch loop. Processes tickets serially per project through a
@@ -525,6 +541,9 @@ export class Orchestrator {
       finished: null,
       prUrl: null,
       handles: new Set(),
+      reviewPlan: null,
+      reviewAssignments: new Map(),
+      reviewResults: [],
     };
     this.sessions.set(token, session);
 
@@ -533,20 +552,26 @@ export class Orchestrator {
       .filter((r) => r.name !== ORCHESTRATOR_ROLE)
       .map((r) => ({ name: r.name, description: r.description, backendId: r.backendId }));
 
-    const prompt = buildAutonomousPrompt({
-      project,
-      ticket,
-      agents,
-      maxSpokeAgents: this.deps.config.orchestrator.maxSpokeAgentsPerSession,
-      maxParallel: this.deps.config.orchestrator.maxParallelSpokeAgents,
-    });
-
     // Freshen the clone the orchestrator inspects: it's read-only context, and a
     // clone left at its original checkout goes stale as the base branch advances
     // (the orchestrator would then plan against outdated code). Spoke worktrees
     // are already cut from the fetched base; this aligns the orchestrator's view.
     await this.deps.git.syncToBase(project.localPath, project.baseBranch).catch((err) => {
       this.trail(project.id, ticket.id, ORCHESTRATOR_ROLE, "note", `Could not refresh base checkout: ${String(err)}`);
+    });
+    session.reviewPlan = buildCodeReviewPlan({
+      project,
+      ticket,
+      agents,
+      maxAssignments: this.deps.config.orchestrator.maxSpokeAgentsPerSession,
+    });
+
+    const prompt = buildAutonomousPrompt({
+      project,
+      ticket,
+      agents,
+      maxSpokeAgents: this.deps.config.orchestrator.maxSpokeAgentsPerSession,
+      maxParallel: this.deps.config.orchestrator.maxParallelSpokeAgents,
     });
 
     const artifactsDir = join(this.deps.config.dataDir, "autonomous", ticket.id, newId("a"));
@@ -711,6 +736,9 @@ export class Orchestrator {
   ): Promise<{ status: number; body: unknown }> {
     const session = this.sessions.get(token);
     if (!session) return { status: 404, body: { error: "unknown or expired session" } };
+    if (session.handoffInProgress && ["close", "needs-human", "finish"].includes(action)) {
+      return { status: 409, body: { error: "session is handing off" } };
+    }
     const project = this.deps.db.getProject(session.projectId);
     const ticket = this.deps.db.getTicket(session.ticketId);
     if (!project || !ticket) return { status: 410, body: { error: "session target gone" } };
@@ -746,7 +774,7 @@ export class Orchestrator {
           });
           return { status: 200, body: { ok: true } };
         case "suggest":
-          this.addSuggestion(project, ticket.id, String(body.text ?? ""));
+          this.addSuggestion(project, ticket.id, this.suggestionFromBody(body));
           return { status: 200, body: { ok: true } };
         case "activity":
           this.emitAgentEvent(project.id, ticket, ORCHESTRATOR_ROLE, {
@@ -793,6 +821,8 @@ export class Orchestrator {
         .slice(-20)
         .map((e) => ({ actor: e.actor, kind: e.kind, message: e.message })),
       latestJournal: this.deps.db.latestAttemptJournal(ticket.id),
+      codeReviewPlan: session.reviewPlan,
+      reviewResults: session.reviewResults,
       worktrees: [...session.worktrees.values()].map((w) => ({ id: w.id, branch: w.branch })),
       budget: {
         spokeAgentsUsed: session.spokeCount,
@@ -807,9 +837,13 @@ export class Orchestrator {
     ticket: Ticket,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const agentName = String(body.agent ?? "");
     const instruction = String(body.instruction ?? "");
     const baseWorktreeId = body.baseWorktreeId ? String(body.baseWorktreeId) : null;
+    const reviewAssignmentId = body.reviewAssignmentId ? String(body.reviewAssignmentId) : null;
 
     if (session.spokeCount >= this.deps.config.orchestrator.maxSpokeAgentsPerSession) {
       return {
@@ -824,9 +858,44 @@ export class Orchestrator {
         body: { error: `unknown agent "${agentName}". Available: ${this.sessionAgents(project).map((a) => a.name).join(", ")}` },
       };
     }
+    const reviewAssignment = reviewAssignmentId ? this.resolveReviewAssignment(session, reviewAssignmentId) : null;
+    if (reviewAssignmentId && !reviewAssignment) {
+      return { status: 400, body: { error: `unknown reviewAssignmentId "${reviewAssignmentId}"` } };
+    }
+    if (reviewAssignmentId) {
+      const validation = validateReviewAssignmentClaim({
+        reviewAssignmentId,
+        baseWorktreeId,
+        reviewAssignments: session.reviewAssignments,
+        worktrees: session.worktrees,
+      });
+      if (!validation.ok) return { status: validation.status, body: { error: validation.error } };
+    } else if (baseWorktreeId) {
+      const owner = reviewAssignmentOwnerForWorktree(session.reviewAssignments, baseWorktreeId);
+      if (owner) {
+        return {
+          status: 409,
+          body: {
+            error: `baseWorktreeId "${baseWorktreeId}" is owned by review assignment "${owner}"; pass that reviewAssignmentId to continue it`,
+          },
+        };
+      }
+    }
+    const finalInstruction = reviewAssignment
+      ? formatReviewAssignmentInstruction(reviewAssignment, instruction)
+      : instruction;
+    if (reviewAssignmentId) {
+      const existingReviewRun = session.reviewAssignments.get(reviewAssignmentId);
+      session.reviewAssignments.set(reviewAssignmentId, {
+        agent: role.name,
+        worktreeId: existingReviewRun?.worktreeId ?? baseWorktreeId,
+        status: "running",
+      });
+    }
     // Respect the parallelism cap; queue until a slot frees.
     while (session.running >= this.deps.config.orchestrator.maxParallelSpokeAgents) {
       await this.sleep(250);
+      if (session.handoffInProgress || session.finished) return { status: 409, body: { error: "session is handing off or already finished" } };
       if (!this.sessions.has(session.token)) return { status: 410, body: { error: "session ended" } };
     }
 
@@ -851,7 +920,24 @@ export class Orchestrator {
         await this.deps.git.addWorktree(project.localPath, path, branch, project.baseBranch);
         wt = { id, path, branch };
         session.worktrees.set(id, wt);
+        // Reserve ownership before setup yields; another parallel assignment
+        // must not be able to claim this newly visible worktree during setup.
+        if (reviewAssignmentId) {
+          session.reviewAssignments.set(reviewAssignmentId, { agent: role.name, worktreeId: wt.id, status: "running" });
+        }
         if (coding) await this.runSetup(project, ticket, path);
+      }
+      if (reviewAssignmentId) {
+        session.reviewAssignments.set(reviewAssignmentId, { agent: role.name, worktreeId: wt.id, status: "running" });
+      }
+      if (reviewAssignment) {
+        // Invalidate an earlier success before starting a retry. Crashes or
+        // quota exhaustion must not leave stale completion evidence usable.
+        session.reviewResults.push(buildReviewAssignmentResult({
+          assignment: reviewAssignment, agent: role.name, worktreeId: wt.id,
+          status: "running", summary: null, authoritativeFilesChanged: [],
+          notes: "Attempt has not completed successfully.", suggestionsCreated: 0,
+        }));
       }
 
       const backend = this.deps.backends.has(role.backendId)
@@ -898,7 +984,7 @@ export class Orchestrator {
         project,
         ticket,
         role,
-        instruction,
+        instruction: finalInstruction,
         resume,
         trail: this.deps.db.listTicketEvents(ticket.id),
       });
@@ -970,12 +1056,45 @@ export class Orchestrator {
         .catch(() => ({ commits: [] as string[], files: [] as string[] }));
       const newCommits = Math.max(0, after.commits.length - commitsBefore);
       const summary = result.payload?.summary ?? `(${result.terminalReason})`;
+      const suggestionsCreated = this.persistAgentSuggestions(project, ticket.id, result.payload?.suggestions ?? []);
+      let reviewStatus = result.payload?.status ?? result.terminalReason;
+      let reviewFiles = after.files;
+      let reviewViolations: string[] = [];
+      if (suggestionsCreated) {
+        this.trail(project.id, ticket.id, role.name, "note", `Created ${suggestionsCreated} structured suggestion(s).`);
+      }
+      if (reviewAssignment) {
+        const commit = await this.deps.git.headCommit(project.localPath, wt.branch);
+        const files = await this.deps.git.reviewChangedFiles(project.localPath, baseCommit, commit);
+        const scopeViolations = reviewScopeViolations(reviewAssignment.scope, files);
+        reviewStatus = scopeViolations.length || result.terminalReason !== "completed" || result.exitCode !== 0
+          ? "blocked" : result.payload?.status ?? "blocked";
+        reviewFiles = files;
+        reviewViolations = scopeViolations;
+        if (reviewStatus === "blocked") this.deps.db.updateTask(taskId, { state: "failed" });
+        if (scopeViolations.length) {
+          this.trail(project.id, ticket.id, role.name, "note", `Review scope violation in ${wt.id}: ${scopeViolations.join(", ")}. Restore these paths before merge or PR handoff.`);
+        }
+        session.reviewResults.push(buildReviewAssignmentResult({
+          assignment: reviewAssignment,
+          agent: role.name,
+          worktreeId: wt.id,
+          status: reviewStatus,
+          summary: result.payload?.summary ?? null,
+          authoritativeFilesChanged: files,
+          commit,
+          scopeViolations,
+          notes: result.payload?.notes ?? null,
+          suggestionsCreated,
+        }));
+        session.reviewAssignments.set(reviewAssignment.id, { agent: role.name, worktreeId: wt.id, status: "finished" });
+      }
       this.trail(
         project.id,
         ticket.id,
         role.name,
         "work",
-        `[${wt.id}] ${result.payload?.status ?? result.terminalReason}: ${summary}${newCommits ? "" : " [no new commits]"}`,
+        `[${wt.id}] ${reviewAssignment ? reviewStatus : result.payload?.status ?? result.terminalReason}: ${summary}${newCommits ? "" : " [no new commits]"}`,
       );
 
       return {
@@ -983,16 +1102,33 @@ export class Orchestrator {
         body: {
           worktreeId: wt.id,
           branch: wt.branch,
-          status: result.payload?.status ?? null,
+          status: reviewAssignment ? reviewStatus : result.payload?.status ?? null,
           summary: result.payload?.summary ?? null,
-          filesChanged: result.payload?.filesChanged ?? [],
+          filesChanged: reviewAssignment ? reviewFiles : result.payload?.filesChanged ?? [],
+          scopeViolations: reviewViolations,
           notes: result.payload?.notes ?? null,
+          suggestionsCreated,
           newCommits,
-          changedFiles: after.files,
+          changedFiles: reviewFiles,
           terminalReason: result.terminalReason,
         },
       };
     } finally {
+      if (reviewAssignmentId) {
+        const latest = latestReviewResults(session.reviewResults).find((r) => r.assignmentId === reviewAssignmentId);
+        if (latest?.status === "running") {
+          latest.status = "blocked";
+          latest.notes = "Attempt stopped without a verified review result; resume this assignment.";
+        }
+        const claim = session.reviewAssignments.get(reviewAssignmentId);
+        if (claim?.status === "running") {
+          if (claim.worktreeId) {
+            session.reviewAssignments.set(reviewAssignmentId, { ...claim, status: "finished" });
+          } else {
+            session.reviewAssignments.delete(reviewAssignmentId);
+          }
+        }
+      }
       if (activeHandle) session.handles.delete(activeHandle);
       session.running--;
     }
@@ -1003,10 +1139,18 @@ export class Orchestrator {
     project: Project,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const wt = session.worktrees.get(String(body.worktreeId ?? ""));
     if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
-    const verify = await this.runVerify(project, wt.path);
-    return { status: 200, body: verify };
+    session.running++;
+    try {
+      const verify = await this.runVerify(project, wt.path);
+      return { status: 200, body: verify };
+    } finally {
+      session.running--;
+    }
   }
 
   private async sessionDiff(
@@ -1027,17 +1171,34 @@ export class Orchestrator {
     project: Project,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const from = session.worktrees.get(String(body.fromWorktreeId ?? ""));
     const into = session.worktrees.get(String(body.intoWorktreeId ?? ""));
     if (!from || !into) return { status: 400, body: { error: "unknown worktreeId(s)" } };
-    const r = await runShell(`git merge --no-ff --no-edit ${from.branch}`, into.path, {
-      timeoutMs: 5 * 60 * 1000,
-    });
-    if (!r.ok) {
-      await runShell("git merge --abort", into.path, { timeoutMs: 60 * 1000 }).catch(() => {});
-      return { status: 200, body: { ok: false, conflicts: true, output: r.combined.slice(-2000) } };
+    for (const claim of session.reviewAssignments.values()) {
+      if (claim.status === "running" && (claim.worktreeId === from.id || claim.worktreeId === into.id)) {
+        return { status: 409, body: { error: "wait for scoped reviews to finish before merging" } };
+      }
     }
-    return { status: 200, body: { ok: true } };
+    const sourceResult = latestReviewResults(session.reviewResults).find((r) => r.worktreeId === from.id);
+    if (sourceResult && !isCompletedReviewResult(sourceResult)) {
+      return { status: 409, body: { error: "source review is blocked or has out-of-scope changes; resume it before merging" } };
+    }
+    session.running++;
+    try {
+      const r = await runShell(`git merge --no-ff --no-edit ${from.branch}`, into.path, {
+        timeoutMs: 5 * 60 * 1000,
+      });
+      if (!r.ok) {
+        await runShell("git merge --abort", into.path, { timeoutMs: 60 * 1000 }).catch(() => {});
+        return { status: 200, body: { ok: false, conflicts: true, output: r.combined.slice(-2000) } };
+      }
+      return { status: 200, body: { ok: true } };
+    } finally {
+      session.running--;
+    }
   }
 
   private async sessionOpenPr(
@@ -1046,25 +1207,57 @@ export class Orchestrator {
     ticket: Ticket,
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: unknown }> {
+    if (session.handoffInProgress || session.finished) {
+      return { status: 409, body: { error: "session is handing off or already finished" } };
+    }
     const wt = session.worktrees.get(String(body.worktreeId ?? ""));
     if (!wt) return { status: 400, body: { error: "unknown worktreeId" } };
-    const summary = String(body.summary ?? "");
-    if (!(await this.deps.git.hasNewCommits(project.localPath, this.baseRef(project), wt.branch))) {
-      return { status: 400, body: { error: "that worktree has no commits beyond the base branch" } };
+    if (session.running > 0 || [...session.reviewAssignments.values()].some((claim) => claim.status === "running")) {
+      return { status: 409, body: { error: "wait for all session mutations before opening a PR" } };
     }
-    // Point the ticket at the chosen worktree's branch so the PR opener and the
-    // merge poller operate on it, then reuse the standard PR path.
-    this.deps.db.updateTicket(ticket.id, { branch: wt.branch, worktreePath: wt.path });
-    const updated: Ticket = { ...ticket, branch: wt.branch, worktreePath: wt.path };
-    const url = await this.openPrForTicket(project, updated, {
-      taskId: null,
-      verify: { ran: false, results: [] },
-      reviewer: { approved: true, summary, risks: [], rollback: "", uncertainties: [] },
-    });
-    if (!url) return { status: 500, body: { error: "could not open PR (see ticket trail)" } };
-    session.finished = { outcome: "pr_opened", message: summary };
-    session.prUrl = url;
-    return { status: 200, body: { url } };
+    session.handoffInProgress = true;
+    try {
+      const commit = await this.deps.git.headCommit(project.localPath, wt.branch);
+      // Every reported assignment must be complete and present in the chosen
+      // branch. A mutable worktree ID alone is not evidence of integration.
+      if (session.reviewPlan) {
+        const results = latestReviewResults(session.reviewResults);
+        for (const assignment of session.reviewPlan.assignments) {
+          const result = results.find((r) => r.assignmentId === assignment.id);
+          if (!result || !isCompletedReviewResult(result) || !result.commit) {
+            return { status: 409, body: { error: `review assignment ${assignment.id} is incomplete or blocked` } };
+          }
+          if (!(await this.deps.git.isAncestor(project.localPath, result.commit, commit))) {
+            return { status: 409, body: { error: `merge review assignment ${assignment.id} into the selected worktree before opening a PR` } };
+          }
+        }
+        const files = await this.deps.git.reviewChangedFiles(project.localPath, this.baseRef(project), commit);
+        const violations = reviewScopeViolations(session.reviewPlan.assignments.flatMap((a) => a.scope), files);
+        if (violations.length) return { status: 409, body: { error: "PR contains out-of-scope changes", files: violations } };
+      }
+      const summary = String(body.summary ?? "");
+      const reviewSummary = buildReviewOutcomeSummary(session.reviewPlan, session.reviewResults);
+      const prSummary = [summary, reviewSummary].filter((part) => part.trim()).join("\n\n");
+      if (!(await this.deps.git.hasNewCommits(project.localPath, this.baseRef(project), commit))) {
+        return { status: 400, body: { error: "that worktree has no commits beyond the base branch" } };
+      }
+      // Point the ticket at the chosen worktree's branch so the PR opener and the
+      // merge poller operate on it, then reuse the standard PR path.
+      this.deps.db.updateTicket(ticket.id, { branch: wt.branch, worktreePath: wt.path });
+      const updated: Ticket = { ...ticket, branch: wt.branch, worktreePath: wt.path };
+      const url = await this.openPrForTicket(project, updated, {
+        commit,
+        taskId: null,
+        verify: { ran: false, results: [] },
+        reviewer: { approved: true, summary: prSummary || summary, risks: [], rollback: "", uncertainties: [] },
+      });
+      if (!url) return { status: 500, body: { error: "could not open PR (see ticket trail)" } };
+      session.finished = { outcome: "pr_opened", message: summary };
+      session.prUrl = url;
+      return { status: 200, body: { url } };
+    } finally {
+      session.handoffInProgress = false;
+    }
   }
 
   // ---- worker run ----
@@ -1272,6 +1465,10 @@ export class Orchestrator {
       }))
     ).commits.length;
     const noNewWork = commitsAfter <= commitsBefore;
+    const suggestionsCreated = this.persistAgentSuggestions(project, ticket.id, result.payload?.suggestions ?? []);
+    if (suggestionsCreated) {
+      this.trail(project.id, ticket.id, role.name, "note", `Created ${suggestionsCreated} structured suggestion(s).`);
+    }
     this.deps.db.updateTask(taskId, { state: "done-pending-merge", endedAt: Date.now() });
     this.trail(
       project.id,
@@ -1281,6 +1478,7 @@ export class Orchestrator {
       result.payload
         ? `${result.payload.status}: ${summary}` +
             (result.payload.filesChanged?.length ? ` (files: ${result.payload.filesChanged.join(", ")})` : "") +
+            (suggestionsCreated ? ` (suggestions: ${suggestionsCreated})` : "") +
             (noNewWork ? " [no new commits this attempt]" : "")
         : `Ended (${result.terminalReason}).`,
     );
@@ -1628,6 +1826,7 @@ export class Orchestrator {
     project: Project,
     ticket: Ticket,
     accepted: {
+      commit?: string;
       taskId: string | null;
       verify: { ran: boolean; results: { cmd: string; ok: boolean }[] };
       reviewer: ReviewerVerdict | null;
@@ -1636,7 +1835,7 @@ export class Orchestrator {
     if (!ticket.branch) return null;
     let pr: { url: string; number: number | null; state: string };
     try {
-      await this.deps.git.pushBranch(project.localPath, ticket.branch);
+      await this.deps.git.pushBranch(project.localPath, ticket.branch, accepted.commit);
       pr = await this.deps.git.openOrUpdatePr(
         project.localPath,
         ticket.branch,
@@ -1827,12 +2026,60 @@ export class Orchestrator {
     return ticket;
   }
 
-  private addSuggestion(project: Project, ticketId: string | null, message: string): void {
+  private resolveReviewAssignment(session: SessionState, assignmentId: string): CodeReviewAssignment | null {
+    return session.reviewPlan?.assignments.find((a) => a.id === assignmentId) ?? null;
+  }
+
+  private suggestionFromBody(body: Record<string, unknown>): string | SuggestionDetails {
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    const rationale = typeof body.rationale === "string" ? body.rationale.trim() : "";
+    const affectedArea = typeof body.affectedArea === "string" ? body.affectedArea.trim() : "";
+    const proposedAction = typeof body.proposedAction === "string" ? body.proposedAction.trim() : "";
+    if (title && rationale && affectedArea && proposedAction) {
+      return {
+        title,
+        rationale,
+        affectedArea,
+        proposedAction,
+        recommendedAgent: typeof body.recommendedAgent === "string" ? body.recommendedAgent.trim() || null : null,
+        recommendedTool: typeof body.recommendedTool === "string" ? body.recommendedTool.trim() || null : null,
+        recommendedSkill: typeof body.recommendedSkill === "string" ? body.recommendedSkill.trim() || null : null,
+      };
+    }
+    return String(body.text ?? title ?? "");
+  }
+
+  private persistAgentSuggestions(project: Project, ticketId: string | null, suggestions: SuggestionDetails[]): number {
+    let count = 0;
+    for (const suggestion of suggestions.slice(0, MAX_AGENT_SUGGESTIONS_PER_RESULT)) {
+      if (!suggestion.title?.trim() || !suggestion.rationale?.trim() || !suggestion.affectedArea?.trim() || !suggestion.proposedAction?.trim()) {
+        continue;
+      }
+      this.addSuggestion(project, ticketId, suggestion);
+      count++;
+    }
+    return count;
+  }
+
+  private addSuggestion(project: Project, ticketId: string | null, suggestion: string | SuggestionDetails): void {
+    const structured = typeof suggestion === "string" ? null : suggestion;
+    const message = structured ? formatStructuredSuggestion(structured) : String(suggestion);
     const s = {
       id: newId("sug"),
       projectId: project.id,
       ticketId,
       message,
+      ...(structured
+        ? {
+            title: structured.title,
+            rationale: structured.rationale,
+            affectedArea: structured.affectedArea,
+            proposedAction: structured.proposedAction,
+            recommendedAgent: structured.recommendedAgent ?? null,
+            recommendedTool: structured.recommendedTool ?? null,
+            recommendedSkill: structured.recommendedSkill ?? null,
+          }
+        : {}),
       status: "open" as const,
       createdAt: Date.now(),
     };
