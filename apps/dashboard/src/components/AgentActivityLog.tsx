@@ -1,7 +1,6 @@
 import type { ActivityItem } from "../stateMachineModel.js";
 
 const ICON: Record<string, string> = {
-  reasoning: "💭",
   message: "💬",
   command: "▶",
   file_change: "✏️",
@@ -37,6 +36,7 @@ export function AgentActivityLog({
   if (!label) {
     return <p className="sm-log-empty">Click an agent above to see its activity.</p>;
   }
+  const visibleItems = items.filter((it) => it.kind !== "reasoning");
   return (
     <div className="sm-log">
       <div className="sm-log-head">
@@ -47,11 +47,11 @@ export function AgentActivityLog({
           </button>
         )}
       </div>
-      {items.length === 0 ? (
+      {visibleItems.length === 0 ? (
         <p className="sm-log-empty">No activity recorded yet for {label}.</p>
       ) : (
         <ul className="sm-log-list">
-          {items.map((it) => (
+          {visibleItems.map((it) => (
             <li
               key={`${it.source}-${it.at}-${it.kind}-${it.text}`}
               className={`sm-log-line src-${it.source}`}
