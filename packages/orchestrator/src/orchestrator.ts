@@ -14,6 +14,7 @@ import {
   type OrchestratorDecision,
   type OrchestratorState,
   type Project,
+  publishNotification,
   type Role,
   type Task,
   type Ticket,
@@ -1975,7 +1976,9 @@ export class Orchestrator {
     title: string,
     body: string,
   ): Promise<void> {
-    this.deps.bus.emit({ type: "notification", projectId: project.id, kind, title, body, at: Date.now() });
-    await this.deps.notifier.notify({ kind, projectId: project.id, title, body, at: Date.now() });
+    await publishNotification(
+      { db: this.deps.db, notifier: this.deps.notifier, bus: this.deps.bus },
+      { kind, projectId: project.id, title, body },
+    );
   }
 }

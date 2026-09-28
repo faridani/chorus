@@ -70,7 +70,11 @@ function seedPrTicket(db: ChorusDb, projectId: string, prNumber: number): Ticket
 async function pollWithGitState(
   db: ChorusDb,
   state: { url: string; number: number | null; state: string; mergedAt: string | null },
-): Promise<void> {
+): Promise<{ events: unknown[]; delivered: unknown[] }> {
+  const bus = new ChorusBus();
+  const events: unknown[] = [];
+  const delivered: unknown[] = [];
+  bus.on((event) => events.push(event));
   const orchestrator = new Orchestrator({
     db,
     git: {
@@ -78,12 +82,13 @@ async function pollWithGitState(
       removeWorktree: async () => {},
     } as never,
     backends: {} as never,
-    notifier: { id: "test", notify: async () => {} },
-    bus: new ChorusBus(),
+    notifier: { id: "test", notify: async (event) => void delivered.push(event) },
+    bus,
     config: ConfigSchema.parse({ dataDir: mkdtempSync(join(tmpdir(), "chorus-pr-data-")) }),
   });
 
   await (orchestrator as unknown as { pollOpenPrs(): Promise<void> }).pollOpenPrs();
+  return { events, delivered };
 }
 
 test("pollOpenPrs persists MERGED for a previously OPEN pull request", async () => {
@@ -91,7 +96,7 @@ test("pollOpenPrs persists MERGED for a previously OPEN pull request", async () 
   const project = seedProject(db);
   const ticket = seedPrTicket(db, project.id, 60);
 
-  await pollWithGitState(db, {
+  const { events, delivered } = await pollWithGitState(db, {
     url: ticket.prUrl!,
     number: ticket.prNumber,
     state: "MERGED",
@@ -101,6 +106,13 @@ test("pollOpenPrs persists MERGED for a previously OPEN pull request", async () 
   assert.equal(db.getTicket(ticket.id)?.status, "merged");
   assert.equal(db.listPullRequests(project.id).find((p) => p.number === 60)?.state, "MERGED");
   assert.equal(db.listOpenPullRequests(project.id).length, 0);
+  const notifications = db.listNotifications(project.id);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.kind, "pr_merged");
+  assert.equal(notifications[0]?.title, "PR merged");
+  assert.match(notifications[0]?.body ?? "", /Review PR 60/);
+  assert.ok(events.some((e) => (e as { type?: string; kind?: string }).type === "notification"));
+  assert.equal((delivered[0] as { kind?: string } | undefined)?.kind, "pr_merged");
   db.close();
 });
 

@@ -1,14 +1,17 @@
-import type { AttemptJournalEntry, ChangelogEntry, PullRequest } from "../api.js";
+import React from "react";
+import type { AttemptJournalEntry, ChangelogEntry, NotificationRecord, PullRequest } from "../api.js";
 
 /** Recent pull requests, the attempt journal (reflective memory), and changelog. */
 export function ActivityTab({
   pullRequests,
   attemptJournal,
   changelog,
+  notifications,
 }: {
   pullRequests: PullRequest[];
   attemptJournal: AttemptJournalEntry[];
   changelog: ChangelogEntry[];
+  notifications: NotificationRecord[];
 }) {
   return (
     <div className="cols">
@@ -25,6 +28,21 @@ export function ActivityTab({
             </li>
           ))}
           {pullRequests.length === 0 && <li className="muted">none yet</li>}
+        </ul>
+
+        <h3>Notifications</h3>
+        <ul className="notifications">
+          {notifications.map((n) => (
+            <li key={n.id}>
+              <div>
+                <span className={`tag notification-kind-${n.kind}`}>{formatNotificationKind(n.kind)}</span>{" "}
+                <strong>{n.title}</strong>
+                <span className="muted"> · {new Date(n.createdAt).toLocaleString()}</span>
+              </div>
+              {n.body && <div className="notification-body">{n.body}</div>}
+            </li>
+          ))}
+          {notifications.length === 0 && <li className="muted">no notifications recorded yet</li>}
         </ul>
 
         <h3>Changelog</h3>
@@ -65,4 +83,8 @@ export function ActivityTab({
       </section>
     </div>
   );
+}
+
+function formatNotificationKind(kind: NotificationRecord["kind"]): string {
+  return kind.replace(/_/g, " ");
 }

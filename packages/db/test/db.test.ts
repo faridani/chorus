@@ -494,6 +494,53 @@ test("migration 0007: project commands + attempt journal + pr task_id", () => {
   db.close();
 });
 
+test("migration 0012: project notifications round-trip in recent-first order", () => {
+  const db = freshDb();
+  const projectId = newId("proj");
+  db.insertProject({
+    id: projectId,
+    repoUrl: "owner/repo",
+    localPath: "/tmp/x",
+    baseBranch: "main",
+    specPath: null,
+    expectations: "",
+    groundRules: [],
+    setupCommand: null,
+    verifyCommands: [],
+    commandsDetected: true,
+    status: "ready",
+    runState: "running",
+    idleIdeation: false,
+    idleIdeationCount: 1,
+    createdAt: Date.now(),
+  });
+
+  db.insertNotification({
+    id: newId("ntf"),
+    projectId,
+    kind: "pr_opened",
+    title: "PR opened",
+    body: "Implement persistence\nhttps://github.com/owner/repo/pull/1",
+    createdAt: 100,
+  });
+  db.insertNotification({
+    id: newId("ntf"),
+    projectId,
+    kind: "error",
+    title: "Processing error",
+    body: "boom",
+    createdAt: 200,
+  });
+
+  const notifications = db.listNotifications(projectId);
+  assert.equal(notifications.length, 2);
+  assert.equal(notifications[0]?.kind, "error");
+  assert.equal(notifications[0]?.title, "Processing error");
+  assert.equal(notifications[1]?.kind, "pr_opened");
+  assert.equal(db.listNotifications(projectId, 1).length, 1);
+  db.close();
+});
+
 test("migration 0008: tool permissions default empty + round-trip on role & template", () => {
   const db = freshDb();
   const projectId = newId("proj");
