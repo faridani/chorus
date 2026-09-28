@@ -253,6 +253,19 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE tickets ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
   `,
+
+  // 0012 — durable project notification history.
+  `
+  CREATE TABLE notifications (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_notifications_project ON notifications(project_id, created_at);
+  `,
 ];
 
 export function runMigrations(db: DatabaseType.Database): void {

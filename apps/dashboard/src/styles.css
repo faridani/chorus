@@ -346,8 +346,12 @@ table.tickets td.star-cell { width: 22px; text-align: center; }
 table.tickets tr.dragging { opacity: 0.45; }
 table.tickets tr.dragover td { border-top: 2px solid var(--accent); }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.prs, .changelog, .roles, .journal { list-style: none; padding: 0; margin: 0; }
-.prs li, .changelog li, .roles li, .journal li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.prs, .changelog, .roles, .journal, .notifications { list-style: none; padding: 0; margin: 0; }
+.prs li, .changelog li, .roles li, .journal li, .notifications li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.notification-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.notification-kind-error { color: #f85149; border-color: #5e2e34; }
+.notification-kind-needs_review, .notification-kind-quota_paused { color: #e3b341; border-color: #5e4e2e; }
+.notification-kind-pr_opened, .notification-kind-pr_merged { color: #7ee787; border-color: #2e5e40; }
 .journal-diag { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 11px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px; margin: 4px 0; max-height: 160px; overflow-y: auto; }
 .journal-proof { font-size: 11px; }
 .addticket { display: flex; gap: 6px; margin-bottom: 8px; }

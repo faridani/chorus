@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { AgentEvent } from "./agent.js";
+import type { NotificationKind } from "./domain.js";
 import type { OrchestratorState, TaskState } from "./state.js";
 
 /**
@@ -34,7 +35,14 @@ export type ChorusEvent =
   | { type: "changelog"; projectId: string; entryId: string; at: number }
   | { type: "usage"; projectId: string | null; at: number }
   | { type: "quota"; state: "available" | "exhausted"; resumeAt: number | null; at: number }
-  | { type: "notification"; projectId: string; kind: string; title: string; body: string; at: number };
+  | {
+      type: "notification";
+      projectId: string;
+      kind: NotificationKind;
+      title: string;
+      body: string;
+      at: number;
+    };
 
 /**
  * Minimal typed wrapper over EventEmitter. A single shared instance is the

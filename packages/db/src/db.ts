@@ -4,6 +4,7 @@ import type {
   AgentTemplate,
   AttemptJournalEntry,
   ChangelogEntry,
+  NotificationRecord,
   Project,
   PullRequest,
   QuotaInfo,
@@ -294,6 +295,23 @@ export class ChorusDb {
   }
   setSuggestionStatus(id: string, status: "open" | "dismissed"): void {
     this.raw.prepare("UPDATE suggestions SET status=? WHERE id=?").run(status, id);
+  }
+
+  // ---- notifications ----
+  insertNotification(n: NotificationRecord): void {
+    this.raw
+      .prepare(
+        `INSERT INTO notifications (id, project_id, kind, title, body, created_at)
+         VALUES (@id, @projectId, @kind, @title, @body, @createdAt)`,
+      )
+      .run(n);
+  }
+  listNotifications(projectId: string, limit = 100): NotificationRecord[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM notifications WHERE project_id=? ORDER BY created_at DESC LIMIT ?")
+        .all(projectId, limit) as Row[]
+    ).map(mapNotification);
   }
 
   // ---- tasks ----
@@ -634,6 +652,16 @@ function mapSuggestion(r: Row): Suggestion {
     ticketId: (r.ticket_id as string | null) ?? null,
     message: r.message as string,
     status: r.status as Suggestion["status"],
+    createdAt: r.created_at as number,
+  };
+}
+function mapNotification(r: Row): NotificationRecord {
+  return {
+    id: r.id as string,
+    projectId: r.project_id as string,
+    kind: r.kind as NotificationRecord["kind"],
+    title: r.title as string,
+    body: r.body as string,
     createdAt: r.created_at as number,
   };
 }
