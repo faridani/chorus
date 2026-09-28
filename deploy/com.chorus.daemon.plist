@@ -3,8 +3,11 @@
   launchd service for the Chorus daemon (macOS). Install with:
     cp deploy/com.chorus.daemon.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.chorus.daemon.plist
-  Edit the paths below first. KeepAlive restarts the daemon if it exits, so it
-  survives crashes; boot reconciliation resumes in-flight work on restart.
+  Edit the paths below first: replace /Users/you with your home directory, and
+  set the node path to the output of `which node` — Apple Silicon Homebrew is
+  /opt/homebrew/bin/node, Intel Homebrew is /usr/local/bin/node. KeepAlive
+  restarts the daemon if it exits, so it survives crashes; boot reconciliation
+  resumes in-flight work on restart.
 -->
 <plist version="1.0">
   <dict>
