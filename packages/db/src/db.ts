@@ -508,11 +508,7 @@ export class ChorusDb {
         `SELECT
            COALESCE(SUM(input_tokens),0) AS i,
            COALESCE(SUM(output_tokens),0) AS o,
-           COALESCE(SUM(COALESCE(total_tokens, CASE
-             WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL
-             THEN COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-             ELSE 0
-           END)),0) AS t
+           COALESCE(SUM(COALESCE(total_tokens, COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0))), 0) AS t
          FROM usage_events`,
       )
       .get() as { i: number; o: number; t: number };
@@ -728,7 +724,7 @@ function mapUsage(r: Row): UsageEvent {
   const inputTokens = (r.input_tokens as number | null) ?? null;
   const outputTokens = (r.output_tokens as number | null) ?? null;
   const totalTokens =
-    ((r.total_tokens as number | null | undefined) ?? null) ??
+    (r.total_tokens as number | null | undefined) ??
     (inputTokens !== null || outputTokens !== null ? (inputTokens ?? 0) + (outputTokens ?? 0) : null);
   return {
     id: r.id as string,

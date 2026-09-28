@@ -95,3 +95,25 @@ test("recordUsage derives totals when backend reports split counts only", () => 
   assert.deepEqual(db.usageTotals(), { inputTokens: 10, outputTokens: 3, totalTokens: 13 });
   db.close();
 });
+
+test("recordUsage ignores unreported null counters but preserves explicit zero", () => {
+  const db = freshDb();
+  const orchestrator = new Orchestrator({
+    db, git: {} as never, backends: {} as never,
+    notifier: { id: "test", notify: async () => {} },
+    bus: new ChorusBus(),
+    config: ConfigSchema.parse({ dataDir: mkdtempSync(join(tmpdir(), "chorus-usage-data-")) }),
+  });
+  const recorder = orchestrator as unknown as {
+    recordUsage(runId: string, project: Project, result: AgentResult): void;
+  };
+  recorder.recordUsage("missing", project(), result({}));
+  // Exercise malformed backend data defensively, beyond the typed contract.
+  recorder.recordUsage("null", project(), result({
+    inputTokens: null, outputTokens: null, totalTokens: null,
+  } as unknown as AgentResult["usage"]));
+  assert.equal(db.recentUsage().length, 0);
+  recorder.recordUsage("zero", project(), result({ inputTokens: 4, outputTokens: 1, totalTokens: 0 }));
+  assert.deepEqual(db.usageTotals(), { inputTokens: 4, outputTokens: 1, totalTokens: 0 });
+  db.close();
+});
