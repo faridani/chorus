@@ -69,6 +69,8 @@ export interface ControllerDeps {
   diagnose?: DiagnoseFn;
   /** Override the self-heal runner (tests inject a mock; defaults to runSelfHeal). */
   selfHeal?: SelfHealFn;
+  /** Override spec ingestion (tests inject a mock; defaults to SpecIngestor). */
+  ingestor?: Pick<SpecIngestor, "ingest">;
 }
 
 const DEFAULT_GROUND_RULES = [
@@ -199,7 +201,7 @@ function sanitizeEvent(e: unknown): SafeEvent {
 
 /** Implements the commands the web layer issues. Owns project initialization. */
 export class AppController implements ControlApi {
-  private readonly ingestor: SpecIngestor;
+  private readonly ingestor: Pick<SpecIngestor, "ingest">;
   private backends: BackendInfo[];
   private readonly diagnose: DiagnoseFn;
   private readonly selfHeal: SelfHealFn;
@@ -207,7 +209,7 @@ export class AppController implements ControlApi {
   private readonly addressingPr = new Set<string>();
 
   constructor(private readonly deps: ControllerDeps) {
-    this.ingestor = new SpecIngestor(deps.db);
+    this.ingestor = deps.ingestor ?? new SpecIngestor(deps.db);
     this.backends = deps.detectedBackends;
     this.diagnose = deps.diagnose ?? runDiagnostics;
     this.selfHeal = deps.selfHeal ?? runSelfHeal;
@@ -342,7 +344,6 @@ export class AppController implements ControlApi {
       if (specText) {
         await this.writeSpec(project, specText);
       }
-      // findSpec falls back to README.md as a last resort when no docs/SPEC.md exists.
       const specPath = findSpec(project.localPath);
 
       if (specPath) {
@@ -354,7 +355,7 @@ export class AppController implements ControlApi {
           kind: "needs_review",
           projectId: project.id,
           title: "Project needs a spec",
-          body: `${project.repoUrl} has no docs/SPEC.md — provide one to start work.`,
+          body: `${project.repoUrl} has no spec or architecture file — provide one to start work.`,
           at: Date.now(),
         });
       }

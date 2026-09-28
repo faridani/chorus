@@ -8,7 +8,6 @@ export const SPEC_CANDIDATES = [
   "SPEC.md",
   "ARCHITECTURE.md",
   "docs/spec.md",
-  "README.md",
 ];
 
 /** Find the first spec-like file present in the clone; null if none. */
